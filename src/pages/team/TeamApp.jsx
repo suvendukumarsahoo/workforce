@@ -311,23 +311,41 @@ export default function TeamApp() {
 }
 
 function GoalEntrySheet({ member, param, goal, products, categories, customers, onSubmit, onClose }) {
-  const g        = goal || {}
-  const canEdit  = s => !s || s === 'draft' || s === 'rejected'
-  const [d, setD] = useState({
-    value:  { goal: g.value_goal || '' },
-    custs:  Object.fromEntries((param.sel_custs || []).map(id => [id, { goal: (g.customers || {})[id]?.goal || '' }])),
-    prods:  Object.fromEntries((param.sel_prods || []).map(id => [id, { goal: (g.products  || {})[id]?.goal || '' }])),
-    cats:   Object.fromEntries((param.sel_cats  || []).map(id => [id, { goal: (g.categories|| {})[id]?.goal || '' }])),
-    visits: { goal: g.visits_goal || '' },
-    acq:    { goal: g.acq_goal    || '' },
-  })
+  const g = goal || {}
+  const canEdit = s => !s || s === 'draft' || s === 'rejected'
+  
+  // Use refs to collect values - prevents re-render on every keystroke
+  const vals = {}
+  const set = (key, val) => { vals[key] = val }
+  const get = (key, fallback) => vals[key] !== undefined ? vals[key] : fallback
 
-  const Wrap = ({ fg, children }) => canEdit(fg?.status) ? (
-    <div style={{ background: fg?.status === 'rejected' ? '#fef2f2' : '#f9fafb', border: `1px solid ${fg?.status === 'rejected' ? '#fecaca' : 'transparent'}`, borderRadius: 10, padding: 12, marginBottom: 10 }}>
-      {fg?.status === 'rejected' && <div style={{ fontSize: 11, color: '#991b1b', marginBottom: 8 }}>❌ Manager note: {fg.note}</div>}
-      {children}
-    </div>
-  ) : null
+  const StableInp = ({ label, fieldKey, defaultVal, fg }) => {
+    if (!canEdit(fg?.status)) return null
+    return (
+      <div style={{ background: fg?.status === 'rejected' ? '#fef2f2' : '#f9fafb', border: `1px solid ${fg?.status === 'rejected' ? '#fecaca' : 'transparent'}`, borderRadius: 10, padding: 12, marginBottom: 10 }}>
+        {fg?.status === 'rejected' && <div style={{ fontSize: 11, color: '#991b1b', marginBottom: 8 }}>❌ Manager note: {fg.note}</div>}
+        <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>{label}</label>
+        <input
+          type="number"
+          defaultValue={defaultVal || ''}
+          onChange={e => set(fieldKey, e.target.value)}
+          style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box' }}
+        />
+      </div>
+    )
+  }
+
+  const handleSubmit = () => {
+    const draft = {
+      value:  { goal: get('value', g.value_goal) },
+      custs:  Object.fromEntries((param.sel_custs || []).map(id => [id, { goal: get(`cust_${id}`, (g.customers||{})[id]?.goal) }])),
+      prods:  Object.fromEntries((param.sel_prods || []).map(id => [id, { goal: get(`prod_${id}`, (g.products||{})[id]?.goal)  }])),
+      cats:   Object.fromEntries((param.sel_cats  || []).map(id => [id, { goal: get(`cat_${id}`,  (g.categories||{})[id]?.goal)}])),
+      visits: { goal: get('visits', g.visits_goal) },
+      acq:    { goal: get('acq',    g.acq_goal)    },
+    }
+    onSubmit(member?.member_id, draft)
+  }
 
   return (
     <Sheet title="Set my goals" sub="Enter your goal values for each parameter" onClose={onClose}>
@@ -336,55 +354,37 @@ function GoalEntrySheet({ member, param, goal, products, categories, customers, 
       </div>
 
       {param.enable_value && (
-        <Wrap fg={{ goal: g.value_goal, status: g.value_status, note: g.value_note }}>
-          <Inp label="Sales value goal (₹)" type="number" value={d.value.goal} onChange={v => setD(x => ({ ...x, value: { goal: v } }))} placeholder="e.g. 1100000" req />
-        </Wrap>
+        <StableInp label="Sales value goal (₹)" fieldKey="value" defaultVal={g.value_goal} fg={{ status: g.value_status, note: g.value_note }} />
       )}
 
       {param.enable_customers && (param.sel_custs || []).map(id => {
-        const c  = (customers || []).find(x => x.id === id); if (!c) return null
+        const c = (customers || []).find(x => x.id === id); if (!c) return null
         const fg = (g.customers || {})[id]
-        return (
-          <Wrap key={id} fg={fg}>
-            <Inp label={`${c.name} — value goal (₹)`} type="number" value={d.custs[id]?.goal || ''} onChange={v => setD(x => ({ ...x, custs: { ...x.custs, [id]: { goal: v } } }))} req />
-          </Wrap>
-        )
+        return <StableInp key={id} label={`${c.name} — value goal (₹)`} fieldKey={`cust_${id}`} defaultVal={fg?.goal} fg={fg} />
       })}
 
       {param.enable_products && (param.sel_prods || []).map(id => {
-        const p  = (products || []).find(x => x.id === id); if (!p) return null
+        const p = (products || []).find(x => x.id === id); if (!p) return null
         const fg = (g.products || {})[id]
-        return (
-          <Wrap key={id} fg={fg}>
-            <Inp label={`${p.name} — qty goal (${p.unit})`} type="number" value={d.prods[id]?.goal || ''} onChange={v => setD(x => ({ ...x, prods: { ...x.prods, [id]: { goal: v } } }))} req />
-          </Wrap>
-        )
+        return <StableInp key={id} label={`${p.name} — qty goal (${p.unit})`} fieldKey={`prod_${id}`} defaultVal={fg?.goal} fg={fg} />
       })}
 
       {param.enable_categories && (param.sel_cats || []).map(id => {
-        const c  = (categories || []).find(x => x.id === id); if (!c) return null
+        const c = (categories || []).find(x => x.id === id); if (!c) return null
         const fg = (g.categories || {})[id]
-        return (
-          <Wrap key={id} fg={fg}>
-            <Inp label={`${c.name} — qty goal (${c.unit})`} type="number" value={d.cats[id]?.goal || ''} onChange={v => setD(x => ({ ...x, cats: { ...x.cats, [id]: { goal: v } } }))} req />
-          </Wrap>
-        )
+        return <StableInp key={id} label={`${c.name} — qty goal (${c.unit})`} fieldKey={`cat_${id}`} defaultVal={fg?.goal} fg={fg} />
       })}
 
       {param.enable_visits && (
-        <Wrap fg={{ goal: g.visits_goal, status: g.visits_status, note: g.visits_note }}>
-          <Inp label="Outlet visits goal" type="number" value={d.visits.goal} onChange={v => setD(x => ({ ...x, visits: { goal: v } }))} req />
-        </Wrap>
+        <StableInp label="Outlet visits goal" fieldKey="visits" defaultVal={g.visits_goal} fg={{ status: g.visits_status, note: g.visits_note }} />
       )}
 
       {param.enable_acq && (
-        <Wrap fg={{ goal: g.acq_goal, status: g.acq_status, note: g.acq_note }}>
-          <Inp label="New customer acquisition goal" type="number" value={d.acq.goal} onChange={v => setD(x => ({ ...x, acq: { goal: v } }))} req />
-        </Wrap>
+        <StableInp label="New customer acquisition goal" fieldKey="acq" defaultVal={g.acq_goal} fg={{ status: g.acq_status, note: g.acq_note }} />
       )}
 
       <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-        <Btn v="pri" full onClick={() => onSubmit(member?.member_id, d)}>Submit for approval</Btn>
+        <Btn v="pri" full onClick={handleSubmit}>Submit for approval</Btn>
         <Btn full onClick={onClose}>Cancel</Btn>
       </div>
     </Sheet>
