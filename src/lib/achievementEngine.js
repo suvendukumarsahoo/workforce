@@ -17,14 +17,13 @@ export function computeAchievements(invoices = [], goals = {}, products = []) {
 
   // Initialise empty achievement for every member that has a goal
   Object.keys(goals).forEach(memberId => {
-    result[memberId] = { value: 0, customers: {}, products: {}, categories: {} }
+    result[memberId] = { value: 0, custs: {}, prods: {}, cats: {} }
   })
 
   invoices.forEach(invoice => {
     const mid  = String(invoice.member_id || invoice.memberId)
     const goal = goals[mid]
 
-    // Only count invoices for members whose overall goal is approved
     if (!goal || goal.status !== 'approved') return
 
     const ach = result[mid]
@@ -42,13 +41,13 @@ export function computeAchievements(invoices = [], goals = {}, products = []) {
       invoiceTotal += lineValue
 
       // Product qty
-      ach.products[productId] = (ach.products[productId] || 0) + qty
+      ach.prods[productId] = (ach.prods[productId] || 0) + qty
 
       // Category qty — look up category from product master
       const product = products.find(p => p.id === productId)
       if (product) {
         const catId = product.category_id || product.catId
-        ach.categories[catId] = (ach.categories[catId] || 0) + qty
+        ach.cats[catId] = (ach.cats[catId] || 0) + qty
       }
     })
 
@@ -57,7 +56,7 @@ export function computeAchievements(invoices = [], goals = {}, products = []) {
 
     // Customer value
     const custId = invoice.customer_id || invoice.custId
-    ach.customers[custId] = (ach.customers[custId] || 0) + invoiceTotal
+    ach.custs[custId] = (ach.custs[custId] || 0) + invoiceTotal
   })
 
   return result
@@ -70,34 +69,41 @@ export function computeAchievements(invoices = [], goals = {}, products = []) {
  * pending  → submitted, awaiting review
  * partial  → some approved, some rejected
  * approved → all fields approved
- * rejected → all pending fields rejected
+ * rejected → all fields rejected
  */
 export function getGoalOverallStatus(goal) {
   if (!goal) return 'draft'
 
-  const fields = [
-    goal.value,
-    ...Object.values(goal.customers || {}),
-    ...Object.values(goal.products  || {}),
-    ...Object.values(goal.categories|| {}),
-    goal.visits,
-    goal.acq,
-  ].filter(Boolean)
+  const statuses = []
 
-  if (!fields.length) return 'draft'
+  // Top-level string statuses
+  if (goal.value_status) statuses.push(goal.value_status)
+  if (goal.visits_status) statuses.push(goal.visits_status)
+  if (goal.acq_status) statuses.push(goal.acq_status)
 
-  const statuses = fields.map(f => f.status).filter(Boolean)
+  // Nested object statuses (customers, products, categories)
+  Object.values(goal.customers || {}).forEach(c => {
+    if (c && c.status) statuses.push(c.status)
+  })
+  Object.values(goal.products || {}).forEach(p => {
+    if (p && p.status) statuses.push(p.status)
+  })
+  Object.values(goal.categories || {}).forEach(c => {
+    if (c && c.status) statuses.push(c.status)
+  })
+
   if (!statuses.length) return 'draft'
 
   const hasApproved = statuses.some(s => s === 'approved')
   const hasPending  = statuses.some(s => s === 'pending')
   const hasRejected = statuses.some(s => s === 'rejected')
   const allApproved = statuses.every(s => s === 'approved')
+  const allRejected = statuses.every(s => s === 'rejected')
 
-  if (allApproved)              return 'approved'
-  if (hasApproved && hasRejected && !hasPending) return 'partial'
-  if (hasPending)               return 'pending'
-  if (hasRejected && !hasPending && !hasApproved) return 'rejected'
+  if (allApproved) return 'approved'
+  if (allRejected) return 'rejected'
+  if (hasApproved && hasRejected) return 'partial'
+  if (hasPending) return 'pending'
   return 'draft'
 }
 
