@@ -11,7 +11,7 @@ const ALL_MENUS = [
   { id:'targets',       label:'Targets'          },
   { id:'expApprovals',  label:'Expense Approvals'},
   { id:'invoices',      label:'Invoices'         },
-  { id:'customers',     label:'Customers'        },
+  { id:'customers',     label:'Distributors'     },
   { id:'products',      label:'Products'         },
   { id:'categories',    label:'Categories'       },
   { id:'attendance',    label:'Attendance'       },

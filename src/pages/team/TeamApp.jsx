@@ -4,6 +4,7 @@ import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Av, Btn, Inp, Bar, GBadge, SBadge, AttCal, Sheet } from '../../components/ui.jsx'
 import { pct } from '../../lib/achievementEngine.js'
 import * as db from '../../lib/db.js'
+import NewCustomerVisit from '../shared/NewCustomerVisit.jsx'
 import { getGoalOverallStatus } from '../../lib/achievementEngine.js'
 
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
@@ -11,13 +12,14 @@ const netS = s => (s.basic||0)+(s.hra||0)+(s.ta||0)+(s.da||0)-(s.pf||0)-(s.tds||
 
 export default function TeamApp() {
   const { currentUser, logout, hasMenu } = useAuth()
-  const { params, goals, setGoals, achievements, expenses, setExpenses, attendance, salaries, products, categories, customers, showToast } = useData()
-
+  const { params, goals, setGoals, achievements, expenses, setExpenses, attendance, salaries, products, categories, distributors: customers, visits, showToast, loadAll } = useData()
   const [tab, setTab]           = useState('dashboard')
   const [showGoalEntry, setShowGoalEntry] = useState(false)
   const [showExpForm, setShowExpForm]     = useState(false)
   const [expForm, setExpForm]             = useState({ cat: 'Travel', desc: '', amt: '' })
-
+  const [showMore, setShowMore] = useState(false)
+  const [selectedStage, setSelectedStage] = useState(null)
+  const [selectedLead, setSelectedLead]   = useState(null)
   const mid  = currentUser?.member_id
   const p    = (params || {})[mid] || {}
   const g    = (goals  || {})[mid] || { status: 'draft' }
@@ -47,23 +49,33 @@ export default function TeamApp() {
   const submitGoal = async (memberId, draft) => {
     const existing = (goals || {})[memberId] || {}
     const now      = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    
+    // Helper: preserve status if value unchanged, else set to pending
+    const mergeFieldStatus = (newGoal, existingVal, existingField) => {
+      const newVal = Number(newGoal) || 0
+      const oldVal = Number(existingField?.goal) || Number(existingVal) || 0
+      if (newVal === oldVal && existingField?.status) return existingField
+      return { goal: newVal, status: 'pending' }
+    }
+    
     const updated  = {
       ...existing,
       value_goal:   Number(draft.value?.goal) || existing.value_goal,
-      value_status: 'pending',
-      customers:    { ...(existing.customers || {}), ...Object.fromEntries(Object.entries(draft.custs || {}).map(([id, v]) => [id, { goal: Number(v.goal), status: 'pending' }])) },
-      products:     { ...(existing.products || {}),  ...Object.fromEntries(Object.entries(draft.prods || {}).map(([id, v]) => [id, { goal: Number(v.goal), status: 'pending' }])) },
-      categories:   { ...(existing.categories || {}), ...Object.fromEntries(Object.entries(draft.cats || {}).map(([id, v])  => [id, { goal: Number(v.goal), status: 'pending' }])) },
+      value_status: Number(draft.value?.goal) !== Number(existing.value_goal) ? 'pending' : (existing.value_status || 'pending'),
+      customers:    { ...(existing.customers || {}), ...Object.fromEntries(Object.entries(draft.custs || {}).map(([id, v]) => [id, mergeFieldStatus(v.goal, existing.value_goal, (existing.customers || {})[id])])) },
+      products:     { ...(existing.products || {}),  ...Object.fromEntries(Object.entries(draft.prods || {}).map(([id, v]) => [id, mergeFieldStatus(v.goal, existing.value_goal, (existing.products || {})[id])])) },
+      categories:   { ...(existing.categories || {}), ...Object.fromEntries(Object.entries(draft.cats || {}).map(([id, v]) => [id, mergeFieldStatus(v.goal, existing.value_goal, (existing.categories || {})[id])])) },
       visits_goal:  Number(draft.visits?.goal) || existing.visits_goal,
-      visits_status:'pending',
+      visits_status: Number(draft.visits?.goal) !== Number(existing.visits_goal) ? 'pending' : (existing.visits_status || 'pending'),
       acq_goal:     Number(draft.acq?.goal)    || existing.acq_goal,
-      acq_status:   'pending',
+      acq_status:   Number(draft.acq?.goal) !== Number(existing.acq_goal) ? 'pending' : (existing.acq_status || 'pending'),
       submitted_at: now,
       status:       'pending',
     }
     const { error } = await db.upsertGoal(memberId, updated)
     if (error) { showToast('Error submitting goals'); return }
     setGoals(prev => ({ ...prev, [memberId]: updated }))
+    await loadAll()
     setShowGoalEntry(false)
     showToast('Goals submitted for manager approval')
   }
@@ -75,9 +87,14 @@ export default function TeamApp() {
     if (error) { showToast('Error submitting expense'); return }
     setExpenses(prev => [{ ...payload, id: data?.id || Date.now(), member: currentUser }, ...prev])
     setExpForm({ cat: 'Travel', desc: '', amt: '' })
+    await loadAll()
     setShowExpForm(false)
     showToast('Expense submitted for approval')
   }
+
+  const MORE_ITEMS = [
+    hasMenu('newCustomerVisit') && { id: 'newCustomerVisit', icon: '🚶', label: 'New Customer Visit' },
+  ].filter(Boolean)
 
   const TABS = [
     hasMenu('dashboard')    && { id: 'dashboard',    icon: '🏠', label: 'Home'     },
@@ -85,6 +102,7 @@ export default function TeamApp() {
     hasMenu('myExpenses')   && { id: 'myExpenses',   icon: '💳', label: 'Expenses' },
     hasMenu('myAttendance') && { id: 'myAttendance', icon: '📅', label: 'Attend.'  },
     hasMenu('mySalary')     && { id: 'mySalary',     icon: '💰', label: 'Salary'   },
+    MORE_ITEMS.length > 0   && { id: '__more',        icon: '☰', label: 'More'     },
   ].filter(Boolean)
 
   return (
@@ -123,6 +141,49 @@ export default function TeamApp() {
         {/* DASHBOARD */}
         {tab === 'dashboard' && (
           <>
+        {(() => {
+              const myVisits = (visits || []).filter(v => v.member_id === mid)
+              const myLeads = (customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.type === 'New Customer')
+              const stageCounts = { interested: 0, not_interested: 0, final: 0 }
+              myLeads.forEach(d => {
+                if (d.lead_stage === 'interested') stageCounts.interested++
+                else if (d.lead_stage === 'not_interested') stageCounts.not_interested++
+                else if (d.lead_stage === 'final_pending' || d.lead_stage === 'final_approved') stageCounts.final++
+              })
+              return (
+                <Card style={{ marginBottom: 12 }}>
+                  <CH title="My New Customer Visits" sub={`${myVisits.length} total visits logged — tap a stage to view leads`} />
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, padding: 14 }}>
+                    {[['interested', 'Interested', stageCounts.interested, '#2563eb'], ['not_interested', 'Not Interested', stageCounts.not_interested, '#ef4444'], ['final', 'Final', stageCounts.final, '#10b981']].map(([key, l, v, c]) => (
+                      <div key={key} onClick={() => setSelectedStage(key)} style={{ textAlign: 'center', cursor: 'pointer', padding: '6px 4px', borderRadius: 8 }}
+                        onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
+                        onMouseLeave={e => e.currentTarget.style.background = ''}>
+                        <div style={{ fontSize: 9, color: '#6b7280' }}>{l}</div>
+                        <div style={{ fontSize: 16, fontWeight: 700, color: c }}>{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                </Card>
+              )
+            })()}
+
+            {selectedStage && (
+              <LeadListSheet
+                stage={selectedStage}
+                leads={(customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.type === 'New Customer' &&
+                  (selectedStage === 'final' ? (d.lead_stage === 'final_pending' || d.lead_stage === 'final_approved') : d.lead_stage === selectedStage))}
+                onSelectLead={d => { setSelectedLead(d); setSelectedStage(null) }}
+                onClose={() => setSelectedStage(null)}
+              />
+            )}
+
+            {selectedLead && (
+              <LeadDetailSheet
+                lead={selectedLead}
+                visits={(visits || []).filter(v => v.distributor_id === selectedLead.id)}
+                onClose={() => setSelectedLead(null)}
+              />
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
               {[['My target', approvedVal ? F(approvedVal) : '—', '#2563eb'], ['Achieved', approvedVal ? F(a.value) : '—', '#10b981'], ['Progress', approvedVal ? valPct + '%' : '—', valPct >= 75 ? '#10b981' : valPct >= 50 ? '#f59e0b' : '#ef4444'], ['Goal status', overallStatus.toUpperCase(), '#374151']].map(([l, v, c]) => (
                 <div key={l} style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: '12px 14px' }}>
@@ -295,21 +356,33 @@ export default function TeamApp() {
             </div>
           </Card>
         )}
+        {tab === 'newCustomerVisit' && <NewCustomerVisit />}
       </div>
 
-      {/* Bottom nav */}
+{/* Bottom nav */}
       <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: '#fff', borderTop: '1px solid #e5e7eb', display: 'flex', zIndex: 50 }}>
         {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, background: 'none', border: 'none', cursor: 'pointer', padding: '8px 0', color: tab === t.id ? '#2563eb' : '#9ca3af', fontFamily: 'inherit' }}>
+          <button key={t.id} onClick={() => t.id === '__more' ? setShowMore(true) : setTab(t.id)} style={{ flex: 1, background: 'none', border: 'none', cursor: 'pointer', padding: '8px 0', color: tab === t.id ? '#2563eb' : '#9ca3af', fontFamily: 'inherit' }}>
             <div style={{ fontSize: 20 }}>{t.icon}</div>
             <div style={{ fontSize: 9, marginTop: 2 }}>{t.label}</div>
           </button>
         ))}
       </div>
+
+      {showMore && (
+        <Sheet title="More" sub="Additional functions" onClose={() => setShowMore(false)}>
+          {MORE_ITEMS.map(item => (
+            <div key={item.id} onClick={() => { setTab(item.id); setShowMore(false) }}
+              style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 4px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
+              <span style={{ fontSize: 20 }}>{item.icon}</span>
+              <span style={{ fontSize: 14, fontWeight: 500 }}>{item.label}</span>
+            </div>
+          ))}
+        </Sheet>
+      )}
     </div>
   )
 }
-
 function GoalEntrySheet({ member, param, goal, products, categories, customers, onSubmit, onClose }) {
   const g = goal || {}
   const canEdit = s => !s || s === 'draft' || s === 'rejected'
@@ -335,7 +408,7 @@ function GoalEntrySheet({ member, param, goal, products, categories, customers, 
     )
   }
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const draft = {
       value:  { goal: get('value', g.value_goal) },
       custs:  Object.fromEntries((param.sel_custs || []).map(id => [id, { goal: get(`cust_${id}`, (g.customers||{})[id]?.goal) }])),
@@ -344,7 +417,7 @@ function GoalEntrySheet({ member, param, goal, products, categories, customers, 
       visits: { goal: get('visits', g.visits_goal) },
       acq:    { goal: get('acq',    g.acq_goal)    },
     }
-    onSubmit(member?.member_id, draft)
+    await onSubmit(member?.member_id, draft)
   }
 
   return (
@@ -384,9 +457,50 @@ function GoalEntrySheet({ member, param, goal, products, categories, customers, 
       )}
 
       <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-        <Btn v="pri" full onClick={handleSubmit}>Submit for approval</Btn>
+        <Btn v="pri" full onClick={async () => { await handleSubmit() }}>Submit for approval</Btn>
         <Btn full onClick={onClose}>Cancel</Btn>
       </div>
+    </Sheet>
+  )
+}
+
+
+function LeadListSheet({ stage, leads, onSelectLead, onClose }) {
+  const stageLabel = { interested: 'Interested', not_interested: 'Not Interested', final: 'Final' }[stage] || stage
+  return (
+    <Sheet title={stageLabel} sub={`${leads.length} lead(s)`} onClose={onClose}>
+      {leads.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No leads in this stage</div>}
+      {leads.map(d => (
+        <div key={d.id} onClick={() => onSelectLead(d)}
+          style={{ padding: '12px 4px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>{d.name}</div>
+          <div style={{ fontSize: 11, color: '#9ca3af' }}>{d.area || '—'}{d.next_followup_date ? ` · Next: ${d.next_followup_date}` : ''}</div>
+        </div>
+      ))}
+    </Sheet>
+  )
+}
+
+function LeadDetailSheet({ lead, visits, onClose }) {
+  return (
+    <Sheet title={lead.name} sub={lead.area || 'Visit history'} onClose={onClose}>
+      <div style={{ background: '#f9fafb', borderRadius: 10, padding: 12, marginBottom: 14 }}>
+        <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 3 }}>Current stage</div>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>{lead.lead_stage || 'new'}</div>
+        {lead.next_followup_date && <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>Next follow-up: {lead.next_followup_date}</div>}
+      </div>
+      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Visit history ({visits.length})</div>
+      {visits.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No visits recorded</div>}
+      {visits.map(v => (
+        <div key={v.id} style={{ padding: '10px 4px', borderBottom: '1px solid #f3f4f6' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 12, fontWeight: 600, textTransform: 'capitalize' }}>{v.outcome?.replace('_', ' ')}</span>
+            <span style={{ fontSize: 11, color: '#9ca3af' }}>{new Date(v.visit_date).toLocaleDateString('en-IN')}</span>
+          </div>
+          {v.notes && <div style={{ fontSize: 11, color: '#6b7280', marginTop: 3 }}>{v.notes}</div>}
+          {v.latitude && <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>📍 {v.latitude.toFixed(4)}, {v.longitude.toFixed(4)}</div>}
+        </div>
+      ))}
     </Sheet>
   )
 }

@@ -10,13 +10,14 @@ import GoalApprovals from './manager/GoalApprovals.jsx'
 import Targets       from './shared/Targets.jsx'
 import ExpApprovals  from './shared/ExpApprovals.jsx'
 import Invoices      from './shared/Invoices.jsx'
-import Customers     from './shared/Customers.jsx'
+import Customers     from './shared/Distributors.jsx'
 import Products      from './shared/Products.jsx'
 import Categories    from './shared/Categories.jsx'
 import Attendance    from './shared/Attendance.jsx'
 import Employees     from './admin/Employees.jsx'
 import Payroll       from './shared/Payroll.jsx'
 import Settings      from './admin/Settings.jsx'
+import NewCustomerVisit from './shared/NewCustomerVisit.jsx'
 
 const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard',        icon:'📊', sec:'Overview'  },
@@ -25,13 +26,14 @@ const ALL_MENUS = [
   { id:'targets',       label:'Targets',          icon:'🎯', sec:'Targets'   },
   { id:'expApprovals',  label:'Expense Approvals',icon:'💳', sec:'Finance'   },
   { id:'invoices',      label:'Invoices',         icon:'🧾', sec:'Finance'   },
-  { id:'customers',     label:'Customers',        icon:'🤝', sec:'Master'    },
+  { id:'customers',     label:'Distributors',     icon:'🤝', sec:'Master'    },  
   { id:'products',      label:'Products',         icon:'📦', sec:'Master'    },
   { id:'categories',    label:'Categories',       icon:'🗂️',  sec:'Master'    },
   { id:'attendance',    label:'Attendance',       icon:'📅', sec:'HR'        },
   { id:'employees',     label:'Employees',        icon:'👥', sec:'HR'        },
   { id:'payroll',       label:'Payroll',          icon:'💰', sec:'HR'        },
   { id:'settings',      label:'Settings',         icon:'🔧', sec:'Admin'     },
+  { id:'newCustomerVisit', label:'New Customer Visit', icon:'🚶', sec:'Distributor Functions' },
 ]
 
 const PAGE_MAP = {
@@ -48,6 +50,7 @@ const PAGE_MAP = {
   employees:     Employees,
   payroll:       Payroll,
   settings:      Settings,
+  newCustomerVisit: NewCustomerVisit,
 }
 
 export default function WebApp() {

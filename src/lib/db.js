@@ -184,34 +184,35 @@ export async function deleteProduct(id) {
   return { error }
 }
 
-// ─── CUSTOMERS ────────────────────────────────────────────────────────────────
 
-export async function fetchCustomers() {
+// ─── DISTRIBUTORS (formerly CUSTOMERS) ────────────────────────────────────────
+
+export async function fetchDistributors() {
   const { data, error } = await supabase
-    .from('customers')
-    .select('*, assignments:customer_assignments(member_id)')
+    .from('distributors')
+    .select('*, assignments:distributor_assignments(member_id)')
     .order('name')
   return { data, error }
 }
 
-export async function createCustomer(payload, memberIds = []) {
-  const { data, error } = await supabase.from('customers').insert(payload).select().single()
+export async function createDistributor(payload, memberIds = []) {
+  const { data, error } = await supabase.from('distributors').insert(payload).select().single()
   if (error || !memberIds.length) return { data, error }
-  await supabase.from('customer_assignments').insert(memberIds.map(mid => ({ customer_id: data.id, member_id: mid })))
+  await supabase.from('distributor_assignments').insert(memberIds.map(mid => ({ distributor_id: data.id, member_id: mid })))
   return { data, error }
 }
 
-export async function updateCustomer(id, payload, memberIds = []) {
-  const { data, error } = await supabase.from('customers').update(payload).eq('id', id).select().single()
+export async function updateDistributor(id, payload, memberIds = []) {
+  const { data, error } = await supabase.from('distributors').update(payload).eq('id', id).select().single()
   if (error) return { data, error }
-  await supabase.from('customer_assignments').delete().eq('customer_id', id)
-  if (memberIds.length) await supabase.from('customer_assignments').insert(memberIds.map(mid => ({ customer_id: id, member_id: mid })))
+  await supabase.from('distributor_assignments').delete().eq('distributor_id', id)
+  if (memberIds.length) await supabase.from('distributor_assignments').insert(memberIds.map(mid => ({ distributor_id: id, member_id: mid })))
   return { data, error }
 }
 
-export async function deleteCustomer(id) {
-  await supabase.from('customer_assignments').delete().eq('customer_id', id)
-  const { error } = await supabase.from('customers').delete().eq('id', id)
+export async function deleteDistributor(id) {
+  await supabase.from('distributor_assignments').delete().eq('distributor_id', id)
+  const { error } = await supabase.from('distributors').delete().eq('id', id)
   return { error }
 }
 
@@ -349,5 +350,37 @@ export async function upsertSalary(memberId, payload) {
     .upsert({ member_id: memberId, ...payload }, { onConflict: 'member_id' })
     .select()
     .single()
+  return { data, error }
+}
+// ─── DISTRIBUTOR VISITS (New Customer Visit flow) ─────────────────────────────
+
+export async function fetchVisits(memberId = null) {
+  let query = supabase
+    .from('distributor_visits')
+    .select('*, distributor:distributors(id, name, area, type, lead_stage)')
+    .order('visit_date', { ascending: false })
+  if (memberId) query = query.eq('member_id', memberId)
+  const { data, error } = await query
+  return { data, error }
+}
+
+export async function createVisit(payload) {
+  const { data, error } = await supabase.from('distributor_visits').insert(payload).select().single()
+  return { data, error }
+}
+
+export async function updateDistributorLeadStage(id, updates) {
+  const { data, error } = await supabase.from('distributors').update(updates).eq('id', id).select().single()
+  return { data, error }
+}
+
+export async function fetchDueFollowups() {
+  const today = new Date().toISOString().split('T')[0]
+  const { data, error } = await supabase
+    .from('distributors')
+    .select('*')
+    .eq('lead_stage', 'interested')
+    .lte('next_followup_date', today)
+    .order('name')
   return { data, error }
 }

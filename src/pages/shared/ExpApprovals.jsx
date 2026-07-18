@@ -7,7 +7,7 @@ const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 
 export default function ExpApprovals() {
   const { can } = useAuth()
-  const { expenses, setExpenses, showToast } = useData()
+  const { expenses, setExpenses, showToast, loadAll } = useData()
 
   const pending = (expenses || []).filter(e => e.status === 'pending')
 
@@ -15,6 +15,7 @@ export default function ExpApprovals() {
     const { error } = await db.updateExpense(id, { status })
     if (error) { showToast('Error updating expense'); return }
     setExpenses(prev => prev.map(e => e.id === id ? { ...e, status } : e))
+    await loadAll()
     showToast(status === 'approved' ? 'Expense approved' : 'Expense rejected')
   }
 

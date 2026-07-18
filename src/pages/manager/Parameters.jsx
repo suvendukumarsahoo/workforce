@@ -6,9 +6,8 @@ import * as db from '../../lib/db.js'
 
 export default function Parameters() {
   const { can } = useAuth()
-  const { members, params, setParams, products, categories, customers, showToast } = useData()
-  const [editing, setEditing] = useState(null)
-
+const { members, params, setParams, products, categories, distributors: customers, showToast } = useData()
+const [editing, setEditing] = useState(null)
   const save = async (memberId, draft) => {
     const { data, error } = await db.upsertParameter(memberId, {
       enable_value: draft.enableValue, enable_customers: draft.enableCustomers,

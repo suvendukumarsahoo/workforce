@@ -6,8 +6,8 @@ import { useState } from 'react'
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 
 export default function Targets() {
-  const { members, goals, achievements, params, products, categories, customers } = useData()
-  const [drill, setDrill] = useState(null)
+const { members, goals, achievements, params, products, categories } = useData()
+const [drill, setDrill] = useState(null)
 
   return (
     <div>

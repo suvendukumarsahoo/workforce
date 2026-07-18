@@ -8,7 +8,7 @@ const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 
 export default function Invoices() {
   const { can } = useAuth()
-  const { invoices, setInvoices, members, products, customers, showToast } = useData()
+const { invoices, setInvoices, members, products, categories, distributors: customers, showToast } = useData()
   const [sheet, setSheet] = useState(null)
 
   const cols = [
