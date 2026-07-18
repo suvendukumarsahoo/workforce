@@ -20,14 +20,21 @@ export default function TeamApp() {
   const [showMore, setShowMore] = useState(false)
   const [selectedStage, setSelectedStage] = useState(null)
   const [selectedLead, setSelectedLead]   = useState(null)
+  const [showFollowupPopup, setShowFollowupPopup] = useState(true)
+  const [pendingDetail, setPendingDetail] = useState(null)
   const mid  = currentUser?.member_id
+  const todayStr = new Date().toISOString().split('T')[0]
+  const todayFollowups = (customers || []).filter(d =>
+    (d.assignedTo || []).includes(mid) && d.lead_stage === 'interested' && !d.contact_today &&
+    d.next_followup_date && d.next_followup_date <= todayStr
+  )
+  const pendingVisits = (customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.contact_today)
   const p    = (params || {})[mid] || {}
   const g    = (goals  || {})[mid] || { status: 'draft' }
   const a    = (achievements || {})[mid] || { value: 0, custs: {}, prods: {}, cats: {} }
   const sal  = (salaries || []).find(s => s.member_id === mid)
   const myExp = (expenses || []).filter(e => e.member_id === mid)
   const spent = myExp.filter(e => e.status === 'approved').reduce((s, e) => s + e.amount, 0)
-
   const overallStatus = getGoalOverallStatus(g)
   const hasRejected   = overallStatus === 'partial' || overallStatus === 'rejected'
   const canEnter      = overallStatus === 'draft' || hasRejected
@@ -91,11 +98,45 @@ export default function TeamApp() {
     setShowExpForm(false)
     showToast('Expense submitted for approval')
   }
+const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `${n}th`
 
+  const willContactToday = async (id) => {
+    const { error } = await db.updateDistributorLeadStage(id, { contact_today: true })
+    if (error) { showToast('Error updating'); return }
+    await loadAll()
+  }
+
+  const reschedule = async (id, newDate) => {
+    const { error } = await db.updateDistributorLeadStage(id, { next_followup_date: newDate })
+    if (error) { showToast('Error updating'); return }
+    await loadAll()
+    showToast('Rescheduled')
+  }
+
+  const closeVisit = async (lead, outcome, notes, nextDate) => {
+    const visitNumber = (visits || []).filter(v => v.distributor_id === lead.id).length + 1
+    const updates = { contact_today: false }
+    if (outcome === 'interested') { updates.lead_stage = 'interested'; updates.next_followup_date = nextDate }
+    else if (outcome === 'not_interested') { updates.lead_stage = 'not_interested'; updates.next_followup_date = null }
+    else if (outcome === 'final') { updates.lead_stage = 'final_pending'; updates.next_followup_date = null }
+
+    const { error } = await db.updateDistributorLeadStage(lead.id, updates)
+    if (error) { showToast('Error saving'); return }
+
+    const finalNotes = outcome === 'not_interested' ? `Deal Fail (${ordinal(visitNumber)} visit). ${notes}` : notes
+
+    await db.createVisit({
+      distributor_id: lead.id, member_id: mid, outcome,
+      notes: finalNotes, next_followup_date: outcome === 'interested' ? nextDate : null,
+    })
+    await loadAll()
+    setPendingDetail(null)
+    showToast('Visit updated')
+  }
   const MORE_ITEMS = [
-    hasMenu('newCustomerVisit') && { id: 'newCustomerVisit', icon: '🚶', label: 'New Customer Visit' },
-  ].filter(Boolean)
-
+  hasMenu('newCustomerVisit') && { id: 'newCustomerVisit', icon: '🚶', label: 'New Customer Visit' },
+  hasMenu('newCustomerVisit') && { id: 'pendingVisits',    icon: '📌', label: `Pending Visits${pendingVisits.length ? ` (${pendingVisits.length})` : ''}` },
+].filter(Boolean)
   const TABS = [
     hasMenu('dashboard')    && { id: 'dashboard',    icon: '🏠', label: 'Home'     },
     hasMenu('myGoals')      && { id: 'myGoals',      icon: '🎯', label: 'Goals'    },
@@ -110,7 +151,22 @@ export default function TeamApp() {
       {showGoalEntry && (
         <GoalEntrySheet member={currentUser} param={p} goal={g} products={products} categories={categories} customers={customers} onSubmit={submitGoal} onClose={() => setShowGoalEntry(false)} />
       )}
+{showFollowupPopup && todayFollowups.length > 0 && (
+        <FollowupPopup
+          leads={todayFollowups}
+          onContactToday={async (id) => { await willContactToday(id) }}
+          onReschedule={async (id, date) => { await reschedule(id, date) }}
+          onClose={() => setShowFollowupPopup(false)}
+        />
+      )}
 
+      {pendingDetail && (
+        <VisitCloseSheet
+          lead={pendingDetail}
+          onSave={closeVisit}
+          onClose={() => setPendingDetail(null)}
+        />
+      )}
       {/* Header */}
       <div style={{ background: '#0f172a', color: '#fff', padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, zIndex: 50 }}>
         <div>
@@ -357,6 +413,19 @@ export default function TeamApp() {
           </Card>
         )}
         {tab === 'newCustomerVisit' && <NewCustomerVisit />}
+        {tab === 'pendingVisits' && (
+          <Card>
+            <CH title="Pending Visits" sub={`${pendingVisits.length} customer(s) to visit`} />
+            {pendingVisits.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No pending visits</div>}
+            {pendingVisits.map(d => (
+              <div key={d.id} onClick={() => setPendingDetail(d)}
+                style={{ padding: '12px 14px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{d.name}</div>
+                <div style={{ fontSize: 11, color: '#9ca3af' }}>{d.area || '—'}</div>
+              </div>
+            ))}
+          </Card>
+        )}
       </div>
 
 {/* Bottom nav */}
@@ -501,6 +570,76 @@ function LeadDetailSheet({ lead, visits, onClose }) {
           {v.latitude && <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>📍 {v.latitude.toFixed(4)}, {v.longitude.toFixed(4)}</div>}
         </div>
       ))}
+    </Sheet>
+  )
+}
+function FollowupPopup({ leads, onContactToday, onReschedule, onClose }) {
+  const [rescheduling, setRescheduling] = useState(null)
+  const [newDate, setNewDate] = useState('')
+
+  return (
+    <Sheet title="Today's Follow-ups" sub={`${leads.length} customer(s) scheduled`} onClose={onClose}>
+      {leads.map(d => (
+        <div key={d.id} style={{ padding: '12px 4px', borderBottom: '1px solid #f3f4f6' }}>
+          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>{d.name}</div>
+          {rescheduling === d.id ? (
+            <div>
+              <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)}
+                style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 13, marginBottom: 8, boxSizing: 'border-box' }} />
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Btn v="pri" sm full onClick={() => { onReschedule(d.id, newDate); setRescheduling(null); setNewDate('') }}>Confirm</Btn>
+                <Btn sm full onClick={() => setRescheduling(null)}>Cancel</Btn>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Btn v="pri" sm full onClick={() => onContactToday(d.id)}>Will Contact Today</Btn>
+              <Btn sm full onClick={() => setRescheduling(d.id)}>Reschedule</Btn>
+            </div>
+          )}
+        </div>
+      ))}
+    </Sheet>
+  )
+}
+
+function VisitCloseSheet({ lead, onSave, onClose }) {
+  const [outcome, setOutcome] = useState('')
+  const [notes, setNotes] = useState('')
+  const [nextDate, setNextDate] = useState('')
+
+  const handleSave = () => {
+    if (!outcome) return
+    if (outcome === 'interested' && !nextDate) return
+    onSave(lead, outcome, notes, nextDate)
+  }
+
+  return (
+    <Sheet title={lead.name} sub={lead.area || 'Update visit'} onClose={onClose}>
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>Notes</label>
+        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}/>
+          
+        </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>Outcome</label>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <Btn v={outcome === 'interested' ? 'pri' : ''} full onClick={() => setOutcome('interested')}>Remain Same (Interested)</Btn>
+          <Btn v={outcome === 'not_interested' ? 'pri' : ''} full onClick={() => setOutcome('not_interested')}>Not Interested — Close Lead</Btn>
+          <Btn v={outcome === 'final' ? 'pri' : ''} full onClick={() => setOutcome('final')}>Final</Btn>
+        </div>
+      </div>
+
+      {outcome === 'interested' && (
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Next follow-up date</label>
+          <input type="date" value={nextDate} onChange={e => setNextDate(e.target.value)}
+            style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 13, boxSizing: 'border-box' }} />
+        </div>
+      )}
+
+      <Btn v="pri" full onClick={handleSave}>Save</Btn>
     </Sheet>
   )
 }
