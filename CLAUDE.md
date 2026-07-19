@@ -400,3 +400,60 @@ AND assignedTo includes member, per member, exposed as `a.acq` in the achievemen
 4. TeamApp.jsx: 48hr countdown display + payment entry form (opens when tapping payment_pending lead)
 5. DistributorApproval.jsx: show submitted payment details to Admin + "Payment Received" button
 6. Manager: read-only countdown display (reuse existing read-only pattern)
+### Bug fixes — goal status & achievement counting (19 July 2026)
+
+**Bug: stale/orphaned goal fields kept status stuck at 'pending' forever.** If a Manager later 
+disabled a parameter (e.g. unchecked Customer-wise value) after a member had already submitted 
+goals with that field, the old pending/rejected field data stayed in the goals JSON forever — but 
+GoalApprovals.jsx only renders fields for currently-enabled parameters, so there was no way to ever 
+resolve it. Fixed: `getGoalOverallStatus(goal, param)` in achievementEngine.js now takes an optional 
+second `param` argument and only counts fields whose parameter is currently enabled (also respects 
+`sel_custs`/`sel_prods`/`sel_cats` — if a specific item was removed from the selection list, its 
+stale status is ignored too). All 2 real call sites updated:
+- useData.jsx: builds `memberParam` from the raw `pa` array (NOT the `params` state, which isn't 
+  updated yet at this point in loadAll()) and passes it in.
+- TeamApp.jsx: passes existing `p` (member's own params, already in scope).
+- GoalApprovals.jsx: no change needed — just reads the pre-computed `goals[m.id].status`.
+
+**Bug: acq (Distributor Appointment) achievement was counting ALL distributors, not just ones 
+appointed through the pipeline.** Original fix counted `type === 'Distributor'`, but pre-existing 
+seed distributors (TCS Auto Parts, Wipro Motors, etc.) already have that type from seed.sql and 
+aren't part of the New Customer Visit → Final → Payment pipeline at all. Corrected: 
+achievementEngine.js now counts `lead_stage === 'final_approved'` instead — this value only ever 
+gets set at the very end of the full pipeline (after Admin acknowledges payment), so pre-existing 
+seed data is correctly excluded.
+
+**Missing UI: TeamApp.jsx "My Goals" tab never rendered Visits or Acq (Distributor Appointment) 
+sections at all** — only Value/Product/Category/Customer. Added two new Card blocks after the 
+Customer goals section: "New Distributor Appointment" (shows goal, status badge, achieved count 
+from `a.acq`, progress bar when approved) and "Outlet Visits" (goal + status, no achievement 
+tracking exists for this one yet). Confirmed both now visible and correctly showing Approved status 
+with 0 achieved (correct, since no lead has completed the full pipeline yet).
+
+### Phase 3 — Payment stage: IN PROGRESS
+
+**New file created:** src/pages/shared/PaymentEntryForm.jsx — fields: Mode of Payment 
+(Cash/Cheque/NEFT/RTGS/UPI buttons), Bank Name, IFSC Code, Bank Branch, Transaction Date, 
+Transaction Amount, Transaction ID (all required), Remarks (optional). Validates all required 
+fields before allowing submit.
+
+**TeamApp.jsx wiring so far:**
+- Import added: `import PaymentEntryForm from '../shared/PaymentEntryForm.jsx'`
+- New state: `const [paymentLead, setPaymentLead] = useState(null)`
+- LeadDetailSheet: added `onOpenPayment` prop, `getCountdown()` helper (computes 48hr deadline from 
+  `stage_updated_at`, shows "Xh Ym remaining" or "Window expired"), and a new block shown when 
+  `lead.lead_stage === 'payment_pending'`: countdown display + "Enter Payment Details" button that 
+  calls `onOpenPayment(lead)`.
+
+### Next steps (not yet done)
+1. Update the `<LeadDetailSheet>` render call site to pass `onOpenPayment={(lead) => { setPaymentLead(lead); setSelectedLead(null) }}`
+2. Add `<PaymentEntryForm>` render block (conditional on `paymentLead`), wired to a new `onSubmit` 
+   handler that: calls `db.createPayment()` with the form data + distributor_id/member_id, then 
+   calls `db.updateDistributorLeadStage(paymentLead.id, { lead_stage: 'payment_verification' })`
+3. Manager: read-only countdown display (DistributorApproval.jsx already shows stage + timeAgo — 
+   should also show countdown specifically for payment_pending, reusing same getCountdown logic)
+4. DistributorApproval.jsx (Admin): show submitted payment details (fetch via db.fetchPayments(), 
+   filter by distributor_id) + "Payment Received" button → calls db.verifyPayment(paymentId) AND 
+   db.updateDistributorLeadStage(leadId, { lead_stage: 'final_approved', type: 'Distributor' }) 
+   — this is the final step that completes the entire Phase 3 pipeline and makes the acq achievement 
+   count increment for the team member.

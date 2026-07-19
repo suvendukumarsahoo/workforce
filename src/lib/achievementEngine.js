@@ -12,12 +12,12 @@
  * @param {Array}  products  - product master array
  * @returns {Object}         - { [memberId]: { value, customers, products, categories } }
  */
-export function computeAchievements(invoices = [], goals = {}, products = []) {
+export function computeAchievements(invoices = [], goals = {}, products = [], distributors = []) {
   const result = {}
 
   // Initialise empty achievement for every member that has a goal
   Object.keys(goals).forEach(memberId => {
-    result[memberId] = { value: 0, custs: {}, prods: {}, cats: {} }
+    result[memberId] = { value: 0, custs: {}, prods: {}, cats: {}, acq: 0 }
   })
 
   invoices.forEach(invoice => {
@@ -59,38 +59,66 @@ export function computeAchievements(invoices = [], goals = {}, products = []) {
     ach.custs[custId] = (ach.custs[custId] || 0) + invoiceTotal
   })
 
+  // Distributor Appointment count — only counts leads that completed the full appointment pipeline
+distributors.forEach(d => {
+  if (d.lead_stage !== 'final_approved') return
+  const ownerIds = d.assignedTo || []
+  ownerIds.forEach(mid => {
+    const key = String(mid)
+    if (result[key]) result[key].acq += 1
+  })
+})
+
   return result
 }
-
 /**
  * getGoalOverallStatus
  * Derives the overall goal status from individual field statuses.
+ * If `param` is provided, only counts fields whose parameter toggle is currently enabled —
+ * this prevents stale/orphaned field data (from a since-disabled parameter) from permanently
+ * stuck a goal in 'pending'.
  * draft    → nothing submitted
  * pending  → submitted, awaiting review
  * partial  → some approved, some rejected
  * approved → all fields approved
  * rejected → all fields rejected
  */
-export function getGoalOverallStatus(goal) {
+export function getGoalOverallStatus(goal, param = null) {
   if (!goal) return 'draft'
 
   const statuses = []
+  const enableValue      = param ? param.enable_value      : true
+  const enableCustomers  = param ? param.enable_customers  : true
+  const enableProducts   = param ? param.enable_products   : true
+  const enableCategories = param ? param.enable_categories : true
+  const enableVisits     = param ? param.enable_visits     : true
+  const enableAcq        = param ? param.enable_acq        : true
 
-  // Top-level string statuses
-  if (goal.value_status) statuses.push(goal.value_status)
-  if (goal.visits_status) statuses.push(goal.visits_status)
-  if (goal.acq_status) statuses.push(goal.acq_status)
+  if (enableValue && goal.value_status) statuses.push(goal.value_status)
+  if (enableVisits && goal.visits_status) statuses.push(goal.visits_status)
+  if (enableAcq && goal.acq_status) statuses.push(goal.acq_status)
 
-  // Nested object statuses (customers, products, categories)
-  Object.values(goal.customers || {}).forEach(c => {
-    if (c && c.status) statuses.push(c.status)
-  })
-  Object.values(goal.products || {}).forEach(p => {
-    if (p && p.status) statuses.push(p.status)
-  })
-  Object.values(goal.categories || {}).forEach(c => {
-    if (c && c.status) statuses.push(c.status)
-  })
+  if (enableCustomers) {
+    const selIds = param?.sel_custs || null
+    Object.entries(goal.customers || {}).forEach(([id, c]) => {
+      if (selIds && !selIds.includes(id)) return
+      if (c && c.status) statuses.push(c.status)
+    })
+  }
+  if (enableProducts) {
+    const selIds = param?.sel_prods || null
+    Object.entries(goal.products || {}).forEach(([id, p]) => {
+      if (selIds && !selIds.includes(id)) return
+      if (p && p.status) statuses.push(p.status)
+    })
+  }
+  if (enableCategories) {
+    const selIds = param?.sel_cats || null
+    Object.entries(goal.categories || {}).forEach(([id, c]) => {
+      if (selIds && !selIds.includes(id)) return
+      if (c && c.status) statuses.push(c.status)
+    })
+  }
 
   if (!statuses.length) return 'draft'
 

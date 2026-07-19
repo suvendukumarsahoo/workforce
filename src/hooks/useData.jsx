@@ -56,8 +56,8 @@ export function DataProvider({ children }) {
     if (g)   {
       const goalMap = {}
       g.forEach(goal => {
-        goalMap[goal.member_id] = { ...goal, status: getGoalOverallStatus(goal) }
-      })
+      const memberParam = (pa || []).find(p => p.member_id === goal.member_id)
+      goalMap[goal.member_id] = { ...goal, status: getGoalOverallStatus(goal, memberParam) }      })
       setGoals(goalMap)
     }
     if (inv) setInvoices(inv)
@@ -68,9 +68,9 @@ export function DataProvider({ children }) {
   }
 
   const achievements = useMemo(
-    () => computeAchievements(invoices, goals, products),
-    [invoices, goals, products]
-  )
+  () => computeAchievements(invoices, goals, products, distributors),
+  [invoices, goals, products, distributors]
+)
 
   function showToast(msg, duration = 2800) {
     setToast(msg)

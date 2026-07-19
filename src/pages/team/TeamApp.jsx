@@ -7,6 +7,7 @@ import * as db from '../../lib/db.js'
 import NewCustomerVisit from '../shared/NewCustomerVisit.jsx'
 import { getGoalOverallStatus } from '../../lib/achievementEngine.js'
 import DocumentSubmitWizard from '../shared/DocumentSubmitWizard.jsx'
+import PaymentEntryForm from '../shared/PaymentEntryForm.jsx'
 
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 const netS = s => (s.basic||0)+(s.hra||0)+(s.ta||0)+(s.da||0)-(s.pf||0)-(s.tds||0)
@@ -35,6 +36,7 @@ export default function TeamApp() {
   const [showFollowupPopup, setShowFollowupPopup] = useState(true)
   const [pendingDetail, setPendingDetail] = useState(null)
   const [docWizardLead, setDocWizardLead] = useState(null)
+const [paymentLead, setPaymentLead] = useState(null)
 
   const mid  = currentUser?.member_id
   const todayStr = new Date().toISOString().split('T')[0]
@@ -49,7 +51,7 @@ export default function TeamApp() {
   const sal  = (salaries || []).find(s => s.member_id === mid)
   const myExp = (expenses || []).filter(e => e.member_id === mid)
   const spent = myExp.filter(e => e.status === 'approved').reduce((s, e) => s + e.amount, 0)
-  const overallStatus = getGoalOverallStatus(g)
+const overallStatus = getGoalOverallStatus(g, p)
 const hasRejected   = overallStatus === 'partial' || overallStatus === 'rejected'
 const hasNewParam   = (p.enable_value && !g.value_status) ||
   (p.enable_visits && !g.visits_status) ||
@@ -386,6 +388,34 @@ myLeads.forEach(d => {
                 </Card>
               )
             })}
+            {/* New Distributor Appointment goal */}
+            {p.enable_acq && g.acq_goal > 0 && (
+              <Card>
+                <div style={{ padding: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>New Distributor Appointment</span>
+                    <GBadge status={g.acq_status || 'draft'} />
+                  </div>
+                  <div style={{ fontSize: 12, color: '#6b7280', marginBottom: g.acq_status === 'approved' ? 6 : 0 }}>Goal: {g.acq_goal} {g.acq_status === 'approved' && `· Achieved: ${a.acq || 0}`}</div>
+                  {g.acq_status === 'rejected' && <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>❌ {g.acq_note}</div>}
+                  {g.acq_status === 'approved' && <Bar val={pct(a.acq || 0, g.acq_goal)} />}
+                </div>
+              </Card>
+            )}
+
+            {/* Outlet visits goal */}
+            {p.enable_visits && g.visits_goal > 0 && (
+              <Card>
+                <div style={{ padding: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>Outlet Visits</span>
+                    <GBadge status={g.visits_status || 'draft'} />
+                  </div>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>Goal: {g.visits_goal}</div>
+                  {g.visits_status === 'rejected' && <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>❌ {g.visits_note}</div>}
+                </div>
+              </Card>
+            )}
           </>
         )}
 
@@ -592,9 +622,18 @@ function LeadListSheet({ stage, leads, onSelectLead, onClose }) {
   )
 }
 
-function LeadDetailSheet({ lead, visits, onClose, onSubmitDocs, showToast }) {
+function LeadDetailSheet({ lead, visits, onClose, onSubmitDocs, onOpenPayment, showToast }) {
   const [submitting, setSubmitting] = useState(false)
 
+  const getCountdown = () => {
+    if (!lead.stage_updated_at) return ''
+    const deadline = new Date(lead.stage_updated_at).getTime() + 48 * 60 * 60 * 1000
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) return 'Window expired'
+    const hrs = Math.floor(remainingMs / 3600000)
+    const mins = Math.floor((remainingMs % 3600000) / 60000)
+    return `${hrs}h ${mins}m remaining`
+  }
   const stageLabels = {
     final_pending: 'Final — Awaiting Manager Approval',
     registration_pending: 'Registration Pending',
@@ -628,6 +667,12 @@ function LeadDetailSheet({ lead, visits, onClose, onSubmitDocs, showToast }) {
             Send the filled registration form and required documents via your usual channel, then confirm below.
           </div>
           <Btn v="pri" full onClick={handleSubmitDocs}>{submitting ? 'Submitting...' : 'Registration Form & Documents Submitted'}</Btn>
+        </div>
+      )}
+      {lead.lead_stage === 'payment_pending' && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: '#f59e0b', marginBottom: 8 }}>⏱ {getCountdown()}</div>
+          <Btn v="pri" full onClick={() => onOpenPayment(lead)}>Enter Payment Details</Btn>
         </div>
       )}
     </Sheet>
