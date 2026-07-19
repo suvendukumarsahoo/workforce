@@ -18,6 +18,7 @@ import Employees     from './admin/Employees.jsx'
 import Payroll       from './shared/Payroll.jsx'
 import Settings      from './admin/Settings.jsx'
 import NewCustomerVisit from './shared/NewCustomerVisit.jsx'
+import DistributorApproval from './manager/DistributorApproval.jsx'
 
 const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard',        icon:'📊', sec:'Overview'  },
@@ -34,6 +35,7 @@ const ALL_MENUS = [
   { id:'payroll',       label:'Payroll',          icon:'💰', sec:'HR'        },
   { id:'settings',      label:'Settings',         icon:'🔧', sec:'Admin'     },
   { id:'newCustomerVisit', label:'New Customer Visit', icon:'🚶', sec:'Distributor Functions' },
+  { id:'distributorApproval', label:'New Distributor Approval', icon:'📋', sec:'Distributor Functions' },
 ]
 
 const PAGE_MAP = {
@@ -51,6 +53,7 @@ const PAGE_MAP = {
   payroll:       Payroll,
   settings:      Settings,
   newCustomerVisit: NewCustomerVisit,
+  distributorApproval: DistributorApproval,
 }
 
 export default function WebApp() {

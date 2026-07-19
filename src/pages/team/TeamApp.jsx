@@ -6,9 +6,21 @@ import { pct } from '../../lib/achievementEngine.js'
 import * as db from '../../lib/db.js'
 import NewCustomerVisit from '../shared/NewCustomerVisit.jsx'
 import { getGoalOverallStatus } from '../../lib/achievementEngine.js'
+import DocumentSubmitWizard from '../shared/DocumentSubmitWizard.jsx'
 
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 const netS = s => (s.basic||0)+(s.hra||0)+(s.ta||0)+(s.da||0)-(s.pf||0)-(s.tds||0)
+const timeAgo = (isoDate) => {
+  if (!isoDate) return ''
+  const diffMs = Date.now() - new Date(isoDate).getTime()
+  const mins = Math.floor(diffMs / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins} min${mins === 1 ? '' : 's'} ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs} hour${hrs === 1 ? '' : 's'} ago`
+  const days = Math.floor(hrs / 24)
+  return `${days} day${days === 1 ? '' : 's'} ago`
+}
 
 export default function TeamApp() {
   const { currentUser, logout, hasMenu } = useAuth()
@@ -22,6 +34,8 @@ export default function TeamApp() {
   const [selectedLead, setSelectedLead]   = useState(null)
   const [showFollowupPopup, setShowFollowupPopup] = useState(true)
   const [pendingDetail, setPendingDetail] = useState(null)
+  const [docWizardLead, setDocWizardLead] = useState(null)
+
   const mid  = currentUser?.member_id
   const todayStr = new Date().toISOString().split('T')[0]
   const todayFollowups = (customers || []).filter(d =>
@@ -36,8 +50,14 @@ export default function TeamApp() {
   const myExp = (expenses || []).filter(e => e.member_id === mid)
   const spent = myExp.filter(e => e.status === 'approved').reduce((s, e) => s + e.amount, 0)
   const overallStatus = getGoalOverallStatus(g)
-  const hasRejected   = overallStatus === 'partial' || overallStatus === 'rejected'
-  const canEnter      = overallStatus === 'draft' || hasRejected
+const hasRejected   = overallStatus === 'partial' || overallStatus === 'rejected'
+const hasNewParam   = (p.enable_value && !g.value_status) ||
+  (p.enable_visits && !g.visits_status) ||
+  (p.enable_acq && !g.acq_status) ||
+  (p.enable_products && (p.sel_prods || []).some(id => !(g.products || {})[id])) ||
+  (p.enable_categories && (p.sel_cats || []).some(id => !(g.categories || {})[id])) ||
+  (p.enable_customers && (p.sel_custs || []).some(id => !(g.customers || {})[id]))
+const canEnter      = overallStatus === 'draft' || hasRejected || hasNewParam
   const approvedVal   = g.value_status === 'approved' ? (g.value_goal || 0) : 0
   const valPct        = approvedVal ? pct(a.value, approvedVal) : 0
 
@@ -201,11 +221,12 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
               const myVisits = (visits || []).filter(v => v.member_id === mid)
               const myLeads = (customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.type === 'New Customer')
               const stageCounts = { interested: 0, not_interested: 0, final: 0 }
-              myLeads.forEach(d => {
-                if (d.lead_stage === 'interested') stageCounts.interested++
-                else if (d.lead_stage === 'not_interested') stageCounts.not_interested++
-                else if (d.lead_stage === 'final_pending' || d.lead_stage === 'final_approved') stageCounts.final++
-              })
+              const PIPELINE_STAGES = ['final_pending', 'registration_pending', 'documents_submitted', 'documentation_verification', 'payment_pending', 'payment_verification', 'final_approved']
+myLeads.forEach(d => {
+  if (d.lead_stage === 'interested') stageCounts.interested++
+  else if (d.lead_stage === 'not_interested') stageCounts.not_interested++
+  else if (PIPELINE_STAGES.includes(d.lead_stage)) stageCounts.final++
+})
               return (
                 <Card style={{ marginBottom: 12 }}>
                   <CH title="My New Customer Visits" sub={`${myVisits.length} total visits logged — tap a stage to view leads`} />
@@ -227,19 +248,40 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
               <LeadListSheet
                 stage={selectedStage}
                 leads={(customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.type === 'New Customer' &&
-                  (selectedStage === 'final' ? (d.lead_stage === 'final_pending' || d.lead_stage === 'final_approved') : d.lead_stage === selectedStage))}
+                  (selectedStage === 'final' ? ['final_pending', 'registration_pending', 'documents_submitted', 'documentation_verification', 'payment_pending', 'payment_verification', 'final_approved'].includes(d.lead_stage) : d.lead_stage === selectedStage))}
                 onSelectLead={d => { setSelectedLead(d); setSelectedStage(null) }}
                 onClose={() => setSelectedStage(null)}
               />
             )}
 
             {selectedLead && (
-              <LeadDetailSheet
-                lead={selectedLead}
-                visits={(visits || []).filter(v => v.distributor_id === selectedLead.id)}
-                onClose={() => setSelectedLead(null)}
-              />
-            )}
+  <LeadDetailSheet
+    lead={selectedLead}
+    visits={(visits || []).filter(v => v.distributor_id === selectedLead.id)}
+    onClose={() => setSelectedLead(null)}
+    onSubmitDocs={async (id) => {
+      setDocWizardLead(selectedLead)
+      setSelectedLead(null)
+    }}
+  />
+)}
+
+{docWizardLead && (
+  <DocumentSubmitWizard
+    lead={docWizardLead}
+    visits={(visits || []).filter(v => v.distributor_id === docWizardLead.id)}
+    onClose={() => setDocWizardLead(null)}
+    showToast={showToast}
+    onSubmit={async (fields) => {
+      const { error } = await db.updateDistributorLeadStage(docWizardLead.id, { ...fields, lead_stage: 'documents_submitted' })
+      if (error) { showToast('Error submitting'); return }
+      await loadAll()
+      setDocWizardLead(null)
+      showToast('Documents submitted — awaiting admin acknowledgment')
+    }}
+  />
+)}
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
               {[['My target', approvedVal ? F(approvedVal) : '—', '#2563eb'], ['Achieved', approvedVal ? F(a.value) : '—', '#10b981'], ['Progress', approvedVal ? valPct + '%' : '—', valPct >= 75 ? '#10b981' : valPct >= 50 ? '#f59e0b' : '#ef4444'], ['Goal status', overallStatus.toUpperCase(), '#374151']].map(([l, v, c]) => (
                 <div key={l} style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: '12px 14px' }}>
@@ -522,7 +564,7 @@ function GoalEntrySheet({ member, param, goal, products, categories, customers, 
       )}
 
       {param.enable_acq && (
-        <StableInp label="New customer acquisition goal" fieldKey="acq" defaultVal={g.acq_goal} fg={{ status: g.acq_status, note: g.acq_note }} />
+      <StableInp label="New Distributor Appointment goal" fieldKey="acq" defaultVal={g.acq_goal} fg={{ status: g.acq_status, note: g.acq_note }} />
       )}
 
       <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
@@ -550,26 +592,44 @@ function LeadListSheet({ stage, leads, onSelectLead, onClose }) {
   )
 }
 
-function LeadDetailSheet({ lead, visits, onClose }) {
+function LeadDetailSheet({ lead, visits, onClose, onSubmitDocs, showToast }) {
+  const [submitting, setSubmitting] = useState(false)
+
+  const stageLabels = {
+    final_pending: 'Final — Awaiting Manager Approval',
+    registration_pending: 'Registration Pending',
+    documents_submitted: 'Registration Form & Documents Submitted',
+    documentation_verification: 'Distributor Document under Verification',
+    payment_pending: 'Awaiting Payment',
+    payment_verification: 'Payment Under Verification',
+    final_approved: 'Distributor',
+  }
+
+  const handleSubmitDocs = async () => {
+    setSubmitting(true)
+    await onSubmitDocs(lead.id)
+    setSubmitting(false)
+  }
+
   return (
     <Sheet title={lead.name} sub={lead.area || 'Visit history'} onClose={onClose}>
       <div style={{ background: '#f9fafb', borderRadius: 10, padding: 12, marginBottom: 14 }}>
         <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 3 }}>Current stage</div>
-        <div style={{ fontWeight: 700, fontSize: 14 }}>{lead.lead_stage || 'new'}</div>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>{stageLabels[lead.lead_stage] || lead.lead_stage || 'new'}</div>
         {lead.next_followup_date && <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>Next follow-up: {lead.next_followup_date}</div>}
+        {lead.resend_note && lead.lead_stage === 'registration_pending' && (
+          <div style={{ fontSize: 11, color: '#991b1b', marginTop: 6 }}>❌ Admin note: {lead.resend_note}</div>
+        )}
       </div>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Visit history ({visits.length})</div>
-      {visits.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No visits recorded</div>}
-      {visits.map(v => (
-        <div key={v.id} style={{ padding: '10px 4px', borderBottom: '1px solid #f3f4f6' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span style={{ fontSize: 12, fontWeight: 600, textTransform: 'capitalize' }}>{v.outcome?.replace('_', ' ')}</span>
-            <span style={{ fontSize: 11, color: '#9ca3af' }}>{new Date(v.visit_date).toLocaleDateString('en-IN')}</span>
+
+      {lead.lead_stage === 'registration_pending' && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
+            Send the filled registration form and required documents via your usual channel, then confirm below.
           </div>
-          {v.notes && <div style={{ fontSize: 11, color: '#6b7280', marginTop: 3 }}>{v.notes}</div>}
-          {v.latitude && <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 3 }}>📍 {v.latitude.toFixed(4)}, {v.longitude.toFixed(4)}</div>}
+          <Btn v="pri" full onClick={handleSubmitDocs}>{submitting ? 'Submitting...' : 'Registration Form & Documents Submitted'}</Btn>
         </div>
-      ))}
+      )}
     </Sheet>
   )
 }

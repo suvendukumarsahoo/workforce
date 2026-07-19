@@ -120,7 +120,7 @@ function ParamSheet({ member, param, products, categories, customers, onSave, on
         <Chips listKey="selCats" allItems={categories} labelFn={x => `${x.name} (${x.unit})`} enableKey="enableCategories" />
       </Toggle>
       <Toggle label="Outlet visits" enableKey="enableVisits" />
-      <Toggle label="New customer acquisition" enableKey="enableAcq" />
+      <Toggle label="New Distributor Appointment" enableKey="enableAcq" />
       <Inp label="Expense budget (₹)" type="number" value={d.expBudget} onChange={v => setD(x => ({ ...x, expBudget: Number(v) }))} placeholder="e.g. 25000" />
       <div style={{ display: 'flex', gap: 8 }}>
         <Btn v="pri" full onClick={() => onSave(member.id, d)}>Save parameters</Btn>

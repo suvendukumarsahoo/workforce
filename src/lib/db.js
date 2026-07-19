@@ -368,11 +368,12 @@ export async function createVisit(payload) {
   const { data, error } = await supabase.from('distributor_visits').insert(payload).select().single()
   return { data, error }
 }
-
 export async function updateDistributorLeadStage(id, updates) {
-  const { data, error } = await supabase.from('distributors').update(updates).eq('id', id).select().single()
+  const payload = updates.lead_stage ? { ...updates, stage_updated_at: new Date().toISOString() } : updates
+  const { data, error } = await supabase.from('distributors').update(payload).eq('id', id).select().single()
   return { data, error }
 }
+
 
 export async function fetchDueFollowups() {
   const today = new Date().toISOString().split('T')[0]
@@ -382,5 +383,30 @@ export async function fetchDueFollowups() {
     .eq('lead_stage', 'interested')
     .lte('next_followup_date', today)
     .order('name')
+  return { data, error }
+}
+// ─── DISTRIBUTOR REGISTRATIONS (Phase 3 — post-Final approval flow) ───────────
+
+export async function createRegistration(payload) {
+  // payload: { distributor_id, member_id }
+  const { data, error } = await supabase.from('distributor_registrations').insert(payload).select().single()
+  return { data, error }
+}
+
+export async function fetchRegistrations() {
+  const { data, error } = await supabase
+    .from('distributor_registrations')
+    .select('*, distributor:distributors(id, name, area, lead_stage), member:members(id, name)')
+    .order('created_at', { ascending: false })
+  return { data, error }
+}
+
+export async function updateRegistration(id, updates) {
+  const { data, error } = await supabase
+    .from('distributor_registrations')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single()
   return { data, error }
 }

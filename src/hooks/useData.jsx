@@ -23,6 +23,7 @@ export function DataProvider({ children }) {
   const [loading,      setLoading]      = useState(true)
   const [toast,        setToast]        = useState(null)
   const [visits, setVisits] = useState([])
+  const [registrations, setRegistrations] = useState([])
 
   useEffect(() => {
     if (!currentUser) return
@@ -34,13 +35,13 @@ export function DataProvider({ children }) {
     const [
   { data: r }, { data: u }, { data: m }, { data: c }, { data: p },
   { data: dist }, { data: pa }, { data: g }, { data: inv }, { data: exp },
-  { data: sal }, { data: att }, { data: vis },
+  { data: sal }, { data: att }, { data: vis }, { data: reg },
 ] = await Promise.all([
   db.fetchRoles(), db.fetchUsers(), db.fetchMembers(), db.fetchCategories(),
   db.fetchProducts(), db.fetchDistributors(), db.fetchParameters(), db.fetchGoals(),
   db.fetchInvoices(), db.fetchExpenses(), db.fetchSalaries(),
   db.fetchAttendance(new Date().getMonth()+1, new Date().getFullYear()),
-  db.fetchVisits(),
+  db.fetchVisits(), db.fetchRegistrations(),
 ])
 
     if (r)    setRoles(r)
@@ -51,6 +52,7 @@ export function DataProvider({ children }) {
     if (dist) setDistributors(dist.map(d => ({ ...d, assignedTo: d.assignments?.map(a => a.member_id) || [] })))
     if (pa)   setParams(Object.fromEntries(pa.map(p => [p.member_id, p])))
       if (vis) setVisits(vis)
+        if (reg) setRegistrations(reg)
     if (g)   {
       const goalMap = {}
       g.forEach(goal => {
@@ -84,6 +86,7 @@ export function DataProvider({ children }) {
       expenses, setExpenses, salaries, setSalaries,
       attendance, setAttendance, achievements,
       visits, setVisits,
+      registrations, setRegistrations,
       loading, loadAll, toast, showToast,
     }}>
       {children}
