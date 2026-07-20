@@ -410,3 +410,31 @@ export async function updateRegistration(id, updates) {
     .single()
   return { data, error }
 }
+// ─── DISTRIBUTOR PAYMENTS ──────────────────────────────────────────────────────
+
+export async function createPayment(payload) {
+  const { data, error } = await supabase.from('distributor_payments').insert(payload).select().single()
+  return { data, error }
+}
+
+export async function fetchPayments() {
+  const { data, error } = await supabase
+    .from('distributor_payments')
+    .select('*, distributor:distributors(id, name), member:members(id, name)')
+    .order('created_at', { ascending: false })
+  return { data, error }
+}
+
+export async function verifyPayment(id) {
+  const { data, error } = await supabase
+    .from('distributor_payments')
+    .update({ status: 'verified', verified_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single()
+  return { data, error }
+}
+export async function updatePayment(id, updates) {
+  const { data, error } = await supabase.from('distributor_payments').update(updates).eq('id', id).select().single()
+  return { data, error }
+}

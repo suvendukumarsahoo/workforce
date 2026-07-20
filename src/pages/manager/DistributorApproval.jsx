@@ -33,8 +33,10 @@ export default function DistributorApproval() {
   const { distributors, visits, members, showToast, loadAll } = useData()
   const [selected, setSelected] = useState(null)
   const [note, setNote] = useState('')
-  const [resendNote, setResendNote] = useState('')
-  const isAdmin = role?.name === 'Admin'
+const [resendNote, setResendNote] = useState('')
+const [payment, setPayment] = useState(null)
+const [editedPayment, setEditedPayment] = useState(null)
+const isAdmin = role?.name === 'Admin'
 
   const pipelineLeads = (distributors || []).filter(d => PIPELINE_STAGES.includes(d.lead_stage))
 
@@ -62,6 +64,48 @@ export default function DistributorApproval() {
     setSelected(null); setNote('')
     showToast('Rejected — sent back to Interested')
   }
+  
+  const loadPayment = async (distributorId) => {
+  const { data } = await db.fetchPayments()
+  const found = (data || []).find(p => p.distributor_id === distributorId)
+  setPayment(found || null)
+  setEditedPayment(found || null)
+}
+
+  const notReceivedYet = async (lead) => {
+    const { error } = await db.updateDistributorLeadStage(lead.id, { lead_stage: 'payment_verification' })
+    if (error) { showToast('Error updating'); return }
+    await loadAll()
+    showToast('Marked as checked — still awaiting payment')
+  }
+
+  const markPaymentReceived = async (lead) => {
+  if (payment && editedPayment) {
+    const { error: payError } = await db.updatePayment(payment.id, {
+      mode_of_payment: editedPayment.mode_of_payment,
+      bank_name: editedPayment.bank_name,
+      ifsc_code: editedPayment.ifsc_code,
+      bank_branch: editedPayment.bank_branch,
+      transaction_date: editedPayment.transaction_date,
+      transaction_amount: editedPayment.transaction_amount,
+      transaction_id: editedPayment.transaction_id,
+      remarks: editedPayment.remarks,
+    })
+    if (payError) { showToast('Error saving payment edits'); return }
+  }
+  const ownerId = (lead.assignedTo || [])[0]
+  const { error } = await db.updateDistributorLeadStage(lead.id, {
+    lead_stage: 'final_approved',
+    type: 'Distributor',
+    distributor_created_at: new Date().toISOString(),
+    distributor_created_by: ownerId,
+  })
+  if (error) { showToast('Error updating'); return }
+  if (payment) await db.verifyPayment(payment.id)
+  await loadAll()
+  setSelected(null)
+  showToast('Payment received — Distributor Created')
+}
 
   const acknowledgeReceipt = async (lead) => {
     const { error } = await db.updateDistributorLeadStage(lead.id, { lead_stage: 'documentation_verification' })
@@ -96,16 +140,15 @@ export default function DistributorApproval() {
           const ownerId = (d.assignedTo || [])[0]
           const owner = (members || []).find(m => m.id === ownerId)
           return (
-            <div key={d.id} onClick={() => setSelected(d)}
-              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
+      <div key={d.id} onClick={() => { setSelected(d); if (d.lead_stage === 'payment_verification') loadPayment(d.id) }}              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
               <div>
                 <div style={{ fontWeight: 600, fontSize: 13 }}>{d.name}</div>
                 <div style={{ fontSize: 11, color: '#9ca3af' }}>{d.area || '—'} · {owner?.name || 'Unassigned'}</div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: '#2563eb' }}>{stageLabels[d.lead_stage] || d.lead_stage}</div>
-                <div style={{ fontSize: 10, color: '#9ca3af' }}>{timeAgo(d.stage_updated_at)}</div>
-              </div>
+  <div style={{ fontSize: 12, fontWeight: 600, color: '#2563eb' }}>{stageLabels[d.lead_stage] || d.lead_stage}</div>
+  <div style={{ fontSize: 10, color: '#9ca3af' }}>{d.lead_stage === 'payment_verification' ? `Not Received — ${new Date(d.stage_updated_at).toLocaleString('en-IN')}` : timeAgo(d.stage_updated_at)}</div>
+</div>
             </div>
           )
         })}
@@ -182,6 +225,42 @@ export default function DistributorApproval() {
               </div>
             </>
           )}
+          {isAdmin && selected.lead_stage === 'payment_verification' && (
+  <div style={{ marginTop: 14 }}>
+    {editedPayment ? (
+  <div style={{ background: '#f9fafb', borderRadius: 10, padding: 12, marginBottom: 14 }}>
+    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Payment Details (editable)</div>
+    {[
+      ['mode_of_payment', 'Mode of Payment'],
+      ['bank_name', 'Bank Name'],
+      ['ifsc_code', 'IFSC Code'],
+      ['bank_branch', 'Bank Branch'],
+      ['transaction_date', 'Transaction Date'],
+      ['transaction_amount', 'Transaction Amount'],
+      ['transaction_id', 'Transaction ID'],
+      ['remarks', 'Remarks'],
+    ].map(([key, label]) => (
+      <div key={key} style={{ marginBottom: 8 }}>
+        <label style={{ fontSize: 10, color: '#6b7280', display: 'block', marginBottom: 2 }}>{label}</label>
+        <input
+          type={key === 'transaction_date' ? 'date' : key === 'transaction_amount' ? 'number' : 'text'}
+          value={editedPayment[key] || ''}
+          onChange={e => setEditedPayment(p => ({ ...p, [key]: e.target.value }))}
+          style={{ width: '100%', padding: '7px 9px', borderRadius: 6, border: '1px solid #e5e7eb', fontSize: 12, boxSizing: 'border-box' }}
+        />
+      </div>
+    ))}
+  </div>
+) : (
+  <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 14 }}>Loading payment details...</div>
+)}
+    <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 10 }}>Last checked: {timeAgo(selected.stage_updated_at)}</div>
+    <div style={{ display: 'flex', gap: 8 }}>
+      <Btn full onClick={() => notReceivedYet(selected)}>Not Received till Now</Btn>
+      <Btn v="pri" full onClick={() => markPaymentReceived(selected)}>Payment Received</Btn>
+    </div>
+  </div>
+)}
         </Sheet>
       )}
     </div>

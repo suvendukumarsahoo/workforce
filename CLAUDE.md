@@ -457,3 +457,145 @@ fields before allowing submit.
    db.updateDistributorLeadStage(leadId, { lead_stage: 'final_approved', type: 'Distributor' }) 
    — this is the final step that completes the entire Phase 3 pipeline and makes the acq achievement 
    count increment for the team member.
+   ### Recurring bug — LeadListSheet render block keeps disappearing (2nd occurrence)
+
+TeamApp.jsx's `{selectedStage && (<LeadListSheet .../>)}` render block has now gone missing TWICE 
+during this project — both times the onClick handler (`setSelectedStage(key)`) stayed intact and 
+correct, but the corresponding render block vanished, likely during a large paste/edit operation 
+that silently dropped a chunk. Symptom each time: tapping a stage count (Interested/Not 
+Interested/Final) does nothing, no console error, no visible failure.
+
+**If this happens a third time:** search TeamApp.jsx for `{selectedStage && (` — if there's no 
+match, the block is missing. Fix by adding it directly before the `{selectedLead && (` block:
+```javascript
+{selectedStage && (
+  <LeadListSheet
+    stage={selectedStage}
+    leads={(customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.type === 'New Customer' &&
+      (selectedStage === 'final' ? ['final_pending', 'registration_pending', 'documents_submitted', 'documentation_verification', 'payment_pending', 'payment_verification', 'final_approved'].includes(d.lead_stage) : d.lead_stage === selectedStage))}
+    onSelectLead={d => { setSelectedLead(d); setSelectedStage(null) }}
+    onClose={() => setSelectedStage(null)}
+  />
+)}
+```
+Re-fixed and confirmed working as of 19 July 2026, evening.
+
+### General lesson learned this session
+After any large multi-block paste into TeamApp.jsx, verify with `Ctrl+F` that ALL expected render 
+blocks/components are present (search each of: `selectedStage`, `selectedLead`, `docWizardLead`, 
+`paymentLead`, `pendingDetail`, `showFollowupPopup` — each state variable should have both a setter 
+call AND a corresponding `{stateName && (...)}` render block). Don't assume "no console error" means 
+the paste landed completely — missing render blocks fail silently (nothing happens on click, no crash).
+### Bug fixes this session (payment flow wiring)
+
+**Bug: duplicate `<LeadDetailSheet>` render block in TeamApp.jsx.** Two separate 
+`{selectedLead && (<LeadDetailSheet .../>)}` blocks existed — one correct (with `onOpenPayment` 
+prop), one stale leftover (without it). React was rendering the stale one, causing 
+"onOpenPayment is not a function" crash when tapping the payment button. Deleted the stale 
+duplicate. LESSON: whenever adding a new prop to a component, search for ALL render call sites 
+of that component (`<ComponentName`) before assuming there's only one — duplicates from earlier 
+pastes are a recurring risk in this file.
+
+**Bug: db.js payment functions were designed but never actually pasted in.** `createPayment`, 
+`fetchPayments`, `verifyPayment` were planned in an earlier CLAUDE.md entry but the actual paste 
+into db.js never happened, causing "db.createPayment is not a function" on submit. Now added and 
+confirmed working — PaymentEntryForm successfully submits.
+
+### Phase 3 — Payment stage, FINAL PIECE remaining
+
+**Schema (run in Supabase):**
+```sql
+ALTER TABLE distributors ADD COLUMN distributor_created_at TIMESTAMPTZ;
+ALTER TABLE distributors ADD COLUMN distributor_created_by INTEGER REFERENCES members(id);
+```
+
+**Design for Admin's payment_verification screen (in DistributorApproval.jsx):**
+- Tap a lead at `payment_verification` stage → fetch and show full payment details from 
+  `distributor_payments` table (mode, bank name, IFSC, branch, txn date, amount, txn ID, remarks)
+- Two Admin actions:
+  - **"Not Received till Now"** → re-stamps `distributors.stage_updated_at = now()` only (stage 
+    stays payment_verification) — this resets the "last checked X ago" timer visible to Manager 
+    and Team Member, creating a visible loop until payment is confirmed
+  - **"Payment Received"** → sets on distributors: `lead_stage='final_approved'`, 
+    `type='Distributor'`, `distributor_created_at=now()`, `distributor_created_by=<team member's 
+    member_id, from distributor_assignments>`; also marks the distributor_payments row as 
+    `status='verified'` via existing `db.verifyPayment(paymentId)`. This is the FINAL step — 
+    completes the entire Phase 3 pipeline, and is what makes the acq achievement count increment 
+    (achievementEngine.js already counts `lead_stage === 'final_approved'`,
+    ### Next steps
+1. Run schema SQL above
+2. Add to db.js: a function to fetch payment(s) for a specific distributor_id (or reuse 
+   fetchPayments() and filter client-side), and a function/logic for "Not Received till Now" 
+   (simple updateDistributorLeadStage call with no lead_stage change, just forces stage_updated_at)
+3. DistributorApproval.jsx: add payment_verification case — show payment details Sheet + two 
+   buttons as designed above
+4. Test full end-to-end: Sales Team submits payment → Admin sees details → "Not Received" loop 
+   test → "Payment Received" → confirm distributors.type flips, achievement count increments for 
+   the team member's Distributor Appointment goal
+   ### Phase 3 — Payment Verification & Distributor Creation: COMPLETE
+
+**Schema added:**
+```sql
+ALTER TABLE distributors ADD COLUMN distributor_created_at TIMESTAMPTZ;
+ALTER TABLE distributors ADD COLUMN distributor_created_by INTEGER REFERENCES members(id);
+```
+
+**db.js additions:** `createPayment`, `fetchPayments`, `verifyPayment`, `updatePayment`.
+
+**DistributorApproval.jsx — final payment_verification stage built:**
+- Admin taps a `payment_verification` lead → `loadPayment()` fetches the matching row from 
+  `distributor_payments`, populates both `payment` (original) and `editedPayment` (working copy) state.
+- All payment fields (mode, bank name, IFSC, branch, date, amount, txn ID, remarks) rendered as 
+  **editable inputs** — Admin can overwrite anything the team member entered before finalizing.
+- "Not Received till Now" → re-stamps `stage_updated_at` only, stays at same stage — creates a 
+  visible loop (shows "Not Received — as on [date/time]" to Team Member, Manager, and Admin, all 
+  reading the same `stage_updated_at` field).
+- "Payment Received" → saves any Admin edits via `db.updatePayment()`, then sets on distributors: 
+  `lead_stage='final_approved'`, `type='Distributor'`, `distributor_created_at=now()`, 
+  `distributor_created_by=<owning team member's id>`; marks payment row `status='verified'` via 
+  `db.verifyPayment()`. This is the pipeline's final step.
+
+**Visibility across all 3 roles confirmed:**
+- TeamApp.jsx LeadDetailSheet: shows "Not Received till Now — as on [date/time]" when 
+  lead_stage='payment_verification' (added as sibling block to resend_note, NOT nested inside it — 
+  watch for this nesting mistake, the two conditions are mutually exclusive by lead_stage so nesting 
+  silently breaks the new block).
+- DistributorApproval.jsx: same status text shown to both Manager (read-only) and Admin (with action 
+  buttons), since they share this one file gated by `isAdmin`.
+
+### Bugs fixed this session (recurring pattern: incomplete/partial pastes)
+1. Duplicate `<LeadDetailSheet>` render in TeamApp.jsx — one had `onOpenPayment` prop, stale 
+   duplicate didn't. React rendered the stale one → crash. Always search `<ComponentName` for ALL 
+   render call sites before adding a new prop, not just the one being edited.
+2. db.js payment functions (createPayment etc.) were planned in CLAUDE.md but never actually pasted 
+   into the file — caused "db.createPayment is not a function".
+3. Duplicate `loadPayment` function declaration — parse error, then when "fixing" it by deleting one 
+   copy, the WRONG (older, incomplete) one was kept, leaving `payment`/`editedPayment` state 
+   declarations entirely missing even though the JSX and functions using them were present. 
+   General lesson: when two duplicate declarations exist, diff them carefully before deleting — the 
+   newer/more complete one isn't always the second one that appears in search results.
+
+### PHASE 3 IS NOW FULLY COMPLETE — full pipeline recap:
+New Customer Visit (lead capture, location-confirmed) → Interested/Not Interested/Final outcomes → 
+follow-up scheduling & daily reminder popup → Pending Visits → visit-closing (Remain Same/Not 
+Interested-Deal Fail/Final) → Manager approves Final → Registration Pending → team member sends 
+form+docs externally, clicks Submitted → 5-step Document Submit Wizard (name confirm, geo-location 
+check vs original visit, town/district, mobile, 30km-competitor check) → Admin Acknowledges Receipt 
+→ Distributor Registration Under Process → Admin ReSend(w/comment, loops back) OR Approved for 
+Payment → 48hr countdown (Awaiting Payment) → team member submits Payment Entry Form → Payment Under 
+Verification → Admin reviews/edits payment details → Not Received (loops) OR Payment Received → 
+distributors.type flips to 'Distributor', creation timestamp+creator recorded, Distributor 
+Appointment achievement count increments for the owning team member's goal.
+
+Manager and Team Member have full read-only visibility into every stage throughout, via 
+DistributorApproval.jsx (Manager) and TeamApp.jsx's drill-down (Team Member + Home dashboard 
+summary + Manager/Admin Dashboard.jsx org-wide summary from Phase 2).
+
+### Not yet built (deferred, no active plan)
+- "New Retailer" menu (Primary Order Page, Closing Stock Entry, Add Beats, Add Retailer)
+- Admin T&C template management page (mentioned early in Phase 3 planning, superseded by the 
+  simpler "external platform + submit confirmation" approach — likely no longer needed as originally 
+  scoped, revisit if the printed form still needs a formal T&C template source)
+- Netlify migration (flagged early on, before commercial launch, for private-repo support)
+- RLS (Row Level Security) across all Supabase tables — flagged multiple times, still not done
+- Pre-existing attendance bug: `db.fetchAttendance` queries nonexistent month/year columns

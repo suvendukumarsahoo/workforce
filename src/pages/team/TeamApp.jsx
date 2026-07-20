@@ -245,8 +245,7 @@ myLeads.forEach(d => {
                 </Card>
               )
             })()}
-
-            {selectedStage && (
+{selectedStage && (
               <LeadListSheet
                 stage={selectedStage}
                 leads={(customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.type === 'New Customer' &&
@@ -255,7 +254,6 @@ myLeads.forEach(d => {
                 onClose={() => setSelectedStage(null)}
               />
             )}
-
             {selectedLead && (
   <LeadDetailSheet
     lead={selectedLead}
@@ -265,9 +263,11 @@ myLeads.forEach(d => {
       setDocWizardLead(selectedLead)
       setSelectedLead(null)
     }}
+    onOpenPayment={(lead) => { setPaymentLead(lead); setSelectedLead(null) }}
   />
 )}
 
+            
 {docWizardLead && (
   <DocumentSubmitWizard
     lead={docWizardLead}
@@ -283,7 +283,28 @@ myLeads.forEach(d => {
     }}
   />
 )}
+{paymentLead && (
+  <PaymentEntryForm
+    lead={paymentLead}
+    showToast={showToast}
+    onClose={() => setPaymentLead(null)}
+    onSubmit={async (paymentFields) => {
+      const { error: payError } = await db.createPayment({
+        distributor_id: paymentLead.id,
+        member_id: mid,
+        ...paymentFields,
+      })
+      if (payError) { showToast('Error saving payment details'); return }
 
+      const { error: stageError } = await db.updateDistributorLeadStage(paymentLead.id, { lead_stage: 'payment_verification' })
+      if (stageError) { showToast('Error updating stage'); return }
+
+      await loadAll()
+      setPaymentLead(null)
+      showToast('Payment details submitted — awaiting admin acknowledgment')
+    }}
+  />
+)}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
               {[['My target', approvedVal ? F(approvedVal) : '—', '#2563eb'], ['Achieved', approvedVal ? F(a.value) : '—', '#10b981'], ['Progress', approvedVal ? valPct + '%' : '—', valPct >= 75 ? '#10b981' : valPct >= 50 ? '#f59e0b' : '#ef4444'], ['Goal status', overallStatus.toUpperCase(), '#374151']].map(([l, v, c]) => (
                 <div key={l} style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: '12px 14px' }}>
@@ -658,6 +679,11 @@ function LeadDetailSheet({ lead, visits, onClose, onSubmitDocs, onOpenPayment, s
         {lead.next_followup_date && <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>Next follow-up: {lead.next_followup_date}</div>}
         {lead.resend_note && lead.lead_stage === 'registration_pending' && (
           <div style={{ fontSize: 11, color: '#991b1b', marginTop: 6 }}>❌ Admin note: {lead.resend_note}</div>
+        )}
+        {lead.lead_stage === 'payment_verification' && (
+          <div style={{ fontSize: 11, color: '#92400e', marginTop: 6 }}>
+            Not Received till Now — as on {new Date(lead.stage_updated_at).toLocaleString('en-IN')}
+          </div>
         )}
       </div>
 
