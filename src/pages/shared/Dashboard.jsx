@@ -8,8 +8,8 @@ const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 
 export default function Dashboard({ onNavigate }) {
   const { can, hasMenu } = useAuth()
-  const { goals, expenses, invoices, members, achievements, params, products, categories, distributors: customers, attendance, visits } = useData()
-  const [selectedMember, setSelectedMember] = useState(null)
+const { goals, expenses, invoices, members, achievements, params, products, categories, distributors: customers, attendance, visits, payments } = useData()  
+const [selectedMember, setSelectedMember] = useState(null)
   const [selectedStage, setSelectedStage] = useState(null)
   const [selectedLead, setSelectedLead] = useState(null)
   const pendingGoals = Object.values(goals || {}).filter(g => g.status === 'pending' || g.status === 'partial').length
@@ -42,19 +42,22 @@ export default function Dashboard({ onNavigate }) {
         {hasMenu('invoices')      && <Tile icon="🧾" label="Invoices" value={(invoices || []).length} onClick={() => onNavigate('invoices')} />}
       </div>
 {(() => {
-        const newLeads = (customers || []).filter(d => d.type === 'New Customer')
-        const stageCounts = { interested: 0, not_interested: 0, final: 0 }
+const visitedIds = new Set((visits || []).map(v => v.distributor_id))
+const newLeads = (customers || []).filter(d => visitedIds.has(d.id))
+const stageCounts = { interested: 0, not_interested: 0, final: 0, distributor: 0 }
+        const IN_PROGRESS_STAGES = ['final_pending', 'registration_pending', 'documents_submitted', 'documentation_verification', 'payment_pending', 'payment_verification']
         newLeads.forEach(d => {
           if (d.lead_stage === 'interested') stageCounts.interested++
           else if (d.lead_stage === 'not_interested') stageCounts.not_interested++
-          else if (d.lead_stage === 'final_pending' || d.lead_stage === 'final_approved') stageCounts.final++
+          else if (d.lead_stage === 'final_approved') stageCounts.distributor++
+          else if (IN_PROGRESS_STAGES.includes(d.lead_stage)) stageCounts.final++
         })
         return (
           <Card style={{ marginBottom: 16 }}>
             <CH title="New Customer Visits" sub={`${newLeads.length} total leads — tap a stage to view`} />
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, padding: 14 }}>
-              {[['interested', 'Interested', stageCounts.interested, '#2563eb'], ['not_interested', 'Not Interested', stageCounts.not_interested, '#ef4444'], ['final', 'Final', stageCounts.final, '#10b981']].map(([key, l, v, c]) => (
-                <div key={key} onClick={() => setSelectedStage(key)} style={{ textAlign: 'center', cursor: 'pointer', padding: '6px 4px', borderRadius: 8 }}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8, padding: 14 }}>
+{[['visited', 'Total Visited', newLeads.length, '#6366f1'], ['interested', 'Interested', stageCounts.interested, '#2563eb'], ['not_interested', 'Not Interested', stageCounts.not_interested, '#ef4444'], ['final', 'Final', stageCounts.final, '#f59e0b'], ['distributor', 'Distributor Created', stageCounts.distributor, '#10b981']].map(([key, l, v, c]) => (
+                  <div key={key} onClick={() => setSelectedStage(key)} style={{ textAlign: 'center', cursor: 'pointer', padding: '6px 4px', borderRadius: 8 }}
                   onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
                   onMouseLeave={e => e.currentTarget.style.background = ''}>
                   <div style={{ fontSize: 9, color: '#6b7280' }}>{l}</div>
@@ -65,22 +68,25 @@ export default function Dashboard({ onNavigate }) {
           </Card>
         )
       })()}
-
       {selectedStage && (
-        <StageLeadListSheet
-          stage={selectedStage}
-          leads={(customers || []).filter(d => d.type === 'New Customer' &&
-            (selectedStage === 'final' ? (d.lead_stage === 'final_pending' || d.lead_stage === 'final_approved') : d.lead_stage === selectedStage))}
-          members={members}
-          onSelectLead={d => { setSelectedLead(d); setSelectedStage(null) }}
-          onClose={() => setSelectedStage(null)}
-        />
-      )}
-
+              <StageLeadListSheet
+                stage={selectedStage}
+leads={(customers || []).filter(d => d.lead_stage &&
+                (selectedStage === 'final' ? ['final_pending', 'registration_pending', 'documents_submitted', 'documentation_verification', 'payment_pending', 'payment_verification'].includes(d.lead_stage) :
+                   selectedStage === 'distributor' ? d.lead_stage === 'final_approved' :
+                   selectedStage === 'visited' ? (visits || []).some(v => v.distributor_id === d.id) :
+                   d.lead_stage === selectedStage))}
+                members={members}
+                payments={payments || []}
+                onSelectLead={d => { setSelectedLead(d); setSelectedStage(null) }}
+                onClose={() => setSelectedStage(null)}
+              />
+            )}
       {selectedLead && (
         <LeadDetailSheetAdmin
           lead={selectedLead}
           visits={(visits || []).filter(v => v.distributor_id === selectedLead.id)}
+          payments={(payments || []).filter(p => p.distributor_id === selectedLead.id)}
           members={members}
           onClose={() => setSelectedLead(null)}
         />
@@ -199,7 +205,7 @@ function MemberDetailSheet({ member, goal, achievement, param, products, categor
   )
 }
 function StageLeadListSheet({ stage, leads, members, onSelectLead, onClose }) {
-  const stageLabel = { interested: 'Interested', not_interested: 'Not Interested', final: 'Final' }[stage] || stage
+const stageLabel = { interested: 'Interested', not_interested: 'Not Interested', final: 'Final', distributor: 'Distributor Created', visited: 'Total Visited' }[stage] || stage
   return (
     <Sheet title={stageLabel} sub={`${leads.length} lead(s)`} onClose={onClose}>
       {leads.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No leads in this stage</div>}
@@ -212,6 +218,10 @@ function StageLeadListSheet({ stage, leads, members, onSelectLead, onClose }) {
             <div>
               <div style={{ fontWeight: 600, fontSize: 13 }}>{d.name}</div>
               <div style={{ fontSize: 11, color: '#9ca3af' }}>{d.area || '—'}{d.next_followup_date ? ` · Next: ${d.next_followup_date}` : ''}</div>
+              {stage === 'distributor' && (() => {
+                const pay = (payments || []).find(p => p.distributor_id === d.id)
+                return pay ? <div style={{ fontSize: 12, color: '#166534', fontWeight: 600, marginTop: 3 }}>₹{Number(pay.transaction_amount || 0).toLocaleString('en-IN')}</div> : null
+              })()}
             </div>
             <div style={{ fontSize: 11, color: '#6b7280' }}>{owner?.name || 'Unassigned'}</div>
           </div>
@@ -221,8 +231,8 @@ function StageLeadListSheet({ stage, leads, members, onSelectLead, onClose }) {
   )
 }
 
-function LeadDetailSheetAdmin({ lead, visits, members, onClose }) {
-  const ownerId = (lead.assignedTo || [])[0]
+function LeadDetailSheetAdmin({ lead, visits, payments, members, onClose }) {
+    const ownerId = (lead.assignedTo || [])[0]
   const owner = (members || []).find(m => m.id === ownerId)
   return (
     <Sheet title={lead.name} sub={lead.area || 'Visit history'} onClose={onClose}>
@@ -237,6 +247,11 @@ function LeadDetailSheetAdmin({ lead, visits, members, onClose }) {
         </div>
       </div>
       {lead.next_followup_date && <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 14 }}>Next follow-up: {lead.next_followup_date}</div>}
+      {lead.lead_stage === 'final_approved' && (payments || []).length > 0 && (
+        <div style={{ fontSize: 13, color: '#166534', fontWeight: 700, marginBottom: 14 }}>
+          Payment: ₹{Number((payments[0].transaction_amount) || 0).toLocaleString('en-IN')}
+        </div>
+      )}
       <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>Visit history ({visits.length})</div>
       {visits.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No visits recorded</div>}
       {visits.map(v => (

@@ -37,7 +37,7 @@ const [resendNote, setResendNote] = useState('')
 const [payment, setPayment] = useState(null)
 const [editedPayment, setEditedPayment] = useState(null)
 const isAdmin = role?.name === 'Admin'
-
+const isManager = role?.name === 'Manager'
   const pipelineLeads = (distributors || []).filter(d => PIPELINE_STAGES.includes(d.lead_stage))
 
   const approve = async (lead) => {
@@ -188,13 +188,12 @@ const isAdmin = role?.name === 'Admin'
             ))}
           </div>
 
-          {!isAdmin && (
+          {!isAdmin && !(isManager && selected.lead_stage === 'final_pending') && (
             <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: 12, fontSize: 12, color: '#1e40af' }}>
               View only — no action needed from Manager at this stage.
             </div>
           )}
-
-          {isAdmin && selected.lead_stage === 'final_pending' && (
+{(isAdmin || isManager) && selected.lead_stage === 'final_pending' && (
             <>
               <div style={{ marginBottom: 14, marginTop: 14 }}>
                 <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>Note (required if rejecting)</label>

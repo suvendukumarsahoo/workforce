@@ -8,6 +8,8 @@ import NewCustomerVisit from '../shared/NewCustomerVisit.jsx'
 import { getGoalOverallStatus } from '../../lib/achievementEngine.js'
 import DocumentSubmitWizard from '../shared/DocumentSubmitWizard.jsx'
 import PaymentEntryForm from '../shared/PaymentEntryForm.jsx'
+import DistributorOrder from '../shared/DistributorOrder.jsx'
+import OrderStatus from '../shared/OrderStatus.jsx'
 
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 const netS = s => (s.basic||0)+(s.hra||0)+(s.ta||0)+(s.da||0)-(s.pf||0)-(s.tds||0)
@@ -25,7 +27,7 @@ const timeAgo = (isoDate) => {
 
 export default function TeamApp() {
   const { currentUser, logout, hasMenu } = useAuth()
-  const { params, goals, setGoals, achievements, expenses, setExpenses, attendance, salaries, products, categories, distributors: customers, visits, showToast, loadAll } = useData()
+  const { params, goals, setGoals, achievements, expenses, setExpenses, attendance, salaries, products, categories, distributors: customers, visits, payments, showToast, loadAll } = useData()
   const [tab, setTab]           = useState('dashboard')
   const [showGoalEntry, setShowGoalEntry] = useState(false)
   const [showExpForm, setShowExpForm]     = useState(false)
@@ -158,6 +160,8 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
   const MORE_ITEMS = [
   hasMenu('newCustomerVisit') && { id: 'newCustomerVisit', icon: '🚶', label: 'New Customer Visit' },
   hasMenu('newCustomerVisit') && { id: 'pendingVisits',    icon: '📌', label: `Pending Visits${pendingVisits.length ? ` (${pendingVisits.length})` : ''}` },
+  hasMenu('orderStatus') && { id: 'orderStatus', icon: '📊', label: 'Order Status' },
+  hasMenu('distributorOrder') && { id: 'distributorOrder', icon: '🛒', label: 'Distributor Order' },
 ].filter(Boolean)
   const TABS = [
     hasMenu('dashboard')    && { id: 'dashboard',    icon: '🏠', label: 'Home'     },
@@ -221,19 +225,21 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
           <>
         {(() => {
               const myVisits = (visits || []).filter(v => v.member_id === mid)
-              const myLeads = (customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.type === 'New Customer')
-              const stageCounts = { interested: 0, not_interested: 0, final: 0 }
-              const PIPELINE_STAGES = ['final_pending', 'registration_pending', 'documents_submitted', 'documentation_verification', 'payment_pending', 'payment_verification', 'final_approved']
+              const myLeads = (customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.lead_stage)
+              const stageCounts = { interested: 0, not_interested: 0, final: 0, distributor: 0 }
+              const IN_PROGRESS_STAGES = ['final_pending', 'registration_pending', 'documents_submitted', 'documentation_verification', 'payment_pending', 'payment_verification']
 myLeads.forEach(d => {
   if (d.lead_stage === 'interested') stageCounts.interested++
   else if (d.lead_stage === 'not_interested') stageCounts.not_interested++
-  else if (PIPELINE_STAGES.includes(d.lead_stage)) stageCounts.final++
+  else if (d.lead_stage === 'final_approved') stageCounts.distributor++
+  else if (IN_PROGRESS_STAGES.includes(d.lead_stage)) stageCounts.final++
 })
+              const visitedLeadCount = new Set(myVisits.map(v => v.distributor_id)).size
               return (
                 <Card style={{ marginBottom: 12 }}>
-                  <CH title="My New Customer Visits" sub={`${myVisits.length} total visits logged — tap a stage to view leads`} />
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, padding: 14 }}>
-                    {[['interested', 'Interested', stageCounts.interested, '#2563eb'], ['not_interested', 'Not Interested', stageCounts.not_interested, '#ef4444'], ['final', 'Final', stageCounts.final, '#10b981']].map(([key, l, v, c]) => (
+                  <CH title="My New Customer Visits" sub="Tap a stage to view leads" />
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8, padding: 14 }}>
+                    {[['visited', 'Total Visited', visitedLeadCount, '#6366f1'], ['interested', 'Interested', stageCounts.interested, '#2563eb'], ['not_interested', 'Not Interested', stageCounts.not_interested, '#ef4444'], ['final', 'Final', stageCounts.final, '#f59e0b'], ['distributor', 'Distributor Created', stageCounts.distributor, '#10b981']].map(([key, l, v, c]) => (
                       <div key={key} onClick={() => setSelectedStage(key)} style={{ textAlign: 'center', cursor: 'pointer', padding: '6px 4px', borderRadius: 8 }}
                         onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
                         onMouseLeave={e => e.currentTarget.style.background = ''}>
@@ -248,16 +254,21 @@ myLeads.forEach(d => {
 {selectedStage && (
               <LeadListSheet
                 stage={selectedStage}
-                leads={(customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.type === 'New Customer' &&
-                  (selectedStage === 'final' ? ['final_pending', 'registration_pending', 'documents_submitted', 'documentation_verification', 'payment_pending', 'payment_verification', 'final_approved'].includes(d.lead_stage) : d.lead_stage === selectedStage))}
+                leads={(customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.lead_stage &&
+                  (selectedStage === 'final' ? ['final_pending', 'registration_pending', 'documents_submitted', 'documentation_verification', 'payment_pending', 'payment_verification'].includes(d.lead_stage) :
+                   selectedStage === 'distributor' ? d.lead_stage === 'final_approved' :
+                   selectedStage === 'visited' ? (visits || []).some(v => v.distributor_id === d.id && v.member_id === mid) :
+                   d.lead_stage === selectedStage))}
+                payments={payments || []}
                 onSelectLead={d => { setSelectedLead(d); setSelectedStage(null) }}
                 onClose={() => setSelectedStage(null)}
               />
             )}
-            {selectedLead && (
+                        {selectedLead && (
   <LeadDetailSheet
     lead={selectedLead}
     visits={(visits || []).filter(v => v.distributor_id === selectedLead.id)}
+    payments={(payments || []).filter(pay => pay.distributor_id === selectedLead.id)}
     onClose={() => setSelectedLead(null)}
     onSubmitDocs={async (id) => {
       setDocWizardLead(selectedLead)
@@ -414,7 +425,7 @@ myLeads.forEach(d => {
               <Card>
                 <div style={{ padding: 12 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>New Distributor Appointment</span>
+<span style={{ fontSize: 13, fontWeight: 600 }}>Distributor Created</span>
                     <GBadge status={g.acq_status || 'draft'} />
                   </div>
                   <div style={{ fontSize: 12, color: '#6b7280', marginBottom: g.acq_status === 'approved' ? 6 : 0 }}>Goal: {g.acq_goal} {g.acq_status === 'approved' && `· Achieved: ${a.acq || 0}`}</div>
@@ -506,6 +517,8 @@ myLeads.forEach(d => {
           </Card>
         )}
         {tab === 'newCustomerVisit' && <NewCustomerVisit />}
+        {tab === 'distributorOrder' && <DistributorOrder />}
+        {tab === 'orderStatus' && <OrderStatus />}
         {tab === 'pendingVisits' && (
           <Card>
             <CH title="Pending Visits" sub={`${pendingVisits.length} customer(s) to visit`} />
@@ -615,8 +628,8 @@ function GoalEntrySheet({ member, param, goal, products, categories, customers, 
       )}
 
       {param.enable_acq && (
-      <StableInp label="New Distributor Appointment goal" fieldKey="acq" defaultVal={g.acq_goal} fg={{ status: g.acq_status, note: g.acq_note }} />
-      )}
+<StableInp label="Distributor Creation goal" fieldKey="acq" defaultVal={g.acq_goal} fg={{ status: g.acq_status, note: g.acq_note }} />
+)}
 
       <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
         <Btn v="pri" full onClick={async () => { await handleSubmit() }}>Submit for approval</Btn>
@@ -628,7 +641,7 @@ function GoalEntrySheet({ member, param, goal, products, categories, customers, 
 
 
 function LeadListSheet({ stage, leads, onSelectLead, onClose }) {
-  const stageLabel = { interested: 'Interested', not_interested: 'Not Interested', final: 'Final' }[stage] || stage
+const stageLabel = { interested: 'Interested', not_interested: 'Not Interested', final: 'Final', distributor: 'Distributor Created', visited: 'Total Visited' }[stage] || stage
   return (
     <Sheet title={stageLabel} sub={`${leads.length} lead(s)`} onClose={onClose}>
       {leads.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No leads in this stage</div>}
@@ -642,8 +655,7 @@ function LeadListSheet({ stage, leads, onSelectLead, onClose }) {
     </Sheet>
   )
 }
-
-function LeadDetailSheet({ lead, visits, onClose, onSubmitDocs, onOpenPayment, showToast }) {
+function LeadDetailSheet({ lead, visits, payments, onClose, onSubmitDocs, onOpenPayment, showToast }) {
   const [submitting, setSubmitting] = useState(false)
 
   const getCountdown = () => {

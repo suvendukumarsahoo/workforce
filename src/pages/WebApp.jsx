@@ -19,6 +19,12 @@ import Payroll       from './shared/Payroll.jsx'
 import Settings      from './admin/Settings.jsx'
 import NewCustomerVisit from './shared/NewCustomerVisit.jsx'
 import DistributorApproval from './manager/DistributorApproval.jsx'
+import DistributorOrder from './shared/DistributorOrder.jsx'
+import WMDashboard from './shared/WMDashboard.jsx'
+import OrderApproval from './manager/OrderApproval.jsx'
+import Vehicles from './shared/Vehicles.jsx'
+import PickingDoneReport from './shared/PickingDoneReport.jsx'
+import OrderStatus from './shared/OrderStatus.jsx'
 
 const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard',        icon:'📊', sec:'Overview'  },
@@ -36,6 +42,13 @@ const ALL_MENUS = [
   { id:'settings',      label:'Settings',         icon:'🔧', sec:'Admin'     },
   { id:'newCustomerVisit', label:'New Customer Visit', icon:'🚶', sec:'Distributor Functions' },
   { id:'distributorApproval', label:'New Distributor Approval', icon:'📋', sec:'Distributor Functions' },
+  { id:'distributorOrder', label:'Distributor Order', icon:'🛒', sec:'Distributor Functions' },
+  { id:'orderApproval', label:'Order Approval', icon:'📝', sec:'Distributor Functions' },
+  { id:'wmDashboard', label:'Dashboard', icon:'📊', sec:'Overview' },
+ { id:'picking', label:'Picking', icon:'📋', sec:'Overview' },
+ { id:'vehicles', label:'Vehicles', icon:'🚚', sec:'Master' },
+ { id:'pickingDoneReport', label:'Picking Done Report', icon:'📦', sec:'Distributor Functions' },
+ { id:'orderStatus', label:'Order Status', icon:'\ud83d\udcca', sec:'Distributor Functions' },
 ]
 
 const PAGE_MAP = {
@@ -54,6 +67,12 @@ const PAGE_MAP = {
   settings:      Settings,
   newCustomerVisit: NewCustomerVisit,
   distributorApproval: DistributorApproval,
+  distributorOrder: DistributorOrder,
+  orderApproval: OrderApproval,
+  wmDashboard: WMDashboard,
+  vehicles: Vehicles,
+  pickingDoneReport: PickingDoneReport,
+  orderStatus: OrderStatus,
 }
 
 export default function WebApp() {

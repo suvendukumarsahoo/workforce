@@ -599,3 +599,183 @@ summary + Manager/Admin Dashboard.jsx org-wide summary from Phase 2).
 - Netlify migration (flagged early on, before commercial launch, for private-repo support)
 - RLS (Row Level Security) across all Supabase tables — flagged multiple times, still not done
 - Pre-existing attendance bug: `db.fetchAttendance` queries nonexistent month/year columns
+### Post-Phase-3 refinements — in progress
+
+**Distributors.jsx master list:** added two columns — "Created On" and "Created By" (separate 
+columns, not combined), rendering `distributor_created_at`/`distributor_created_by` for leads that 
+completed the full pipeline. Confirmed data was already saving correctly; this was purely a display 
+gap.
+
+### Now building: 4-tile stage summary + payment amount, both TeamApp.jsx and Dashboard.jsx
+
+**Requirement:** Total visits, Interested, Not Interested, Final (in-progress pipeline stages), and 
+Distributor Created — as 4 (or 5, including visits count in the subtitle) separate clickable tiles, 
+each drilling down to lead list → lead detail. Team member sees own; Manager/Admin see org-wide 
+totals with drill-down to which team member owns each lead.
+
+**Key design change:** `final_approved` must be split OUT of the "Final" bucket into its own 
+"Distributor" bucket — previously `final_approved` was included in the general 
+`PIPELINE_STAGES`/`final` count, which would double an entry once a lead actually completes (it'd 
+show in both "Final" and would need to also show as "Distributor Created"). New stage groupings:
+- `IN_PROGRESS_STAGES` (shown as "Final" tile): final_pending, registration_pending, 
+  documents_submitted, documentation_verification, payment_pending, payment_verification
+- `final_approved` alone → new "Distributor Created" tile
+
+**Payment amount display:** requires `payments` data to be globally available (previously only 
+fetched ad-hoc inside DistributorApproval.jsx via `loadPayment()` for a single lead at a time). 
+Adding `payments`/`setPayments` to useData.jsx (same Promise.all pattern as visits/registrations) — 
+IN PROGRESS, not yet confirmed saved.
+
+### Next steps
+1. Finish useData.jsx payments wiring (4 edits: Promise.all destructure, useState, setPayments call, 
+   Provider value) — given to user, not yet confirmed done
+2. TeamApp.jsx: update stageCounts calc (interested/not_interested/final/distributor split), update 
+   grid to 4 tiles, add payment amount somewhere (likely shown in the Distributor lead's detail 
+   sheet, sourced from `payments` filtered by distributor_id)
+3. Dashboard.jsx (Manager/Admin): same 4-tile treatment for the "New Customer Visits" org-wide 
+   summary card, same drill-down pattern already established (StageLeadListSheet → 
+   LeadDetailSheetAdmin) — need to add 'distributor' as a 4th selectable stage there too
+4. Both LeadDetailSheet (TeamApp) and LeadDetailSheetAdmin (Dashboard) should show payment amount 
+   when lead_stage === 'final_approved', pulled from `payments` filtered by distributor_id
+   ## Session Update — 21 July 2026
+
+### Bug fixes — tile counting (TeamApp.jsx + Dashboard.jsx)
+
+**Bug: completed distributors vanished from all tile counts.** Both `myLeads` (TeamApp.jsx) 
+and `newLeads` (Dashboard.jsx) filtered on `d.type === 'New Customer'` — but `type` flips to 
+`'Distributor'` the moment Admin confirms payment (`final_approved`). This silently excluded 
+every completed distributor from the summary tiles and drill-down lists the instant they 
+converted. Fixed: filter now checks `d.lead_stage` (truthy) instead of `type`, in both files, 
+in both the tile-count logic and the `LeadListSheet`/`StageLeadListSheet` leads filter.
+
+**Dashboard.jsx subtitle mismatch:** "X total leads" subtitle was counting distributors with 
+any `lead_stage` set — including stale seed data if `lead_stage` ever got a default value via 
+ALTER TABLE. Fixed: subtitle and new "Total Visited" tile both now derive from `visits` records 
+(`visitedIds = new Set(visits.map(v => v.distributor_id))`), so only leads with an actual visit 
+count, matching the same logic used for the tile itself.
+
+**TeamApp.jsx subtitle mismatch:** "X total visits logged" counted raw visit *records* (repeat 
+visits to the same lead counted twice), while tiles count each lead once. Fixed: subtitle now 
+uses unique lead count (`new Set(myVisits.map(v => v.distributor_id)).size`) so it always equals 
+Interested + Not Interested + Final + Distributor Created.
+
+### Tile layout — 5-tile format, both TeamApp.jsx and Dashboard.jsx
+Both home summary cards now show identical layout: **Total Visited, Interested, Not Interested, 
+Final, Distributor Created** (renamed from "Distributor"). All 5 tiles tappable, all drill down 
+via `LeadListSheet`/`StageLeadListSheet`. "Distributor Created" tile and its list rows now show 
+the payment amount (from `payments`/`distributor_payments`, filtered by `distributor_id`) once 
+a lead reaches `final_approved`. `useData.jsx`'s existing `payments` wiring is a dependency for 
+all of this — confirm it's saved if tiles ever show missing payment data.
+
+**Label rename:** "Distributor" → "Distributor Created" everywhere (tile label, LeadListSheet/
+StageLeadListSheet stage label map). "New Distributor Appointment" goal label also renamed to 
+"Distributor Created" in TeamApp.jsx's My Goals tab and GoalEntrySheet — internal keys (`enable_acq`, 
+`acq_goal`, `acq_status`, `fieldKey="acq"`) unchanged. Parameters.jsx toggle label not yet renamed 
+to match (deferred).
+
+### Bug fix — Manager lost final_pending approval action (DistributorApproval.jsx)
+A later rebuild of this file gated ALL actions behind `isAdmin`, including the original Phase 3a 
+final_pending approve/reject flow that was explicitly built for **Manager**. Fixed: added 
+`isManager` check, restored `(isAdmin || isManager)` gate specifically on the final_pending 
+approve/reject block, and adjusted the "View only" message to not show for Manager at that one 
+stage. All later stages (documents_submitted, documentation_verification, payment_verification) 
+remain Admin-only as designed.
+
+### New feature: Distributor Order module — Phase 1 built (Team Member creation)
+
+**Schema added:**
+```sql
+ALTER TABLE products ADD COLUMN weight NUMERIC;
+ALTER TABLE products ADD COLUMN length NUMERIC;
+ALTER TABLE products ADD COLUMN breadth NUMERIC;
+ALTER TABLE products ADD COLUMN height NUMERIC;
+ALTER TABLE products ADD COLUMN volume NUMERIC GENERATED ALWAYS AS (length * breadth * height) STORED;
+
+ALTER TABLE distributors ADD COLUMN payment_mode TEXT DEFAULT 'Advance';
+-- 'Advance' (default, auto for pipeline-created distributors) or 'Credit' (manual/uploaded only)
+
+CREATE TABLE distributor_orders (
+  id SERIAL PRIMARY KEY, distributor_id TEXT NOT NULL REFERENCES distributors(id),
+  member_id INTEGER NOT NULL REFERENCES members(id), order_date TIMESTAMPTZ DEFAULT now(),
+  status TEXT DEFAULT 'order_submitted',  -- order_submitted -> manager_approved_admin_pending -> confirmed
+  manager_id INTEGER REFERENCES members(id), manager_approved_at TIMESTAMPTZ,
+  admin_confirmed_at TIMESTAMPTZ, created_at TIMESTAMPTZ DEFAULT now()
+);
+CREATE TABLE distributor_order_items (
+  id SERIAL PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES distributor_orders(id),
+  product_id TEXT NOT NULL, category_id TEXT, rate NUMERIC NOT NULL, weight NUMERIC, volume NUMERIC,
+  order_qty NUMERIC NOT NULL, approved_qty NUMERIC, final_qty NUMERIC
+);
+CREATE TABLE distributor_order_payments (
+  id SERIAL PRIMARY KEY, order_id INTEGER NOT NULL REFERENCES distributor_orders(id),
+  distributor_id TEXT NOT NULL REFERENCES distributors(id), member_id INTEGER NOT NULL REFERENCES members(id),
+  mode_of_payment TEXT NOT NULL, bank_name TEXT NOT NULL, ifsc_code TEXT NOT NULL, bank_branch TEXT NOT NULL,
+  transaction_date DATE NOT NULL, transaction_amount NUMERIC NOT NULL, transaction_id TEXT NOT NULL,
+  remarks TEXT, status TEXT DEFAULT 'submitted', created_at TIMESTAMPTZ DEFAULT now(), verified_at TIMESTAMPTZ
+);
+```
+
+**db.js additions:** `createDistributorOrder`, `fetchDistributorOrders`, `updateOrderStatus`, 
+`updateOrderItemQty`, `createOrderPayment`, `fetchOrderPayments`, `verifyOrderPayment`.
+
+**Products.jsx:** added Weight, Length, Breadth, Height fields to the add/edit form and Weight/
+Volume columns to the table. `volume` is a DB-generated column (never sent in payload).
+
+**Menu wiring:** `distributorOrder` added to `roles.menus` (jsonb array, confirmed via 
+`SELECT menus FROM roles LIMIT 1` showing bracket format) for Sales Team, Manager, and Admin. 
+WebApp.jsx: new sidebar entry under "Distributor Functions". TeamApp.jsx: added to `MORE_ITEMS` 
+drawer (same pattern as `newCustomerVisit`).
+
+**New file: `src/pages/shared/DistributorOrder.jsx`** — Team Member's order-creation flow:
+1. Select distributor (filtered to `type === 'Distributor'`, own assignments only)
+2. If distributor's `payment_mode === 'Advance'`: payment entry form shown FIRST (same fields 
+   as distributor payment form), must complete before proceeding to items
+3. Item entry: dropdown-driven table — product dropdown excludes already-added products 
+   (hard duplicate prevention), rate/weight/volume auto-populate from product master on add, 
+   qty is a live editable `<input>` directly in the table row, editable anytime pre-submission
+4. Payment details (if Advance) shown as a persistent compact card at the top of the item screen
+5. Real-time validation: grand total turns red and "Save & Review" disables the instant order 
+   value exceeds the payment amount; double-checked again in `goToConfirm()` as a safety net
+6. Category-wise summary (qty/weight/volume/value) + grand total
+7. OTP screen (demo hardcoded `1234`) → on confirm, creates `distributor_orders` + 
+   `distributor_order_items` + (if Advance) `distributor_order_payments`, status = `order_submitted`
+
+### New feature: Distributor Order module — Phase 2 built (Manager + Admin approval)
+
+**New file: `src/pages/manager/OrderApproval.jsx`** — shared by Manager and Admin, role-gated:
+- Manager sees orders at `order_submitted`; Admin sees orders at `manager_approved_admin_pending`
+- Payment details card always visible at top for both roles (per requirement: payment details 
+  shown on all three order screens — Team/Manager/Admin — always)
+- Item table: Order Qty always shown read-only; Manager gets editable "Approved Qty" column; 
+  Admin additionally sees Manager's approved qty (read-only) plus editable "Final Qty" column
+- Manager: OTP (`1234`) required to confirm approval → sets `approved_qty` AND seeds `final_qty` 
+  to match (so Admin's default starts from Manager's numbers, not the original order) → status 
+  `manager_approved_admin_pending`
+- Admin: no OTP required (per spec — OTP only for Team + Manager stages). If payment exists, 
+  must click "Confirm Payment" (marks `distributor_order_payments.status='verified'`) before 
+  "Confirm Order" enables → status `confirmed`. Credit-mode orders (no payment row) skip straight 
+  to Confirm Order.
+- Menu `orderApproval` added to Manager + Admin roles only (not Sales Team)
+
+**Known gaps / deferred:**
+- No Reject option built yet at either Manager or Admin order-approval stage
+- Post-confirmation flow (stock deduction, dispatch, invoice, notifications) intentionally 
+  deferred — order just marks `status='confirmed'` for now, per explicit instruction to keep 
+  it simple and build further logic later
+- `if (orders.length === 0) loadOrders()` pattern used for initial fetch in OrderApproval.jsx 
+  instead of `useEffect` — works but could re-fire on renders before data populates; revisit if 
+  excessive network calls are observed
+- Parameters.jsx "New customer acquisition"/"New Distributor Appointment" toggle label not yet 
+  renamed to "Distributor Created" to match TeamApp.jsx
+
+### Deferred feature — Payment Hold / ReInitiate flow (planned, not started)
+Discussed and designed but explicitly parked for later:
+- 48hr payment window expiry → auto-flip `payment_pending` → `payment_hold` ("Hold for Payment"), 
+  checked on every `loadAll()` (app load), new "On Hold" tile in TeamApp/Dashboard
+- Manager: note + "ReInitiate Payment" → `payment_reinitiate_pending`
+- Admin: note + Approve (reject option and destination TBD — mid-discussion when parked) → 
+  reopens 48hr window, `payment_request_count += 1`, tagged "2nd Request"
+- "On Hold" tile count is meant to stay "sticky" (via `payment_request_count > 1` check) through 
+  the whole reinitiate cycle until `final_approved`, so it doesn't double back into "Final"
+- Schema planned: `distributors.payment_request_count` (default 1), `hold_note`, `reinitiate_note` 
+  — NOT yet run in Supabase

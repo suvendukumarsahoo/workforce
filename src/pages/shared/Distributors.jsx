@@ -19,6 +19,12 @@ export default function Distributors() {
         {(r.assignedTo || []).map(id => { const m = (members || []).find(x => x.id === id); return m ? <Av key={id} av={m.avatar} color={m.color} sz={22} /> : null })}
       </div>
     )},
+    { key: 'createdOn', label: 'Created On', render: r => (
+      r.distributor_created_at ? new Date(r.distributor_created_at).toLocaleDateString('en-IN') : <span style={{ color: '#9ca3af' }}>—</span>
+    )},
+    { key: 'createdBy', label: 'Created By', render: r => (
+      (members || []).find(m => m.id === r.distributor_created_by)?.name || <span style={{ color: '#9ca3af' }}>—</span>
+    )},
   ]
 
   const save = async (d) => {
