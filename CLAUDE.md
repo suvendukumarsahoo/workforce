@@ -360,7 +360,7 @@ a new `useState` (`deliveryError`) *after* the component's existing early-return
 `react-hooks/rules-of-hooks` caught immediately. Fixed by moving it up with the other `useState`
 calls at the top of the component, same as every other piece of state there.
 
-**Schema — user must apply manually, not yet confirmed done** (same pattern as Phase 1/2):
+**Schema — user confirmed applied (1 Aug 2026)** (same pattern as Phase 1/2):
 ```sql
 alter table distributor_orders
   add column unloading_started_at timestamptz,
@@ -393,17 +393,18 @@ alter table vehicle_allocations
   such handling exists anywhere else in the app.
 
 **Still open / not done yet:**
+- ~~Schema applied~~ — done, user confirmed (1 Aug 2026).
+- ~~Admin's `journeyApprovals` menu box checked in Settings~~ — done, user confirmed (1 Aug 2026,
+  "sql update + menu option journey tab enabled").
 - **Not browser-tested** — same constraint as every phase before it (no chromium-cli/Playwright in
   this Windows dev environment). Only `vite build` + `eslint` (scoped to touched files — the
   project-wide `eslint .` run has ~66 pre-existing errors unrelated to this session, e.g.
   `WebApp.jsx`'s `SideContent`/`Settings.jsx`'s unused `Inp` already flagged in the lint-errors list
-  below) were run clean.
-- End-to-end flow to verify once online: Driver walks Arrived → Start Unloading → Delivery Complete
-  → Next Stop (repeat) → Return to Base → 3-item checklist → Submit Journey Complete; Admin sees it
-  on the new Journey Approvals page and approves; confirm the driver disappears from
-  `LoadCreatedList.jsx`'s Allocate Vehicle dropdown the moment they're assigned a new load's
-  allocation, and reappears only after that approval. Also needs the `journeyApprovals` Admin-role
-  menu box checked in Settings (+ re-login), same gotcha as every previous phase's new menu id.
+  below) were run clean. Still to verify end-to-end in a real browser: Driver walks Arrived → Start
+  Unloading → Delivery Complete → Next Stop (repeat) → Return to Base → 3-item checklist → Submit
+  Journey Complete; Admin sees it on the Journey Approvals page and approves; confirm the driver
+  disappears from `LoadCreatedList.jsx`'s Allocate Vehicle dropdown the moment they're assigned a
+  new load's allocation, and reappears only after that approval.
 
 ### Old Phase 3 spec (superseded by "Built" above — kept for the original ask in the user's words)
 
