@@ -18,6 +18,8 @@ export default function OrderTimeline({ order }) {
     { label: 'Submitted for Picking', ts: order.admin_confirmed_at },
     { label: 'Picking Updated', ts: order.picking_updated_at },
     { label: 'Load Created', ts: order.load_created_at },
+    { label: 'Journey Started', ts: order.allocation?.journey_started_at },
+    { label: 'Arrived at Distributor', ts: order.arrived_at },
   ].filter(s => s.ts)
 
   return (

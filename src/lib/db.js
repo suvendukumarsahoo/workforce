@@ -288,6 +288,51 @@ export async function markLoadingComplete(allocationId) {
     .single()
   return { data, error }
 }
+
+export async function updateAllocationChecklist(allocationId, updates) {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .update(updates)
+    .eq('id', allocationId)
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function startJourney(allocationId, routePlan) {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .update({
+      status: 'in_transit',
+      journey_started_at: new Date().toISOString(),
+      route_plan: routePlan,
+      delivery_stop_index: 0,
+    })
+    .eq('id', allocationId)
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function confirmArrival(orderId, allocationId, newStopIndex, isLastStop) {
+  const { error: orderError } = await supabase
+    .from('distributor_orders')
+    .update({ arrived_at: new Date().toISOString() })
+    .eq('id', orderId)
+  if (orderError) return { data: null, error: orderError }
+  const allocUpdate = { delivery_stop_index: newStopIndex }
+  if (isLastStop) {
+    allocUpdate.status = 'completed'
+    allocUpdate.journey_completed_at = new Date().toISOString()
+  }
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .update(allocUpdate)
+    .eq('id', allocationId)
+    .select()
+    .single()
+  return { data, error }
+}
 export async function fetchDriverAllocations(driverId) {
   const { data, error } = await supabase
     .from('vehicle_allocations')
@@ -491,7 +536,7 @@ export async function deleteInvoice(id) {
 export async function fetchOrdersAwaitingInvoice() {
   const { data, error } = await supabase
     .from('distributor_orders')
-    .select('*, distributor:distributors(id, name, area, town), member:members!distributor_orders_member_id_fkey(id, name), items:distributor_order_items(*), allocation:vehicle_allocations(id, status)')
+    .select('*, distributor:distributors(id, name, area, town), member:members!distributor_orders_member_id_fkey(id, name), items:distributor_order_items(*), allocation:vehicle_allocations(id, status, vehicle:vehicles(id, vehicle_number))')
     .not('allocation_id', 'is', null)
   if (error) return { data: null, error }
   const awaiting = (data || []).filter(o => o.allocation?.status === 'loading_complete')
@@ -534,6 +579,15 @@ export async function fetchInvoiceForOrder(orderId) {
     .select('*, lines:invoice_lines(*, product:products(id, name, unit, category_id))')
     .eq('order_id', orderId)
     .maybeSingle()
+  return { data, error }
+}
+
+export async function fetchInvoicesForOrders(orderIds) {
+  if (!orderIds?.length) return { data: [], error: null }
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('order_id, id, status')
+    .in('order_id', orderIds)
   return { data, error }
 }
 
@@ -814,7 +868,7 @@ export async function fetchPickingOrders() {
 export async function fetchAllOrdersWithItems() {
   const { data, error } = await supabase
     .from('distributor_orders')
-    .select('*, distributor:distributors(id, name, area, town), member:members!distributor_orders_member_id_fkey(id, name), items:distributor_order_items(*)')
+    .select('*, distributor:distributors(id, name, area, town), member:members!distributor_orders_member_id_fkey(id, name), items:distributor_order_items(*), allocation:vehicle_allocations(id, status, journey_started_at, journey_completed_at, route_plan, delivery_stop_index, vehicle:vehicles(id, vehicle_number), driver:members!vehicle_allocations_driver_id_fkey(id, name))')
     .order('order_date', { ascending: false })
   return { data, error }
 }

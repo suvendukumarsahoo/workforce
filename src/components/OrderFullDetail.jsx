@@ -91,6 +91,21 @@ const [loadedQtyMap, setLoadedQtyMap] = useState({})
         </Card>
       )}
 
+      {order.allocation && ['in_transit', 'completed'].includes(order.allocation.status) && (
+        <Card>
+          <CH title="Delivery" />
+          <div style={{ padding: 14, fontSize: 12, display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
+            <div>Vehicle: <strong>{order.allocation.vehicle?.vehicle_number}</strong></div>
+            <div>Driver: <strong>{order.allocation.driver?.name}</strong></div>
+            {order.arrived_at ? (
+              <div style={{ color: '#10b981', fontWeight: 700 }}>Arrived at Distributor — {new Date(order.arrived_at).toLocaleString('en-IN')}</div>
+            ) : (
+              <div style={{ color: '#7c3aed', fontWeight: 700 }}>In Transit</div>
+            )}
+          </div>
+        </Card>
+      )}
+
       {invoice && (
         <Card>
           <CH title="Invoice" right={

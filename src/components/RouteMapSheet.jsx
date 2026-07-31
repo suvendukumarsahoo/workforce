@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Sheet, Card } from './ui.jsx'
 
-export default function RouteMapSheet({ loads, onClose }) {
+export default function RouteMapSheet({ loads, onClose, onRouteReady, footer }) {
   const mapRef = useRef(null)
   const mapInstance = useRef(null)
 const [routeInfo, setRouteInfo] = useState(null)
@@ -17,6 +17,7 @@ const warehouse = loads[0]?.allocation?.warehouse
       lng: l.distributor.confirmed_longitude,
       name: l.distributor.name,
       loadId: l.load_id,
+      orderId: l.id,
     }))
 
   useEffect(() => {
@@ -95,6 +96,20 @@ const warehouse = loads[0]?.allocation?.warehouse
           durationMin: Math.round(trip.duration / 60),
         })
         setLoading(false)
+
+        if (onRouteReady) {
+          let cum = 0
+          const planStops = order.map((s, i) => {
+            const legMin = Math.round((trip.legs?.[i]?.duration || 0) / 60)
+            cum += legMin
+            return { order_id: s.orderId, distributor_name: s.name, leg_duration_min: legMin, cum_eta_min: cum }
+          })
+          onRouteReady({
+            stops: planStops,
+            total_duration_min: Math.round(trip.duration / 60),
+            total_distance_km: Number((trip.distance / 1000).toFixed(1)),
+          })
+        }
       } catch (e) {
         if (!cancelled) { setError('Error fetching route from routing service'); setLoading(false) }
       }
@@ -130,6 +145,8 @@ const warehouse = loads[0]?.allocation?.warehouse
           ))}
         </div>
       </Card>
+
+      {footer}
     </Sheet>
   )
 }

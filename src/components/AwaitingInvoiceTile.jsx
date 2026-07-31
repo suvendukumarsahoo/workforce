@@ -34,6 +34,16 @@ export default function AwaitingInvoiceTile() {
 
   const productName = pid => (products || []).find(p => p.id === pid)?.name || pid
 
+  const groupedByLoad = () => {
+    const groups = {}
+    orders.forEach(o => {
+      const key = o.allocation?.id || 'none'
+      if (!groups[key]) groups[key] = { allocationId: key, vehicleNumber: o.allocation?.vehicle?.vehicle_number, orders: [] }
+      groups[key].orders.push(o)
+    })
+    return Object.values(groups)
+  }
+
   const activeItems = () => (creating?.items || []).filter(it => !it.cancelled)
   const computedTotal = () => activeItems().reduce((s, it) => s + it.rate * it.final_qty, 0)
   const mismatch = () => erpAmount !== '' && Math.abs(Number(erpAmount) - computedTotal()) > 0.01
@@ -66,11 +76,18 @@ export default function AwaitingInvoiceTile() {
       {showList && (
         <Sheet title="Awaiting Invoice Creation" sub={`${orders.length} order(s) — loading complete`} onClose={() => setShowList(false)}>
           {orders.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>None</div>}
-          {orders.map(o => (
-            <div key={o.id} style={{ padding: '12px 4px', borderBottom: '1px solid #f3f4f6' }}>
-              <div style={{ fontWeight: 600, fontSize: 13 }}>Order #{o.id} — {o.distributor?.name}</div>
-              <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 8 }}>{o.member?.name}</div>
-              <Btn sm v="pri" onClick={() => { openCreate(o); setShowList(false) }}>Create Invoice From Load</Btn>
+          {groupedByLoad().map(group => (
+            <div key={group.allocationId} style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', padding: '10px 4px 4px' }}>
+                {group.vehicleNumber ? `Vehicle ${group.vehicleNumber}` : `Load ${group.allocationId}`} — {group.orders.length} order(s)
+              </div>
+              {group.orders.map(o => (
+                <div key={o.id} style={{ padding: '12px 4px', borderBottom: '1px solid #f3f4f6' }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>Order #{o.id} — {o.distributor?.name}</div>
+                  <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 8 }}>{o.member?.name}</div>
+                  <Btn sm v="pri" onClick={() => { openCreate(o); setShowList(false) }}>Create Invoice From Load</Btn>
+                </div>
+              ))}
             </div>
           ))}
         </Sheet>
