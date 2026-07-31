@@ -29,6 +29,13 @@ commercial launch).
    Causes request storms on every re-render. FLAGGED, NOT FIXED — proper fix is `useEffect(() => 
    {...}, [])`. App has been running slow (login/data taking 3-4 refreshes); Supabase usage is far 
    under quota (Nano compute tier likely just resource-constrained under polling + multi-tab testing).
+6. **Menu list duplicated in two files, drifts out of sync** — `WebApp.jsx`'s `ALL_MENUS` (used for
+   routing + sidebar/bottom-nav) and `Settings.jsx`'s own separate `ALL_MENUS` (used for the
+   role-permission checkboxes) are two independent arrays, not a shared import. Found 2 Aug 2026:
+   Settings.jsx's copy was missing ~12 entries added over prior sessions (including `assignedLoads`
+   itself) — Admin had no way to toggle those via the UI at all. Fixed by backfilling Settings.jsx's
+   list, but **any new menu id added to `WebApp.jsx` must be manually mirrored into `Settings.jsx`**
+   or it'll be invisible in the permissions screen again.
 
 ## Core Business Modules (stable, working)
 - **Goals/Targets**: Manager sets parameter scope → Sales Team sets goal values → lock on submit → 
@@ -76,9 +83,18 @@ any non-Available item) → `ready_for_load` (all Available) — Admin creates L
 - Load ID format: `LD-DDMMYYYY-NN` (sequential per day).
 
 **Driver + Loading (r7 Driver role):**
+- Driver has its own nav shell in `WebApp.jsx` (`isDriver = role?.id === 'r7'`) — bottom icon tab
+  bar instead of the sidebar, since Driver's menu list is short. Currently 3 tabs, each its own
+  menu id/page (was one page with 2 tiles stacked in it — split 2 Aug 2026 session so the bottom
+  bar has more than one button): `assignedLoads` ("My Loads" — accept load / confirm vehicle
+  parked, in `AssignedLoads.jsx`), `driverLoadingConfirm` ("Confirm Loading" — per-order load-qty
+  confirm, `DriverOrderConfirmTile.jsx` used directly as a page), `driverJourney` ("Journey" —
+  invoice checklist → Start Journey → per-stop Arrived, `AllocationJourneyTile.jsx` used directly
+  as a page). Both tile components now render a friendly empty state instead of `return null` when
+  their list is empty, since as standalone pages a blank screen under a tab reads as broken.
 - `AssignedLoads.jsx`: Accept flow (in-transit toggle mutually exclusive w/ manual reporting time; 
-  >30min total requires delay comment) → "Confirm Vehicle Parked" → `DriverOrderConfirmTile` 
-  (per-order load-qty confirm, unlocks WM's next-stop advance).
+  >30min total requires delay comment) → "Confirm Vehicle Parked" — unlocks WM's next-stop advance
+  once the separate `driverLoadingConfirm` tab confirms load qty.
 - `VehicleParkedTile.jsx` + `LoadingInProgressTile.jsx` (WM Dashboard) → `StartLoadSheet.jsx` 
   (Supervisor+Labourer names, computes reversed-optimized stop sequence) → `LoadingScreen.jsx`.
 - `LoadingScreen.jsx` (core): per-stop→per-item→Lift Stack (WM types manually, NOT a product-master 
@@ -152,7 +168,7 @@ customer_id fix is in (per-customer goal progress bars should now move).
 - Pre-existing: `db.fetchAttendance` queries nonexistent month/year columns (very old bug, may still 
   exist).
 
-## Delivery/Transit Tracking — PLANNED, NOT STARTED (spec'd 1 Aug 2026, build in a new chat)
+## Delivery/Transit Tracking — Phase 1 BUILT & PUSHED (1 Aug 2026 session), NOT YET BROWSER-TESTED
 
 **Where this picks up:** `vehicle_allocations.status` today dead-ends at `loading_complete` — 
 nothing built past it. Per-order `loading_stage` (`wm_loaded` → `driver_confirmed`) is only used 
@@ -168,33 +184,43 @@ Admin sees live vehicle position via websocket with idle alerts (>30 min not mov
 presses **Arrived** at each stop (est. vs actual time shown) → all roles see "arrived at 
 distributor" with timestamp on order status.
 
-### Phase 1 — invoice-gated checklist + route + arrival (build this first, no live GPS)
+### Phase 1 — invoice-gated checklist + route + arrival — BUILT, committed & pushed (commit
+`6ab5c06`), NOT YET verified in a real browser session (no chromium-cli/Playwright available in
+this Windows dev environment — only `vite build` + `eslint` were run clean)
 
-1. **Group invoice creation by allocation.** `db.fetchOrdersAwaitingInvoice()` returns a flat list — 
-   change `AwaitingInvoiceTile.jsx` to group by `allocation_id`, one section per Load.
-2. **Driver's per-load invoice status + checklist.** New tile on `AssignedLoads.jsx`, shown when 
-   `allocation.status === 'loading_complete'`: per-order Invoiced/Not badge (new batched 
-   `db.fetchInvoicesForOrders(orderIds)`, or reuse the `fetchInvoiceForOrder` pattern). "Invoiced" = 
-   invoice row exists, any status (pending_approval counts — this is about paperwork done, not 
-   approval). Once all orders in the allocation are invoiced: 3-item Yes/No confirmation (Collected 
-   Invoice, Collected Waybill, Informed to Distributor) → all Yes unlocks **Start Journey**.
-3. **Start Journey → route plan.** Reuse the OSRM `/trip/` call already in `RouteMapSheet.jsx` (don't 
-   reinvent) to get optimized stop order + leg durations. Store as `vehicle_allocations.route_plan` 
-   jsonb: `{ stops: [{order_id, distributor_name, leg_duration_min, cum_eta_min}], 
-   total_duration_min, total_distance_km }`. Set `status='in_transit'`, `journey_started_at=now()`. 
-   Show `RouteMapSheet.jsx` for stop order.
-4. **Per-stop arrival.** New driver tile: current stop = `route_plan.stops[delivery_stop_index]`. 
-   "Arrived" button → `distributor_orders.arrived_at=now()`, increment 
-   `vehicle_allocations.delivery_stop_index`. Show est. (from `cum_eta_min` relative to 
-   `journey_started_at`) vs actual elapsed. Last stop confirmed → `status='completed'`, 
-   `journey_completed_at=now()`.
-5. **Cross-role order status.** `OrderTimeline.jsx` + `OrderFullDetail.jsx` (shared by 
-   `OrderStatus.jsx` across Admin/Manager/Accounts/Team): add "In Transit" and "Arrived at 
-   Distributor — {timestamp}" stages, show vehicle number + driver name while in transit (check 
-   whether the order-fetching query already joins `allocation.vehicle`/`allocation.driver` — extend 
-   if not).
+**Built:**
+1. **Grouped invoice creation by allocation** — `AwaitingInvoiceTile.jsx` groups awaiting-invoice
+   orders by `allocation_id`, one section per Load (vehicle number as header). `db.js`'s
+   `fetchOrdersAwaitingInvoice()` extended to join `allocation.vehicle`.
+2. **New `AllocationJourneyTile.jsx`** (driver, rendered on `AssignedLoads.jsx` next to
+   `DriverOrderConfirmTile`) — for allocations at `status='loading_complete'`: per-order
+   Invoiced/Not badge (new `db.fetchInvoicesForOrders(orderIds)`, counts any invoice status). Once
+   all orders invoiced: 3-item checkbox checklist (Collected Invoice/Waybill/Informed to
+   Distributor) persisted live via new `db.updateAllocationChecklist(allocationId, updates)`. Once
+   all 3 checked: **Start Journey** button.
+3. **Start Journey → route plan** — opens `RouteMapSheet.jsx` (now accepts optional
+   `onRouteReady`/`footer` props, backward-compatible with its existing caller in
+   `LoadCreatedList.jsx`) which computes the OSRM `/trip/` route and reports
+   `{ stops: [{order_id, distributor_name, leg_duration_min, cum_eta_min}], total_duration_min,
+   total_distance_km }` back up. A footer "Confirm Route & Start Journey" button calls new
+   `db.startJourney(allocationId, routePlan)` → sets `status='in_transit'`,
+   `journey_started_at=now()`, stores `route_plan`.
+4. **Per-stop arrival** — same tile, for allocations at `status='in_transit'`: shows current stop
+   (`route_plan.stops[delivery_stop_index]`), est. (`cum_eta_min`) vs elapsed (ticks every 30s via
+   `now` state — avoid calling `Date.now()` directly in render, React Compiler's
+   `react-hooks/purity` lint rule flags it). "Arrived" button → new
+   `db.confirmArrival(orderId, allocationId, newStopIndex, isLastStop)` sets
+   `distributor_orders.arrived_at`, increments `delivery_stop_index`, and on the last stop flips
+   `status='completed'` + `journey_completed_at`.
+5. **Cross-role order status** — `orderStageLabel.js` (`getOrderStageLabel`/`getOrderStageColor`),
+   `OrderTimeline.jsx`, and `OrderFullDetail.jsx` (shared by `OrderStatus.jsx` across
+   Admin/Manager/Accounts/Team) now show "In Transit" / "Arrived at Distributor — {timestamp}"
+   stages and a Delivery card with vehicle number + driver name. Required extending
+   `db.fetchAllOrdersWithItems()` to join `allocation.vehicle`/`allocation.driver`/`route_plan`/etc
+   — it didn't have that join before.
 
-**Phase 1 schema (give user as SQL to run manually in Supabase dashboard):**
+**Phase 1 schema — already applied** (confirmed via a read-only REST probe against
+`vehicle_allocations`/`distributor_orders` before building, not just asked):
 ```sql
 alter table vehicle_allocations
   add column collected_invoice boolean not null default false,
@@ -208,13 +234,17 @@ alter table vehicle_allocations
 alter table distributor_orders
   add column arrived_at timestamptz;
 ```
-`status` is a plain text column (no DB enum) — new string values `'in_transit'`/`'completed'` need 
-no migration.
 
-**Phase 1 files:** `AwaitingInvoiceTile.jsx`, `AssignedLoads.jsx` (or a new tile component following 
-the `DriverOrderConfirmTile.jsx` pattern), `OrderTimeline.jsx`, `OrderFullDetail.jsx`, `db.js` (new: 
-`fetchInvoicesForOrders`, `updateAllocationChecklist`, `startJourney`, `confirmArrival`), reuse 
-`RouteMapSheet.jsx`.
+**Still open / not done yet:**
+- ~~Browser verification~~ — done, user confirmed working in the browser (2 Aug 2026).
+- **Driver role DB menus still only has `assignedLoads`** — the two new tabs
+  (`driverLoadingConfirm`, `driverJourney`, see Driver + Loading section above) won't appear on the
+  driver's bottom nav until an Admin checks their boxes in Settings → Driver role → Menu access
+  (effective next login). User was told to do this; not yet confirmed done.
+- Pre-existing lint errors (not introduced this session, left as-is): `RouteMapSheet.jsx`
+  `setState`-in-effect + unused `e`, `AssignedLoads.jsx` unused `confirmingParkId`/`e`,
+  `OrderFullDetail.jsx` exhaustive-deps warning, `WebApp.jsx` `SideContent` static-component warning
+  + unused `Btn` import, `Settings.jsx` unused `Inp` import.
 
 ### Phase 2 — live GPS tracking, websocket admin map, idle alerts (separate follow-up, after Phase 1 is tested)
 
@@ -247,7 +277,9 @@ done from code).
 4. **ETA vs actual on the live map:** per active leg, `route_plan` estimate vs elapsed time since 
    previous stop's `arrived_at` (or `journey_started_at` for leg 1).
 
-### To start Phase 1 in a new chat
-Say: "Read CLAUDE.md, build Phase 1 of Delivery/Transit Tracking." The new chat should read this 
-section, confirm the Phase 1 SQL has been run, then implement in the order listed above (1→5), 
-building and testing incrementally rather than all at once.
+### To continue in a new chat
+Say: "Read CLAUDE.md. Phase 1 of Delivery/Transit Tracking is built, tested, and pushed, and the
+driver bottom-nav split is also built and pushed. Confirm the Driver role's two new menu boxes are
+checked in Settings, then start Phase 2 (live GPS tracking)." The new chat should read this
+section and the Driver + Loading bullet under the Distributor Order pipeline section before
+touching Phase 2.

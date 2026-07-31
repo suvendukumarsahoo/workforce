@@ -2,8 +2,6 @@ import { useState } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { Card, CH, Btn, Sheet, Inp } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
-import DriverOrderConfirmTile from '../../components/DriverOrderConfirmTile.jsx'
-import AllocationJourneyTile from '../../components/AllocationJourneyTile.jsx'
 
 const statusLabel = (s) => ({
   waiting_driver_acceptance: 'Awaiting Your Acceptance',
@@ -102,8 +100,6 @@ const confirmParked = async (allocationId) => {
   }
   return (
     <div>
-      <DriverOrderConfirmTile />
-      <AllocationJourneyTile />
       <Card>
         <CH title="Assigned Loads" sub={`${allocations.length} allocation(s)`} />
         {allocations.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No loads assigned</div>}

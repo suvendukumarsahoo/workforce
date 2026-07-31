@@ -40,7 +40,14 @@ export default function AllocationJourneyTile() {
   }
   if (!loaded) loadData()
 
-  if (allocations.length === 0) return null
+  if (allocations.length === 0) {
+    return (
+      <Card>
+        <CH title="Journey" />
+        <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No load ready for invoicing / dispatch right now</div>
+      </Card>
+    )
+  }
 
   const toggleChecklistItem = async (allocation, key) => {
     setBusyKey(`${allocation.id}-${key}`)

@@ -22,6 +22,19 @@ const ALL_MENUS = [
   { id:'myExpenses',    label:'My Expenses'      },
   { id:'myAttendance',  label:'My Attendance'    },
   { id:'mySalary',      label:'My Salary'        },
+  { id:'newCustomerVisit',     label:'New Customer Visit'      },
+  { id:'distributorApproval',  label:'New Distributor Approval'},
+  { id:'distributorOrder',     label:'Distributor Order'       },
+  { id:'orderApproval',        label:'Order Approval'          },
+  { id:'wmDashboard',          label:'Warehouse Dashboard'     },
+  { id:'vehicles',             label:'Vehicles'                },
+  { id:'warehouses',           label:'Warehouses'              },
+  { id:'pickingDoneReport',    label:'Picking Done Report'     },
+  { id:'orderStatus',          label:'Order Status'            },
+  { id:'loadCreatedList',      label:'Load Created List'       },
+  { id:'assignedLoads',        label:'My Loads (Driver)'       },
+  { id:'driverLoadingConfirm', label:'Confirm Loading (Driver)'},
+  { id:'driverJourney',        label:'Journey (Driver)'        },
 ]
 
 export default function Settings() {

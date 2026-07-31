@@ -29,6 +29,8 @@ import OrderStatus from './shared/OrderStatus.jsx'
 import Warehouses from './shared/Warehouses.jsx'
 import LoadCreatedList from './manager/LoadCreatedList.jsx'
 import AssignedLoads from './shared/AssignedLoads.jsx'
+import DriverOrderConfirmTile from '../components/DriverOrderConfirmTile.jsx'
+import AllocationJourneyTile from '../components/AllocationJourneyTile.jsx'
 
 const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard',        icon:'📊', sec:'Overview'  },
@@ -55,7 +57,9 @@ const ALL_MENUS = [
  { id:'pickingDoneReport', label:'Picking Done Report', icon:'📦', sec:'Distributor Functions' },
  { id:'orderStatus', label:'Order Status', icon:'\ud83d\udcca', sec:'Distributor Functions' },
 { id:'loadCreatedList', label:'Load Created List', icon:'📋', sec:'Distributor Functions' },
-{ id:'assignedLoads', label:'Assigned Loads', icon:'🚚', sec:'Overview' },
+{ id:'assignedLoads', label:'My Loads', icon:'🚚', sec:'Overview' },
+{ id:'driverLoadingConfirm', label:'Confirm Loading', icon:'📦', sec:'Overview' },
+{ id:'driverJourney', label:'Journey', icon:'🧭', sec:'Overview' },
 ]
 
 const PAGE_MAP = {
@@ -83,12 +87,15 @@ const PAGE_MAP = {
   orderStatus: OrderStatus,
 loadCreatedList: LoadCreatedList,
 assignedLoads: AssignedLoads,
+driverLoadingConfirm: DriverOrderConfirmTile,
+driverJourney: AllocationJourneyTile,
 }
 
 export default function WebApp() {
-  const { currentUser, logout, hasMenu } = useAuth()
+  const { currentUser, role, logout, hasMenu } = useAuth()
   const { goals, expenses }              = useData()
   const [sideOpen, setSideOpen]          = useState(false)
+  const isDriver = role?.id === 'r7'
 
   // First allowed menu is the default page
   const allowedMenus = ALL_MENUS.filter(m => hasMenu(m.id))
@@ -160,6 +167,56 @@ export default function WebApp() {
 
   const PageComponent = PAGE_MAP[nav] || Dashboard
   const curLabel      = allowedMenus.find(m => m.id === nav)?.label || ''
+
+  if (isDriver) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", overflow: 'hidden' }}>
+
+        {/* Top bar */}
+        <div style={{ background: '#0f172a', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <Av av={currentUser?.avatar || '?'} color={currentUser?.color || '#6b7280'} sz={28} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>{curLabel}</div>
+            <div style={{ color: '#94a3b8', fontSize: 11 }}>{currentUser?.name}</div>
+          </div>
+          <NotificationBell onNavigate={goTo} />
+          <button onClick={logout} title="Sign out" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>⏻</button>
+        </div>
+
+        {/* Page content */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
+          <PageComponent onNavigate={goTo} />
+        </div>
+
+        {/* Bottom tab bar */}
+        <div style={{
+          display: 'flex', flexShrink: 0, background: '#fff', borderTop: '1px solid #e5e7eb',
+          paddingBottom: 'env(safe-area-inset-bottom)',
+        }}>
+          {allowedMenus.map(m => (
+            <button key={m.id} onClick={() => goTo(m.id)} style={{
+              flex: 1, background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+              padding: '8px 4px 6px', position: 'relative',
+              color: nav === m.id ? '#2563eb' : '#9ca3af',
+            }}>
+              <span style={{ fontSize: 20 }}>{m.icon}</span>
+              <span style={{ fontSize: 10, fontWeight: nav === m.id ? 700 : 500 }}>{m.label}</span>
+              {badge[m.id] > 0 && (
+                <span style={{
+                  position: 'absolute', top: 4, right: '28%', background: '#ef4444', color: '#fff',
+                  fontSize: 9, minWidth: 14, height: 14, borderRadius: 7, fontWeight: 700,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 3px',
+                }}>
+                  {badge[m.id]}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif", overflow: 'hidden' }}>

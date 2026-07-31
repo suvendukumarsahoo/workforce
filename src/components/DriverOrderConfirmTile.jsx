@@ -31,7 +31,14 @@ export default function DriverOrderConfirmTile() {
     await loadData()
   }
 
-  if (allocations.length === 0) return null
+  if (allocations.length === 0) {
+    return (
+      <Card>
+        <CH title="Loading Confirmation" />
+        <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>Nothing waiting on your confirmation right now</div>
+      </Card>
+    )
+  }
 
   return (
     <>
