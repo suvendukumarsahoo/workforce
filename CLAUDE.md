@@ -310,8 +310,8 @@ Plus: Supabase Dashboard → Database → Replication → toggle `vehicle_locati
   email/password only, no phone/OTP anywhere). Building a proper Members master screen (with phone
   as a field) explicitly deferred by user ("we will update it later").
 
-### Phase 3 — per-stop delivery workflow (unloading → complete) + driver lock-out — BUILT (1 Aug
-2026 session), NOT YET PUSHED/BROWSER-TESTED. POD photo upload deferred (see below).
+### Phase 3 — per-stop delivery workflow (unloading → complete) + driver lock-out — BUILT & PUSHED
+(1 Aug 2026 session, commit `1ca39ef`), NOT YET BROWSER-TESTED. POD photo upload deferred (see below).
 
 **Built:**
 1. **Per-stop lifecycle replaces the old single-shot Arrived**: `db.confirmArrival` (which used to
@@ -393,7 +393,6 @@ alter table vehicle_allocations
   such handling exists anywhere else in the app.
 
 **Still open / not done yet:**
-- Not pushed to git yet this session.
 - **Not browser-tested** — same constraint as every phase before it (no chromium-cli/Playwright in
   this Windows dev environment). Only `vite build` + `eslint` (scoped to touched files — the
   project-wide `eslint .` run has ~66 pre-existing errors unrelated to this session, e.g.
@@ -427,7 +426,8 @@ POD upload was descoped from this build per the user's mid-session call (see "Ex
 above) — everything else in this ask is built.
 
 ### To continue in a new chat
-Phase 3 (this session) is built but **not yet pushed and not browser-tested** — say "Read CLAUDE.md,
-Phase 3 was just built, push it and then walk me through browser-testing it" to pick up from here.
-Once that's done and confirmed, the only remaining open item across all three phases is POD photo
-upload (needs a new Supabase Storage bucket — see "Explicitly deferred" under Phase 3).
+Phase 3 (this session) is built and pushed (commit `1ca39ef`) but **not yet browser-tested** and its
+schema **not yet applied** — say "Read CLAUDE.md, walk me through applying Phase 3's SQL and
+browser-testing it" to pick up from here. Once that's done and confirmed, the only remaining open
+item across all three phases is POD photo upload (needs a new Supabase Storage bucket — see
+"Explicitly deferred" under Phase 3).
