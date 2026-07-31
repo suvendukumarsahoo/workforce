@@ -20,6 +20,8 @@ export default function OrderTimeline({ order }) {
     { label: 'Load Created', ts: order.load_created_at },
     { label: 'Journey Started', ts: order.allocation?.journey_started_at },
     { label: 'Arrived at Distributor', ts: order.arrived_at },
+    { label: 'Unloading Started', ts: order.unloading_started_at },
+    { label: 'Delivery Complete', ts: order.delivered_at },
   ].filter(s => s.ts)
 
   return (

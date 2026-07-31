@@ -314,20 +314,87 @@ export async function startJourney(allocationId, routePlan) {
   return { data, error }
 }
 
-export async function confirmArrival(orderId, allocationId, newStopIndex, isLastStop) {
-  const { error: orderError } = await supabase
+export async function markArrived(orderId) {
+  const { data, error } = await supabase
     .from('distributor_orders')
     .update({ arrived_at: new Date().toISOString() })
     .eq('id', orderId)
-  if (orderError) return { data: null, error: orderError }
-  const allocUpdate = { delivery_stop_index: newStopIndex }
-  if (isLastStop) {
-    allocUpdate.status = 'completed'
-    allocUpdate.journey_completed_at = new Date().toISOString()
-  }
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function startUnloading(orderId) {
+  const { data, error } = await supabase
+    .from('distributor_orders')
+    .update({ unloading_started_at: new Date().toISOString() })
+    .eq('id', orderId)
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function completeDelivery(orderId, lat, lng) {
+  const { data, error } = await supabase
+    .from('distributor_orders')
+    .update({ delivered_at: new Date().toISOString(), delivery_lat: lat, delivery_lng: lng })
+    .eq('id', orderId)
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function advanceDeliveryStop(allocationId, newStopIndex) {
   const { data, error } = await supabase
     .from('vehicle_allocations')
-    .update(allocUpdate)
+    .update({ delivery_stop_index: newStopIndex })
+    .eq('id', allocationId)
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function startReturnToBase(allocationId) {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .update({ status: 'returning_to_base', returning_to_base_at: new Date().toISOString() })
+    .eq('id', allocationId)
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function submitJourneyComplete(allocationId) {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .update({ status: 'pending_journey_approval', journey_complete_submitted_at: new Date().toISOString() })
+    .eq('id', allocationId)
+    .select()
+    .single()
+  if (error) return { data, error }
+  await createNotification({
+    target_roles: ['r1'],
+    title: 'Journey Complete — Approval Needed',
+    body: `Allocation ${allocationId} — driver submitted Journey Complete checklist`,
+    type: 'journey_complete_submitted',
+    ref_id: allocationId,
+  })
+  return { data, error }
+}
+
+export async function fetchPendingJourneyApprovals() {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .select('*, vehicle:vehicles(id, vehicle_number), warehouse:warehouses(id, name), driver:members!vehicle_allocations_driver_id_fkey(id, name)')
+    .eq('status', 'pending_journey_approval')
+    .order('journey_complete_submitted_at', { ascending: true })
+  return { data, error }
+}
+
+export async function approveJourneyComplete(allocationId, approvedBy) {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .update({ status: 'completed', journey_complete_approved_at: new Date().toISOString(), journey_complete_approved_by: approvedBy })
     .eq('id', allocationId)
     .select()
     .single()
@@ -419,6 +486,19 @@ export async function fetchAllocationOrders(allocationId) {
     .eq('role_id', 'r7')
   return { data, error }
 }
+
+export async function fetchDriversWithLockStatus() {
+  const { data: drivers, error } = await fetchDrivers()
+  if (error) return { data: null, error }
+  const { data: activeAllocs, error: allocError } = await supabase
+    .from('vehicle_allocations')
+    .select('driver_id')
+    .neq('status', 'completed')
+  if (allocError) return { data: null, error: allocError }
+  const lockedIds = new Set((activeAllocs || []).map(a => a.driver_id))
+  return { data: (drivers || []).map(d => ({ ...d, locked: lockedIds.has(d.member_id) })), error: null }
+}
+
 export async function deallocateVehicle(allocationId) {
   const { error: orderError } = await supabase
     .from('distributor_orders')

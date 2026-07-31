@@ -32,6 +32,7 @@ import AssignedLoads from './shared/AssignedLoads.jsx'
 import DriverOrderConfirmTile from '../components/DriverOrderConfirmTile.jsx'
 import AllocationJourneyTile from '../components/AllocationJourneyTile.jsx'
 import VehicleLiveMap from './shared/VehicleLiveMap.jsx'
+import JourneyApprovals from './admin/JourneyApprovals.jsx'
 
 const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard',        icon:'📊', sec:'Overview'  },
@@ -59,6 +60,7 @@ const ALL_MENUS = [
  { id:'orderStatus', label:'Order Status', icon:'\ud83d\udcca', sec:'Distributor Functions' },
 { id:'loadCreatedList', label:'Load Created List', icon:'📋', sec:'Distributor Functions' },
 { id:'vehicleLiveMap', label:'Live Tracking', icon:'📍', sec:'Distributor Functions' },
+{ id:'journeyApprovals', label:'Journey Approvals', icon:'🏁', sec:'Distributor Functions' },
 { id:'assignedLoads', label:'My Loads', icon:'🚚', sec:'Overview' },
 { id:'driverLoadingConfirm', label:'Confirm Loading', icon:'📦', sec:'Overview' },
 { id:'driverJourney', label:'Journey', icon:'🧭', sec:'Overview' },
@@ -89,6 +91,7 @@ const PAGE_MAP = {
   orderStatus: OrderStatus,
 loadCreatedList: LoadCreatedList,
 vehicleLiveMap: VehicleLiveMap,
+journeyApprovals: JourneyApprovals,
 assignedLoads: AssignedLoads,
 driverLoadingConfirm: DriverOrderConfirmTile,
 driverJourney: AllocationJourneyTile,

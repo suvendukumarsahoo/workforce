@@ -33,6 +33,7 @@ const ALL_MENUS = [
   { id:'orderStatus',          label:'Order Status'            },
   { id:'loadCreatedList',      label:'Load Created List'       },
   { id:'vehicleLiveMap',       label:'Live Tracking'           },
+  { id:'journeyApprovals',     label:'Journey Approvals'       },
   { id:'assignedLoads',        label:'My Loads (Driver)'       },
   { id:'driverLoadingConfirm', label:'Confirm Loading (Driver)'},
   { id:'driverJourney',        label:'Journey (Driver)'        },

@@ -310,8 +310,103 @@ Plus: Supabase Dashboard → Database → Replication → toggle `vehicle_locati
   email/password only, no phone/OTP anywhere). Building a proper Members master screen (with phone
   as a field) explicitly deferred by user ("we will update it later").
 
-### Phase 3 — per-stop delivery workflow (unloading → complete → POD) + driver lock-out — NOT
-STARTED, spec'd 2 Aug 2026, to be built in a new chat
+### Phase 3 — per-stop delivery workflow (unloading → complete) + driver lock-out — BUILT (1 Aug
+2026 session), NOT YET PUSHED/BROWSER-TESTED. POD photo upload deferred (see below).
+
+**Built:**
+1. **Per-stop lifecycle replaces the old single-shot Arrived**: `db.confirmArrival` (which used to
+   stamp `arrived_at` AND auto-advance `delivery_stop_index`/auto-complete the allocation in one
+   call) is removed, replaced by five focused `db.js` functions: `markArrived`, `startUnloading`,
+   `completeDelivery` (also captures GPS via one-shot `getCurrentPosition`, same pattern as
+   `AssignedLoads.jsx`'s transit-time calculator — falls back to "Complete Without Location" if
+   permission denied/errors, doesn't hard-block), `advanceDeliveryStop` (the new explicit "Next
+   Stop" action), `startReturnToBase` (status → `returning_to_base`, only offered on the last stop
+   once its delivery is complete).
+2. **`AllocationJourneyTile.jsx`'s in-transit branch** rebuilt as a state machine keyed off the
+   current stop's order fields: `!arrived_at` → Arrived button; `arrived_at && !unloading_started_at`
+   → Start Unloading; `unloading_started_at && !delivered_at` → Delivery Complete; `delivered_at` set
+   → Next Stop (not last stop) or Return to Base (last stop).
+3. **Return-to-base checklist** — new `returning_to_base` allocation-status branch in the same tile:
+   3 checkboxes (Vehicle Parked / Keys Handover / POD Handover — columns `return_vehicle_parked`/
+   `return_keys_handover`/`return_pod_handover`, deliberately NOT reusing the loading-phase
+   `vehicle_parked`/`vehicle_parked_at` naming, which means something different) reusing
+   `db.updateAllocationChecklist` as-is (already generic). All 3 checked → **Submit Journey
+   Complete** → `db.submitJourneyComplete` sets `status='pending_journey_approval'`, fires a
+   `notifications` row to `['r1']` (same pattern as `LoadingScreen.jsx`'s `loading_complete`
+   notification). Tile then shows a read-only "Waiting for Admin Approval" card.
+4. **New `JourneyApprovals.jsx`** (`src/pages/admin/`, standalone menu page per user's explicit
+   choice — not a WMDashboard tile, not folded into Invoices.jsx) — lists
+   `db.fetchPendingJourneyApprovals()`, shows each order's arrived/unloading/delivered timestamps
+   and the 3 checklist flags, **Approve** button → `db.approveJourneyComplete(id, approvedBy)` sets
+   `status='completed'` (this is now the *only* path to `completed` — the old
+   auto-complete-on-last-arrival is gone) + `journey_complete_approved_at`/`_by`. New menu id
+   `journeyApprovals` added to both `WebApp.jsx`'s `ALL_MENUS`/`PAGE_MAP` and Settings.jsx's
+   separate copy in the same commit (Recurring Bug Pattern #6).
+5. **Driver lock-out** — new `db.fetchDriversWithLockStatus()`: a driver is locked iff they have any
+   `vehicle_allocations` row with `status != 'completed'` (no new boolean — derived from the status
+   column alone, since `deallocateVehicle` already hard-deletes the row on deallocation, so this one
+   check covers the whole "assigned but not yet admin-approved-done" span). `LoadCreatedList.jsx`'s
+   Allocate Vehicle driver dropdown now calls this instead of plain `fetchDrivers` and filters out
+   locked drivers entirely (same style as the existing capacity-based `suitableVehicles` filter).
+6. **Cross-role stage display** extended for the two new stages: `orderStageLabel.js`
+   (`getOrderStageLabel`/`getOrderStageColor` now check `delivered_at`/`unloading_started_at` before
+   `arrived_at`), `OrderTimeline.jsx` (added "Unloading Started"/"Delivery Complete" entries), and
+   `OrderFullDetail.jsx`'s Delivery card (status include-list extended to
+   `returning_to_base`/`pending_journey_approval`/`completed`, three-way timestamp display added).
+
+**Bug caught during this session's own build**: first draft of `AllocationJourneyTile.jsx` declared
+a new `useState` (`deliveryError`) *after* the component's existing early-return
+(`if (allocations.length === 0) return ...`) — a rules-of-hooks violation ESLint's
+`react-hooks/rules-of-hooks` caught immediately. Fixed by moving it up with the other `useState`
+calls at the top of the component, same as every other piece of state there.
+
+**Schema — user must apply manually, not yet confirmed done** (same pattern as Phase 1/2):
+```sql
+alter table distributor_orders
+  add column unloading_started_at timestamptz,
+  add column delivered_at timestamptz,
+  add column delivery_lat double precision,
+  add column delivery_lng double precision;
+
+alter table vehicle_allocations
+  add column returning_to_base_at timestamptz,
+  add column return_vehicle_parked boolean not null default false,
+  add column return_keys_handover boolean not null default false,
+  add column return_pod_handover boolean not null default false,
+  add column journey_complete_submitted_at timestamptz,
+  add column journey_complete_approved_at timestamptz,
+  add column journey_complete_approved_by text;
+```
+
+**Explicitly deferred (user's call, mid-session):**
+- **POD photo upload** — nothing in this codebase uses Supabase Storage yet; creating a bucket is a
+  manual Dashboard step the user didn't want to do mid-session. Delivery Complete finalizes with
+  just a GPS pin, no photo. When picked back up: add a `pod_url` column to `distributor_orders`,
+  create a bucket (working name `pod-photos`) + policy in Supabase Dashboard → Storage, add a
+  `<input type="file" accept="image/*" capture="environment">` step between Delivery Complete and
+  Next Stop/Return to Base in `AllocationJourneyTile.jsx`, upload via `supabase.storage` calls added
+  to `db.js` (per the architecture rule — nothing outside `db.js`/`supabase.js` touches Supabase
+  directly).
+- No reject/send-back path on Journey Approvals — Admin only approves (matches
+  `InvoiceApprovalTile.jsx`, which also has no reject).
+- No timeout/escalation if an allocation gets stuck `in_transit`/`pending_journey_approval` — no
+  such handling exists anywhere else in the app.
+
+**Still open / not done yet:**
+- Not pushed to git yet this session.
+- **Not browser-tested** — same constraint as every phase before it (no chromium-cli/Playwright in
+  this Windows dev environment). Only `vite build` + `eslint` (scoped to touched files — the
+  project-wide `eslint .` run has ~66 pre-existing errors unrelated to this session, e.g.
+  `WebApp.jsx`'s `SideContent`/`Settings.jsx`'s unused `Inp` already flagged in the lint-errors list
+  below) were run clean.
+- End-to-end flow to verify once online: Driver walks Arrived → Start Unloading → Delivery Complete
+  → Next Stop (repeat) → Return to Base → 3-item checklist → Submit Journey Complete; Admin sees it
+  on the new Journey Approvals page and approves; confirm the driver disappears from
+  `LoadCreatedList.jsx`'s Allocate Vehicle dropdown the moment they're assigned a new load's
+  allocation, and reappears only after that approval. Also needs the `journeyApprovals` Admin-role
+  menu box checked in Settings (+ re-login), same gotcha as every previous phase's new menu id.
+
+### Old Phase 3 spec (superseded by "Built" above — kept for the original ask in the user's words)
 
 **User's ask, verbatim-condensed:** on **Arrived** (Phase 1's existing button), admin gets the
 estimate-vs-actual arrival record (partly exists already via Phase 1's `arrived_at` + `route_plan`
@@ -328,37 +423,11 @@ constraint (didn't exist before): **a driver stays locked out of new vehicle all
 moment they're assigned a load until Admin approves their Journey Complete** — today
 `LoadCreatedList.jsx`'s driver dropdown (`db.fetchDrivers()`) has no such check at all.
 
-**First-pass technical shape (confirm/refine when actually planning in the new chat, not final):**
-- Per-order additions likely needed on `distributor_orders`: `unloading_started_at`,
-  `delivery_completed_at`, `delivery_lat`/`delivery_lng` (captured at Delivery Complete, same
-  `navigator.geolocation` pattern as vehicle pings), `pod_url` (photo — needs Supabase Storage, not
-  used anywhere in this codebase yet, so bucket/upload flow is new plumbing). Stage label likely
-  derived from which timestamps are set, matching how `orderStageLabel.js` already works — probably
-  extend that file rather than add a new status enum column.
-- Per-allocation additions likely needed on `vehicle_allocations`: something marking
-  return-to-base intent, the 3-item Journey Complete checklist (mirror the existing
-  `collected_invoice`/`collected_waybill`/`informed_distributor` checklist pattern from Phase 1 —
-  `vehicle_parked_confirmed`/`keys_handed_over`/`pod_handed_over` or similar), an
-  admin-approval timestamp + approver (mirror `invoices.approved_by`/`approved_at`), and a
-  driver-availability gate derived from "has an allocation with no admin approval yet" rather than
-  a boolean flag, to avoid a second source of truth.
-- Driver-lock-out check belongs in `LoadCreatedList.jsx`'s driver-selection step (`db.fetchDrivers`
-  or wherever the dropdown is populated) — filter out any driver with an unapproved active
-  allocation. New UI likely needed for Admin to review/approve pending Journey Completes (could live
-  on `WMDashboard.jsx` as a new tile, or its own screen — not decided).
-- Camera capture on mobile web = `<input type="file" accept="image/*" capture="environment">`, no
-  library needed; upload target = Supabase Storage (new — nothing in this codebase currently uses
-  Storage, check bucket/policy setup before assuming it's ready).
-- Extend `AllocationJourneyTile.jsx`'s in-transit branch (currently just shows the Arrived button)
-  to add the unloading/delivery-complete/POD/next-stop-or-return-to-base flow; extend
-  `OrderFullDetail.jsx`/`orderStageLabel.js` for the new stages same as Phase 1 did.
+POD upload was descoped from this build per the user's mid-session call (see "Explicitly deferred"
+above) — everything else in this ask is built.
 
 ### To continue in a new chat
-Say: "Read CLAUDE.md. Phase 2 (live GPS tracking) is built and pushed; everything except the actual
-moving-device location ping is confirmed working, and that part is still pending the user's test.
-Start planning and building Phase 3 (per-stop delivery workflow: start unloading → delivery
-complete + GPS capture → POD upload from camera → next stop or return to base → Journey Complete
-checklist → Admin approval → driver unlocked for new allocation)." The new chat should read the
-Phase 3 section above in full (it's a first-pass technical sketch, not a finalized schema — expect
-to refine it during actual planning) plus the Driver + Loading bullet under the Distributor Order
-pipeline section before starting.
+Phase 3 (this session) is built but **not yet pushed and not browser-tested** — say "Read CLAUDE.md,
+Phase 3 was just built, push it and then walk me through browser-testing it" to pick up from here.
+Once that's done and confirmed, the only remaining open item across all three phases is POD photo
+upload (needs a new Supabase Storage bucket — see "Explicitly deferred" under Phase 3).

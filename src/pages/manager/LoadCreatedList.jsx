@@ -61,10 +61,10 @@ export default function LoadCreatedList() {
   const openAllocate = async () => {
     const { data: vData } = await db.fetchVehicles()
     const { data: wData } = await db.fetchWarehouses()
-    const { data: dData } = await db.fetchDrivers()
+    const { data: dData } = await db.fetchDriversWithLockStatus()
     setVehicles((vData || []).filter(v => v.status === 'Active'))
     setWarehouses(wData || [])
-    setDrivers((dData || []).map(d => ({ id: d.member_id, name: d.member?.name || d.name })))
+    setDrivers((dData || []).filter(d => !d.locked).map(d => ({ id: d.member_id, name: d.member?.name || d.name })))
     setPickVehicle(''); setPickWarehouse(''); setPickDriver('')
     setAllocating(true)
   }

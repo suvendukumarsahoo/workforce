@@ -1,4 +1,6 @@
 export function getOrderStageLabel(order) {
+  if (order.delivered_at) return `Delivery Complete — ${new Date(order.delivered_at).toLocaleString('en-IN')}`
+  if (order.unloading_started_at) return `Unloading in Progress — ${new Date(order.unloading_started_at).toLocaleString('en-IN')}`
   if (order.arrived_at) return `Arrived at Distributor — ${new Date(order.arrived_at).toLocaleString('en-IN')}`
   if (order.allocation?.status === 'in_transit') return 'In Transit'
   if (order.load_id) return `Load Created — ${order.load_id}`
@@ -14,6 +16,8 @@ export function getOrderStageLabel(order) {
 }
 
 export function getOrderStageColor(order) {
+  if (order.delivered_at) return '#10b981'
+  if (order.unloading_started_at) return '#f59e0b'
   if (order.arrived_at) return '#10b981'
   if (order.allocation?.status === 'in_transit') return '#7c3aed'
   if (order.load_id) return '#10b981'
