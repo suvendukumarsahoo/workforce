@@ -42,7 +42,7 @@ export default function AwaitingInvoiceTile() {
     if (!invoiceNo.trim() || !invoiceDate) { showToast('Invoice number and date are required'); return }
     setBusy(true)
     const header = {
-      id: invoiceNo.trim(), member_id: creating.member_id, customer_id: creating.distributor_id,
+      id: invoiceNo.trim(), member_id: creating.member_id, distributor_id: creating.distributor_id,
       date: invoiceDate, order_id: creating.id, status: 'pending_approval',
       erp_invoice_number: erpNumber.trim() || null,
       erp_date: erpDate || null,
