@@ -24,12 +24,29 @@ export default function Distributors() {
     )},
     { key: 'createdBy', label: 'Created By', render: r => (
       (members || []).find(m => m.id === r.distributor_created_by)?.name || <span style={{ color: '#9ca3af' }}>—</span>
+      
+    )},
+    { key: 'location', label: 'Location', render: r => (
+      r.confirmed_latitude && r.confirmed_longitude ? (
+        <span style={{ fontSize: 11, fontFamily: 'monospace' }}>{r.confirmed_latitude}, {r.confirmed_longitude}</span>
+      ) : <span style={{ color: '#9ca3af' }}>—</span>
+    )},
+    { key: 'mapLink', label: 'Map', render: r => (
+      r.confirmed_latitude && r.confirmed_longitude ? (
+        <a href={`https://www.google.com/maps?q=${r.confirmed_latitude},${r.confirmed_longitude}`} target="_blank" rel="noreferrer" title="View on map">
+          📍
+        </a>
+      ) : <span style={{ color: '#9ca3af' }}>—</span>
     )},
   ]
 
   const save = async (d) => {
     const memberIds = String(d.assignedTo || '').split(',').map(s => parseInt(s.trim())).filter(Boolean)
-    const payload   = { name: d.name, area: d.area, type: d.type || 'New Customer' }
+const payload   = {
+      name: d.name, area: d.area, type: d.type || 'New Customer',
+      confirmed_latitude: Number(d.confirmed_latitude) || null,
+      confirmed_longitude: Number(d.confirmed_longitude) || null,
+    }
     if (sheet?.id) {
       const { error } = await db.updateDistributor(sheet.id, payload, memberIds)
       if (error) { showToast('Error saving'); return }
@@ -54,6 +71,8 @@ export default function Distributors() {
             { key: 'area', label: 'Area / Region' },
             { key: 'type', label: 'Type', opts: [{ value: 'New Customer', label: 'New Customer' }, { value: 'Distributor', label: 'Distributor' }, { value: 'Direct', label: 'Direct' }] },
             { key: 'assignedTo', label: 'Assign to member IDs (comma-separated)', ph: 'e.g. 1,2' },
+            { key: 'confirmed_latitude', label: 'Latitude', type: 'number' },
+            { key: 'confirmed_longitude', label: 'Longitude', type: 'number' },
           ]}
           init={sheet?.id ? { ...sheet, assignedTo: (sheet.assignedTo || []).join(',') } : {}}
           onSave={save}

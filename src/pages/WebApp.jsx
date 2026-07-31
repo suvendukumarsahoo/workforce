@@ -25,6 +25,9 @@ import OrderApproval from './manager/OrderApproval.jsx'
 import Vehicles from './shared/Vehicles.jsx'
 import PickingDoneReport from './shared/PickingDoneReport.jsx'
 import OrderStatus from './shared/OrderStatus.jsx'
+import Warehouses from './shared/Warehouses.jsx'
+import LoadCreatedList from './manager/LoadCreatedList.jsx'
+import AssignedLoads from './shared/AssignedLoads.jsx'
 
 const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard',        icon:'📊', sec:'Overview'  },
@@ -47,8 +50,11 @@ const ALL_MENUS = [
   { id:'wmDashboard', label:'Dashboard', icon:'📊', sec:'Overview' },
  { id:'picking', label:'Picking', icon:'📋', sec:'Overview' },
  { id:'vehicles', label:'Vehicles', icon:'🚚', sec:'Master' },
+ { id:'warehouses', label:'Warehouses', icon:'🏭', sec:'Master' },
  { id:'pickingDoneReport', label:'Picking Done Report', icon:'📦', sec:'Distributor Functions' },
  { id:'orderStatus', label:'Order Status', icon:'\ud83d\udcca', sec:'Distributor Functions' },
+{ id:'loadCreatedList', label:'Load Created List', icon:'📋', sec:'Distributor Functions' },
+{ id:'assignedLoads', label:'Assigned Loads', icon:'🚚', sec:'Overview' },
 ]
 
 const PAGE_MAP = {
@@ -71,8 +77,11 @@ const PAGE_MAP = {
   orderApproval: OrderApproval,
   wmDashboard: WMDashboard,
   vehicles: Vehicles,
+  warehouses: Warehouses, 
   pickingDoneReport: PickingDoneReport,
   orderStatus: OrderStatus,
+loadCreatedList: LoadCreatedList,
+assignedLoads: AssignedLoads,
 }
 
 export default function WebApp() {

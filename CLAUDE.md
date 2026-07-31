@@ -779,3 +779,246 @@ Discussed and designed but explicitly parked for later:
   the whole reinitiate cycle until `final_approved`, so it doesn't double back into "Final"
 - Schema planned: `distributors.payment_request_count` (default 1), `hold_note`, `reinitiate_note` 
   — NOT yet run in Supabase
+  ## Session Update — 25 July 2026
+
+### Bug fix — TeamApp.jsx / Dashboard.jsx tile counting (carried over investigation)
+Root cause of "completed distributors vanish from tiles" traced and fixed: both files filtered on 
+`d.type === 'New Customer'`, but `type` flips to `'Distributor'` on `final_approved`, silently 
+excluding converted leads from all tile counts/drill-downs. Fixed in both to filter on `d.lead_stage` 
+(truthy) instead. Also fixed subtitle mismatches: Dashboard.jsx's "total leads" now derives from 
+actual `visits` records (not stale `lead_stage` defaults from ALTER TABLE); TeamApp.jsx's subtitle 
+now counts unique visited leads instead of raw visit records, so subtitle always equals 
+Interested+Not Interested+Final+Distributor Created. Both files now show identical 5-tile format: 
+Total Visited, Interested, Not Interested, Final, Distributor Created (renamed from "Distributor").
+
+### Bug fix — DistributorApproval.jsx Manager lost final_pending approve/reject
+A rebuild had gated ALL actions behind `isAdmin`, removing Manager's original Phase 3a action at 
+`final_pending`. Restored `(isAdmin || isManager)` gate specifically for that stage; all later 
+stages remain Admin-only.
+
+### New module: Distributor Order (Team → Manager → Admin approval chain)
+**Schema:** `products` gained `weight`, `length/breadth/height` + individual `length_unit`/
+`breadth_unit`/`height_unit` (feet/inch, each dimension independently convertible) + `stacking_norm` 
+(max cartons stacked); `volume` is a generated column converting each dimension to feet before 
+multiplying. `distributors` gained `payment_mode` ('Advance' default / 'Credit', pipeline-created 
+always Advance). New tables: `distributor_orders`, `distributor_order_items`, 
+`distributor_order_payments`.
+
+**Team Member (`DistributorOrder.jsx`):** select distributor → if Advance, payment form required 
+first (persistent compact summary card shown throughout) → tabular item entry (dropdown excludes 
+already-added products, rate/weight/volume auto-populate) → live qty input, real-time grand total 
+capped against payment amount (red warning + disabled Save & Review if exceeded) → OTP (`1234`) → 
+order list shows Order ID + distributor + town; `order_submitted` rows are tap-to-edit (re-enters 
+same flow, updates existing order via `updateDistributorOrder`/`updateOrderPayment` instead of 
+creating new).
+
+**Manager/Admin (`OrderApproval.jsx`):** Manager sees `order_submitted` queue, edits qty (seeds both 
+`approved_qty` and `final_qty` so Admin's default trails Manager's numbers), OTP-gated approval → 
+`manager_approved_admin_pending`. Admin reviews same order, edits final qty, can add new items 
+(product picker, duplicate-safe) while status is pre-picking, confirms payment then confirms order 
+(no OTP for Admin, per spec) → `confirmed`, then explicitly advances via `OrderStatusFlow` chip to 
+`submitted_for_picking`.
+
+**Bug fixed:** duplicate/leftover import and JSX fragment mismatches occurred repeatedly across 
+`DistributorOrder.jsx`, `OrderApproval.jsx`, `WebApp.jsx` during incremental edits — recurring lesson: 
+always verify single occurrence of any import/function name before pasting new instances.
+
+**Critical bug fixed — PostgREST ambiguous relationship:** `fetchDistributorOrders()` failed silently 
+(empty results, no visible error) because `distributor_orders` has two FKs to `members` 
+(`manager_id`, `member_id`); fixed by explicit `members!distributor_orders_member_id_fkey` / 
+`members!distributor_orders_manager_id_fkey` aliasing in the select.
+
+### New module: Picking flow (Warehouse Manager + Admin loop)
+**New role:** `r6` "Warehouse Manager", desktop WebApp.jsx login (not mobile TeamApp).
+
+**Schema:** `distributor_order_items` gained `availability` ('Available'/'Unavailable'/'Wait'/null-
+Pending), `wait_days`, `cancelled`. `distributor_orders` gained `picking_status` 
+('pending_picking'→'picking_done'→'ready_for_load'→'confirmed'), `picking_updated_at`, 
+`picking_round`, `load_id`, `load_created_at`.
+
+**Flow:** Order reaches `submitted_for_picking` → Warehouse Manager's Dashboard tiles: Orders Ready 
+to Pick, Pending Picking, Picking Complete, Load List (all open an embedded `PickingEditSheet` — 
+availability dropdown per item, live fill rate (Value/Item/Qty %), color-coded rows). Submitting 
+with **any** non-Available item (Wait OR Unavailable — corrected from Wait-only) keeps 
+`picking_status='picking_done'`; all-Available flips to `'ready_for_load'`. Both states remain 
+editable by Warehouse Manager (qty/add/delete stay Admin-only; only availability status is WM's to 
+set) until Admin creates a load.
+
+**Admin's Completed Picklist (`OrderApproval.jsx`):** table (Order ID, Distributor, Items Ord/Picked, 
+Qty Ord/Picked, Order Value, Last Updated) listing both `picking_done` and `ready_for_load` orders 
+(not `load_id`'d yet). Row click branches: if every active item is Available → read-only 
+`OrderFullDetail` with working "Create Load" button (also requires zero Unavailable, not just zero 
+Wait); otherwise → editable `OrderPickingDetail` (Cancel any row regardless of status, Add new item 
+with live rate/row-total preview, qty edits) — all changes held in **local draft state only**, zero 
+DB writes until "Confirm & Send to Warehouse" is clicked, which diffs the draft against original 
+items (cancels removed, adds new, updates changed qty) in one batch, calls 
+`returnToWarehouseManager` (increments `picking_round`), shows a toast, and closes. Payment cap 
+(Available+Wait value ≤ payment received) enforced live on both add and qty-edit, with red visual 
+feedback; "Confirm & Send" disabled if exceeded.
+
+**Load creation:** `db.createLoad()` generates `LD-DDMMYYYY-NN` sequential-per-day ID. `OrderFullDetail` 
+gates the button via `canCreateLoad` prop (only Completed Picklist passes `true`; Order Status / 
+Picking Done Report are view-only). `OrderFullDetail`'s Fill Rate/Summary/Picked-Qty/Status columns 
+are gated behind `pickingStarted = ['picking_done','ready_for_load'].includes(order.picking_status)` 
+— NOT just `status==='submitted_for_picking'`, since Admin can approve-for-picking before Warehouse 
+Manager has actually touched it; Mgr Approved Qty column always shows, amber+asterisk-flagged when 
+it differs from Order Qty.
+
+**Consolidated tracking:** `OrderStatus.jsx` (all 3 roles: Team sees own orders only) shows every 
+order's live stage label (`orderStageLabel.js` helper) regardless of who's next responsible; opens 
+same `OrderFullDetail`.
+
+**Warehouse Manager Dashboard (`WMDashboard.jsx`):** Today/Monthly toggle; tiles for 
+category-wise/Orders Received/Pending Picking/Picking Complete/Orders Ready to Pick/Load List, each 
+opening an embedded Sheet (no separate Picking menu — deliberately removed; all editing now lives 
+on Dashboard via `PickingEditSheet`).
+
+**Known orphaned file:** `src/components/PickingPendingTile.jsx` — fully unused (confirmed via 
+global search, only self-reference), tile inside it commented out as a stopgap after mysterious 
+persistent rendering (later understood to be Vite module-graph cache, not real code) — safe to 
+delete, tagged for later cleanup.
+
+**Deferred:** `createUser()` in db.js calls `supabase.auth.admin.createUser()` client-side, which 
+requires the service role key — currently fails with "User not allowed" for ALL new Admin-created 
+employees, not just Warehouse Manager. Workaround: create users directly via Supabase Dashboard 
+Authentication → Users (Auto Confirm checked) + manual `INSERT INTO users`. Proper fix (Edge 
+Function or backend endpoint) explicitly deferred until after full testing.
+## Session Update — 26-29 July 2026
+
+### New module: Vehicle Allocation, Warehouse Master, Route Mapping
+
+**Schema:**
+```sql
+CREATE TABLE warehouses (id TEXT PRIMARY KEY, name TEXT NOT NULL, address TEXT, latitude NUMERIC, 
+  longitude NUMERIC, created_at TIMESTAMPTZ DEFAULT now());
+CREATE TABLE vehicle_allocations (id TEXT PRIMARY KEY, vehicle_id TEXT REFERENCES vehicles(id), 
+  warehouse_id TEXT REFERENCES warehouses(id), status TEXT DEFAULT 'waiting_driver_acceptance', 
+  created_at TIMESTAMPTZ DEFAULT now());
+ALTER TABLE distributor_orders ADD COLUMN allocation_id TEXT REFERENCES vehicle_allocations(id);
+-- superseded earlier vehicle_id/warehouse_id/allocated_at columns directly on distributor_orders 
+-- (kept as unused legacy columns) once multi-load-per-allocation grouping was introduced
+```
+
+**`Warehouses.jsx`** (Admin-only Master CRUD): name/address/lat/long, manual entry (no geocoding yet).
+
+**`LoadCreatedList.jsx`**: lists all orders with a `load_id`, grouped into "Awaiting Allocation" 
+(checkboxes, multi-select) and "Vehicle Allocations" (one row per allocation, showing combined 
+qty/weight/volume/value across all its loads). "Allocate Vehicle" flow: combined weight/volume 
+totals → vehicle dropdown filtered by capacity (`weight_capacity`/`volume_capacity` on `vehicles`) 
+→ warehouse dropdown → **driver dropdown** (queries `users` table directly for `role_id = 'r7'`, 
+since `role_id` lives on `users` not `members` — bug fixed after driver list initially came back 
+empty) → direction-conflict warning (bearing/angular-diff check between warehouse and each stop; 
+>90° apart shows a warning, button relabels "Confirm Anyway" but doesn't hard-block) → Confirm 
+Allocation. "Deallocate Vehicle" button reverses this (clears `allocation_id` on all linked orders, 
+deletes the allocation row).
+
+**`RouteMapSheet.jsx`**: Leaflet.js (CDN) + OSRM public routing (no Google Maps key set up yet — 
+deferred per explicit decision; migration path noted: only the map-rendering + routing-fetch 
+component would need replacing, schema/data layer unaffected). Uses OSRM's `/trip/` endpoint 
+(`source=first&roundtrip=false`) for shortest-path stop-order optimization, not `/route/` — shows 
+optimized visiting order, total distance, total time. One "View Route" per **allocation** (not 
+per load) once multi-load grouping was added.
+
+### New role: Driver (`r7`) + full accept-to-loading flow
+
+**Schema additions to `vehicle_allocations`:** `driver_id`, `driver_accepted_at`, `reporting_hours`, 
+`reporting_minutes`, `delay_comment`, `transit_time_minutes`, `vehicle_parked_at`, 
+`load_supervisor_name`, `labourer_names`, `loading_started_at`, `loading_completed_at`, 
+`stop_sequence` (JSONB, order IDs in reversed-optimized-route order), `current_stop_index`.
+New table `load_item_progress` (allocation_id, order_item_id, lift_stack_qty, loaded_qty, status 
+[pending/loading/paused/complete], pause_reason, timestamps).
+
+**`AssignedLoads.jsx`** (Driver): 
+- Accept flow — "In Transit" toggle is mutually exclusive with manual reporting time entry (not 
+  additive, corrected from initial build): if in transit, browser geolocation + OSRM computes 
+  journey time to warehouse and that alone becomes "Reporting Time"; if not in transit, driver 
+  manually enters hours+minutes. Either way, >30min triggers a required delay-comment field, 
+  gating the Accept button.
+- "Confirm Vehicle Parked for Loading" button once `driver_accepted`.
+- `DriverOrderConfirmTile`: shows orders at `loading_stage='wm_loaded'` awaiting driver's per-order 
+  load-quantity confirmation (loaded qty vs picked qty review, simple tap-confirm, no dispute flow).
+
+**`VehicleParkedTile.jsx` + `LoadingInProgressTile.jsx`** (Warehouse Manager Dashboard): parked 
+vehicles → WM selects → `StartLoadSheet.jsx` (Supervisor name + Labourer names, single 
+comma-separated field) → computes stop sequence via OSRM trip-optimization, reversed for loading 
+order (last delivery stop loaded first) → `loading_in_progress`.
+
+**`LoadingScreen.jsx`** (the core screen): per-stop, per-item. Item picker → WM manually types 
+"Lift Stack" qty (cartons per labourer trip, NOT a product-master field, entered fresh each time 
+per user's explicit choice) → button grid (qty ÷ lift stack, red→green on click, live header 
+Loaded/Balance update) → Pause/Resume with required reason → auto-complete when loaded=picked → 
+next item, repeat. Once all items for a stop are loaded: WM clicks "Send for Driver Confirmation" 
+(NOT instant stop-advance) → order flips to `loading_stage='wm_loaded'` → polls every 5s for 
+`driver_confirmed` → only then advances `current_stop_index`, repeats for next stop → final stop's 
+confirmation → `loading_complete`.
+
+**Deferred:** true cross-navigation/full-refresh persistence for `LoadingScreen` (planned as a 
+global overlay via `useSyncExternalStore` + top-level render in `WebApp.jsx`) was explicitly 
+skipped — current screen works fine nested in the tile components, kept as-is.
+
+### Live loading-status visibility (`OrderFullDetail.jsx`)
+Per-item progress bar added to the Items table (Admin/Manager/Team all see this wherever the 
+component renders — Order Status, Completed Picklist, Picking Done Report), polling 
+`load_item_progress` every 12s while the sheet is open (simple `setInterval`, not Supabase 
+Realtime, per explicit choice). `pickingStarted` guard corrected twice: first version used 
+`status==='submitted_for_picking'`, which incorrectly showed Fill Rate/Summary/Picked-Qty columns 
+the moment Admin approved for picking, before Warehouse Manager had touched anything — fixed to 
+`['picking_done','ready_for_load'].includes(picking_status)`. Added a separate always-visible 
+"Mgr Approved" qty column (amber+asterisk-flagged when it differs from Order Qty), independent of 
+the picking-started gate.
+
+### Bug fixes this session (recurring pattern: planned code never pasted / duplicated)
+- `Picking.jsx`'s `needsUpdate` list originally required `hasWaitItems()` — an order stuck at 
+  `picking_done` with zero Wait items (all resolved to Available/Unavailable) became invisible to 
+  Warehouse Manager entirely (matched neither "To Pick" nor "Needs Update"). Fixed: "Needs Update" 
+  now shows ALL `picking_done` orders regardless of item status, since reopening/resubmitting is 
+  the only path to `ready_for_load` anyway.
+- `submitPicking`'s `anyWait` check only inspected active (non-cancelled) items for literal `'Wait'` 
+  status — but cancelled items retaining a stale `'Wait'` value from before deletion still counted, 
+  incorrectly keeping clean orders at `picking_done` forever. Fixed: skip cancelled items entirely 
+  in the loop.
+- `OrderPickingDetail.jsx` (Admin's add/cancel/qty-edit screen) rewritten to use a **local draft 
+  array** (`localItems`) instead of writing directly to DB on every change — per explicit 
+  requirement that on-screen edits should render live but only persist to the database when 
+  "Confirm & Send to Warehouse" is clicked, which diffs the draft against original items in one 
+  batch (cancel removed / add new / update changed qty) before calling `returnToWarehouseManager`.
+- Multiple duplicate-declaration parse errors across `OrderPickingDetail.jsx`, `LoadCreatedList.jsx`, 
+  `WebApp.jsx`, `db.js` (repeat instances: `fetchAllocations`, `driverConfirmParked`, 
+  `fetchParkedAllocations`, `wmConfirmArrival`, `Picking` import, `suitableVehicles` split mid-line) 
+  — same recurring lesson as earlier sessions: always search for existing declarations before 
+  pasting new ones; several were traced to Vite's module cache surviving dev-server restarts 
+  (confirmed via global search showing zero real references) rather than genuine lingering code.
+
+### Distributors.jsx master — location fields added
+Table now shows "Location" (confirmed_latitude/longitude, monospace, copyable) and a separate "Map" 
+column (📍 pin, opens Google Maps in new tab) as two distinct columns per explicit request. Edit 
+form extended with editable Latitude/Longitude fields (Created On/Created By remain read-only 
+audit fields, not editable — deliberately excluded from the edit form since they're system-set).
+
+### Performance issue flagged, NOT yet fixed (deferred)
+App became noticeably slow after this session's polling additions (5s driver-confirm check, 12s 
+bar-chart poll) stacked on the pre-existing `if (!loaded) fetchX()` anti-pattern used across nearly 
+every tile component (WMDashboard, VehicleParkedTile, LoadingInProgressTile, LoadCreatedList, 
+OrderApproval, OrderStatus, PickingDoneReport, AssignedLoads, DriverOrderConfirmTile — re-fires on 
+every render until state settles, same root cause flagged once before with `PickingPendingTile`'s 
+request storm). Supabase usage checked: nowhere near quota (76MB/5GB egress, 28MB/500MB DB) — 
+compute tier is "Nano" (smallest), likely just resource-constrained under concurrent polling + 
+multi-role simultaneous testing sessions. Real fix (convert render-time fetch calls to proper 
+`useEffect(() => {...}, [])`) explicitly deferred to "check later."
+
+### New feature — planned, NOT yet built: Invoice from Load (ERP cross-check + approval)
+Discussed and partially scoped:
+- Schema planned: `invoices` gains `order_id`, `status` (default `'approved'` — preserves existing 
+  direct-entry invoices' immediate-achievement behavior unchanged), `erp_invoice_number`, 
+  `erp_date`, `erp_amount`, `created_by`, `approved_by`, `approved_at`
+- "Awaiting Invoice Creation" tile (Admin + Accounts) once Driver confirms Loading Complete
+- "Create Invoice From Load" — auto-populated billing from order items, ERP fields entered 
+  alongside, soft-warning (not hard-block) if ERP amount differs from computed total
+- New invoices default to `status='pending_approval'`; only Admin approval flips to `'approved'`, 
+  at which point sales/target achievement should credit (existing direct-entry invoices unaffected 
+  since they default straight to `'approved'`)
+- PDF: confirmed browser print-to-PDF (`window.print()`) is sufficient, no PDF library needed
+- **Blocked/paused:** needed to see `useData.jsx` (invoice fetch → `computeAchievements` wiring) and 
+  `achievementEngine.js`'s `computeAchievements` function before writing the approval-gating filter, 
+  to avoid breaking existing achievement calculation for pre-existing direct-entry invoices — these 
+  two files were requested but not yet provided; **pick up here next session**.

@@ -3,6 +3,7 @@ import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
 import { CrudTable, Av, Sheet, Inp, Btn } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
+import AwaitingInvoiceTile from '../../components/AwaitingInvoiceTile.jsx'
 
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 
@@ -33,6 +34,7 @@ const { invoices, setInvoices, members, products, categories, distributors: cust
 
   return (
     <div>
+      <AwaitingInvoiceTile />
       {sheet && <InvSheet inv={sheet === 'new' ? null : sheet} members={members} products={products} customers={customers} onSave={save} onClose={() => setSheet(null)} />}
       <CrudTable
         title={`Invoices (${(invoices || []).length})`}
@@ -46,6 +48,45 @@ const { invoices, setInvoices, members, products, categories, distributors: cust
       />
     </div>
   )
+}
+export async function fetchOrdersAwaitingInvoice() {
+  const { data, error } = await supabase
+    .from('distributor_orders')
+    .select('*, distributor:distributors(id, name, area, town), member:members!distributor_orders_member_id_fkey(id, name), items:distributor_order_items(*), allocation:vehicle_allocations(id, status)')
+    .not('allocation_id', 'is', null)
+  if (error) return { data: null, error }
+  const awaiting = (data || []).filter(o => o.allocation?.status === 'loading_complete')
+  // exclude orders that already have an invoice
+  const { data: existingInvoices } = await supabase.from('invoices').select('order_id').not('order_id', 'is', null)
+  const invoicedOrderIds = new Set((existingInvoices || []).map(i => i.order_id))
+  return { data: awaiting.filter(o => !invoicedOrderIds.has(o.id)), error: null }
+}
+
+export async function createInvoiceFromLoad(header, lines) {
+  const { data: inv, error } = await supabase.from('invoices').insert(header).select().single()
+  if (error) return { data: null, error }
+  const lineRows = lines.map(l => ({ invoice_id: inv.id, product_id: l.product_id, qty: l.qty, rate: l.rate }))
+  const { error: lineError } = await supabase.from('invoice_lines').insert(lineRows)
+  return { data: inv, error: lineError }
+}
+
+export async function fetchPendingInvoices() {
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('*, lines:invoice_lines(*, product:products(id, name, unit, category_id)), member:members!invoices_created_by_fkey(id, name)')
+    .eq('status', 'pending_approval')
+    .order('date', { ascending: false })
+  return { data, error }
+}
+
+export async function approveInvoice(invoiceId, approvedBy) {
+  const { data, error } = await supabase
+    .from('invoices')
+    .update({ status: 'approved', approved_by: approvedBy, approved_at: new Date().toISOString() })
+    .eq('id', invoiceId)
+    .select()
+    .single()
+  return { data, error }
 }
 
 function InvSheet({ inv, members, products, customers, onSave, onClose }) {

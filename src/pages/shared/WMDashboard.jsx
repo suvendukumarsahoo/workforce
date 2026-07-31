@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, F, Sheet, Tile } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
-import PickingPendingTile from '../../components/PickingPendingTile.jsx'
 import PickingEditSheet from '../../components/PickingEditSheet.jsx'
+import VehicleParkedTile from '../../components/VehicleParkedTile.jsx'
+import LoadingInProgressTile from '../../components/LoadingInProgressTile.jsx'
 
 
 export default function WMDashboard({ onNavigate }) {
@@ -102,11 +103,11 @@ const { products, categories, showToast } = useData()
         <button onClick={() => setTab('today')} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: tab === 'today' ? '#2563eb' : '#f3f4f6', color: tab === 'today' ? '#fff' : '#374151', fontWeight: 600, cursor: 'pointer' }}>Today</button>
         <button onClick={() => setTab('monthly')} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: tab === 'monthly' ? '#2563eb' : '#f3f4f6', color: tab === 'monthly' ? '#fff' : '#374151', fontWeight: 600, cursor: 'pointer' }}>Monthly</button>
       </div>
-<PickingPendingTile products={products} categories={categories} isAdmin={false} />
 <Tile icon="📦" label="Orders Ready to Pick" value={readyToPickOrders.length} sub={F(readyToPickValue)} color="#2563eb" onClick={() => setShowReadyToPick(true)} />
   <Tile icon="🔧" label="Pending Picking" value={pendingPickingOrders.length} sub="Waiting for Admin" color="#f59e0b" onClick={() => setShowPendingPicking(true)} />
         <Tile icon="✅" label="Picking Complete" value={pickingCompleteOrders.length} sub="Waiting for Admin" color="#10b981" onClick={() => setShowPickingComplete(true)} />
 <Tile icon="🚛" label="Load List" value={loads.length} sub="Tap to view" color="#0891b2" onClick={() => setSelectedLoad('list')} />
+<VehicleParkedTile /><LoadingInProgressTile />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 10, marginBottom: 16 }}>
         <Tile icon="📥" label="Orders Received" value={orderReceived.count} sub={F(orderReceived.value)} color="#2563eb" />
         {Object.entries(catTiles).map(([cat, s]) => (

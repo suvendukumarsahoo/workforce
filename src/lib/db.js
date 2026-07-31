@@ -204,7 +204,185 @@ export async function deleteVehicle(id) {
   const { error } = await supabase.from('vehicles').delete().eq('id', id)
   return { error }
 }
+// ─── WAREHOUSES ─────────────────────────────────────────────────────────────
 
+export async function fetchWarehouses() {
+  const { data, error } = await supabase.from('warehouses').select('*').order('name')
+  return { data, error }
+}
+
+export async function createWarehouse(payload) {
+  const { data, error } = await supabase.from('warehouses').insert(payload).select().single()
+  return { data, error }
+}
+
+export async function updateWarehouse(id, payload) {
+  const { data, error } = await supabase.from('warehouses').update(payload).eq('id', id).select().single()
+  return { data, error }
+}
+
+export async function deleteWarehouse(id) {
+  const { error } = await supabase.from('warehouses').delete().eq('id', id)
+  return { error }
+}
+export async function allocateVehicle(orderIds, vehicleId, warehouseId, driverId) {
+  const allocId = 'ALC' + Date.now().toString(36).toUpperCase()
+  const { error: allocError } = await supabase.from('vehicle_allocations').insert({
+    id: allocId, vehicle_id: vehicleId, warehouse_id: warehouseId, driver_id: driverId,
+    status: 'waiting_driver_acceptance',
+  })
+  if (allocError) return { data: null, error: allocError }
+  const { data, error } = await supabase
+    .from('distributor_orders')
+    .update({ allocation_id: allocId })
+    .in('id', orderIds)
+    .select()
+  return { data, error }
+}
+export async function fetchLoadItemProgress(allocationId) {
+  const { data, error } = await supabase
+    .from('load_item_progress')
+    .select('*')
+    .eq('allocation_id', allocationId)
+  return { data, error }
+}
+
+export async function createLoadItemProgress(allocationId, orderItemId, liftStackQty) {
+  const { data, error } = await supabase
+    .from('load_item_progress')
+    .insert({
+      allocation_id: allocationId, order_item_id: orderItemId,
+      lift_stack_qty: liftStackQty, loaded_qty: 0, status: 'loading', started_at: new Date().toISOString(),
+    })
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function updateLoadItemProgress(id, updates) {
+  const { data, error } = await supabase
+    .from('load_item_progress')
+    .update({ ...updates, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function advanceStopIndex(allocationId, newIndex) {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .update({ current_stop_index: newIndex })
+    .eq('id', allocationId)
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function markLoadingComplete(allocationId) {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .update({ status: 'loading_complete', loading_completed_at: new Date().toISOString() })
+    .eq('id', allocationId)
+    .select()
+    .single()
+  return { data, error }
+}
+export async function fetchDriverAllocations(driverId) {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .select('*, vehicle:vehicles(id, vehicle_number), warehouse:warehouses(id, name, latitude, longitude)')
+    .eq('driver_id', driverId)
+    .order('created_at', { ascending: false })
+  return { data, error }
+}
+export async function driverConfirmParked(allocationId) {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .update({ status: 'vehicle_parked', vehicle_parked_at: new Date().toISOString() })
+    .eq('id', allocationId)
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function fetchParkedAllocations() {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .select('*, vehicle:vehicles(id, vehicle_number), warehouse:warehouses(id, name), driver:members!vehicle_allocations_driver_id_fkey(id, name)')
+    .eq('status', 'vehicle_parked')
+    .order('vehicle_parked_at', { ascending: true })
+  return { data, error }
+}
+export async function fetchInProgressAllocations() {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .select('*, vehicle:vehicles(id, vehicle_number), warehouse:warehouses(id, name, latitude, longitude), driver:members!vehicle_allocations_driver_id_fkey(id, name)')
+    .eq('status', 'loading_in_progress')
+    .order('loading_started_at', { ascending: true })
+  return { data, error }
+}
+
+
+export async function driverAcceptLoad(allocationId, updates) {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .update({ status: 'driver_accepted', driver_accepted_at: new Date().toISOString(), ...updates })
+    .eq('id', allocationId)
+    .select()
+    .single()
+  return { data, error }
+}
+export async function fetchAllocations() {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .select('*, vehicle:vehicles(id, vehicle_number, weight_capacity, volume_capacity), warehouse:warehouses(id, name, latitude, longitude), driver:members!vehicle_allocations_driver_id_fkey(id, name)')
+    .order('created_at', { ascending: false })
+  return { data, error }
+}
+
+
+
+export async function startLoad(allocationId, supervisorName, labourerNames, stopSequence) {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .update({
+      status: 'loading_in_progress',
+      load_supervisor_name: supervisorName,
+      labourer_names: labourerNames,
+      loading_started_at: new Date().toISOString(),
+      stop_sequence: stopSequence,
+      current_stop_index: 0,
+    })
+    .eq('id', allocationId)
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function fetchAllocationOrders(allocationId) {
+  const { data, error } = await supabase
+    .from('distributor_orders')
+    .select('*, distributor:distributors(id, name, area, town, confirmed_latitude, confirmed_longitude), items:distributor_order_items(*)')
+    .eq('allocation_id', allocationId)
+  return { data, error }
+}
+    export async function fetchDrivers() {
+  const { data, error } = await supabase
+    .from('users')
+    .select('member_id, name, member:members(id, name)')
+    .eq('role_id', 'r7')
+  return { data, error }
+}
+export async function deallocateVehicle(allocationId) {
+  const { error: orderError } = await supabase
+    .from('distributor_orders')
+    .update({ allocation_id: null })
+    .eq('allocation_id', allocationId)
+  if (orderError) return { error: orderError }
+  const { error } = await supabase.from('vehicle_allocations').delete().eq('id', allocationId)
+  return { error }
+}
 
 // ─── DISTRIBUTORS (formerly CUSTOMERS) ────────────────────────────────────────
 
@@ -309,6 +487,45 @@ export async function deleteInvoice(id) {
   await supabase.from('invoice_lines').delete().eq('invoice_id', id)
   const { error } = await supabase.from('invoices').delete().eq('id', id)
   return { error }
+}
+export async function fetchOrdersAwaitingInvoice() {
+  const { data, error } = await supabase
+    .from('distributor_orders')
+    .select('*, distributor:distributors(id, name, area, town), member:members!distributor_orders_member_id_fkey(id, name), items:distributor_order_items(*), allocation:vehicle_allocations(id, status)')
+    .not('allocation_id', 'is', null)
+  if (error) return { data: null, error }
+  const awaiting = (data || []).filter(o => o.allocation?.status === 'loading_complete')
+  // exclude orders that already have an invoice
+  const { data: existingInvoices } = await supabase.from('invoices').select('order_id').not('order_id', 'is', null)
+  const invoicedOrderIds = new Set((existingInvoices || []).map(i => i.order_id))
+  return { data: awaiting.filter(o => !invoicedOrderIds.has(o.id)), error: null }
+}
+
+export async function createInvoiceFromLoad(header, lines) {
+  const { data: inv, error } = await supabase.from('invoices').insert(header).select().single()
+  if (error) return { data: null, error }
+  const lineRows = lines.map(l => ({ invoice_id: inv.id, product_id: l.product_id, qty: l.qty, rate: l.rate }))
+  const { error: lineError } = await supabase.from('invoice_lines').insert(lineRows)
+  return { data: inv, error: lineError }
+}
+
+export async function fetchPendingInvoices() {
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('*, lines:invoice_lines(*, product:products(id, name, unit, category_id)), member:members!invoices_created_by_fkey(id, name)')
+    .eq('status', 'pending_approval')
+    .order('date', { ascending: false })
+  return { data, error }
+}
+
+export async function approveInvoice(invoiceId, approvedBy) {
+  const { data, error } = await supabase
+    .from('invoices')
+    .update({ status: 'approved', approved_by: approvedBy, approved_at: new Date().toISOString() })
+    .eq('id', invoiceId)
+    .select()
+    .single()
+  return { data, error }
 }
 
 // ─── EXPENSES ─────────────────────────────────────────────────────────────────
@@ -604,7 +821,7 @@ export async function createLoad(orderId) {
     .like('load_id', `LD-${dateStr}-%`)
   const seq = String((count || 0) + 1).padStart(2, '0')
   const loadId = `LD-${dateStr}-${seq}`
-  const { data, error } = await supabase
+   const { data, error } = await supabase
     .from('distributor_orders')
     .update({ load_id: loadId, load_created_at: new Date().toISOString() })
     .eq('id', orderId)
@@ -616,7 +833,7 @@ export async function createLoad(orderId) {
 export async function fetchLoads() {
   const { data, error } = await supabase
     .from('distributor_orders')
-    .select('*, distributor:distributors(id, name, area, town), member:members!distributor_orders_member_id_fkey(id, name), items:distributor_order_items(*)')
+    .select('*, distributor:distributors(id, name, area, town, payment_mode, confirmed_latitude, confirmed_longitude), member:members!distributor_orders_member_id_fkey(id, name), items:distributor_order_items(*), allocation:vehicle_allocations(id, status, driver_id, driver:members!vehicle_allocations_driver_id_fkey(id, name), vehicle:vehicles(id, vehicle_number, weight_capacity, volume_capacity), warehouse:warehouses(id, name, latitude, longitude))')
     .not('load_id', 'is', null)
     .order('load_created_at', { ascending: false })
   return { data, error }
@@ -670,5 +887,29 @@ export async function confirmPicking(orderId) {
     .eq('id', orderId)
     .select()
     .single()
+  return { data, error }
+}
+export async function markOrderWmLoaded(orderId) {
+  const { data, error } = await supabase
+    .from('distributor_orders')
+    .update({ loading_stage: 'wm_loaded' })
+    .eq('id', orderId)
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function driverConfirmOrderLoaded(orderId) {
+  const { data, error } = await supabase
+    .from('distributor_orders')
+    .update({ loading_stage: 'driver_confirmed', driver_load_confirmed_at: new Date().toISOString() })
+    .eq('id', orderId)
+    .select()
+    .single()
+  return { data, error }
+} 
+
+export async function fetchOrderLoadingStage(orderId) {
+   const { data, error } = await supabase.from('distributor_orders').select('loading_stage').eq('id', orderId).single()
   return { data, error }
 }

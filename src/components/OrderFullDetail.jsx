@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Card, CH, Btn, Sheet, F } from './ui.jsx'
 import OrderTimeline from './OrderTimeline.jsx'
 import * as db from '../lib/db.js'
@@ -17,6 +17,24 @@ const pickingStarted = ['picking_done', 'ready_for_load'].includes(order.picking
     })
     return groups
   })()
+
+const [loadedQtyMap, setLoadedQtyMap] = useState({})
+
+  useEffect(() => {
+    let cancelled = false
+    const poll = async () => {
+      const itemIds = activeItems.map(it => it.id)
+      if (itemIds.length === 0) return
+      const { data } = await db.fetchLoadItemProgress ? await db.fetchLoadItemProgress(order.allocation_id || '') : { data: [] }
+      if (cancelled) return
+      const map = {}
+      ;(data || []).forEach(p => { map[p.order_item_id] = p.loaded_qty })
+      setLoadedQtyMap(map)
+    }
+    poll()
+    const interval = setInterval(poll, 12000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [order.id])
 
   const fillRate = (() => {
     const totalItems = activeItems.length || 1
@@ -98,7 +116,9 @@ const pickingStarted = ['picking_done', 'ready_for_load'].includes(order.picking
                 <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Mgr Approved</th>
                 {pickingStarted && <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Picked Qty</th>}
                 <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Amount</th>
-                {pickingStarted && <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Status</th>}
+              {pickingStarted && <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Loading</th>}
+                                {pickingStarted && <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Status</th>}
+              
               </tr>
             </thead>
             <tbody>
@@ -120,6 +140,16 @@ const pickingStarted = ['picking_done', 'ready_for_load'].includes(order.picking
                     </td>
                     {pickingStarted && <td style={{ padding: '8px 10px', fontSize: 12 }}>{it.final_qty}</td>}
 <td style={{ padding: '8px 10px', fontSize: 12 }}>{F(it.rate * (pickingStarted ? it.final_qty : it.order_qty))}</td>
+<td style={{ padding: '8px 10px', minWidth: 100 }}>
+                      {pickingStarted && (
+                        <div style={{ background: '#e5e7eb', borderRadius: 6, height: 8, overflow: 'hidden' }}>
+                          <div style={{
+                            width: `${Math.min(100, ((loadedQtyMap[it.id] || 0) / (it.final_qty || 1)) * 100)}%`,
+                            background: '#10b981', height: '100%',
+                          }} />
+                        </div>
+                      )}
+                    </td>
 {pickingStarted && <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600, color: statusColor }}>{statusLabel}</td>}
                   </tr>
                 )
