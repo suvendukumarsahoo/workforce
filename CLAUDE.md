@@ -237,10 +237,9 @@ alter table distributor_orders
 
 **Still open / not done yet:**
 - ~~Browser verification~~ — done, user confirmed working in the browser (2 Aug 2026).
-- **Driver role DB menus still only has `assignedLoads`** — the two new tabs
-  (`driverLoadingConfirm`, `driverJourney`, see Driver + Loading section above) won't appear on the
-  driver's bottom nav until an Admin checks their boxes in Settings → Driver role → Menu access
-  (effective next login). User was told to do this; not yet confirmed done.
+- ~~Driver role DB menus still only has `assignedLoads`~~ — done, user confirmed the two new boxes
+  (`driverLoadingConfirm`, `driverJourney`) are checked in Settings → Driver role → Menu access
+  (2 Aug 2026). Phase 1 + driver bottom-nav split are both fully wired up end to end now.
 - Pre-existing lint errors (not introduced this session, left as-is): `RouteMapSheet.jsx`
   `setState`-in-effect + unused `e`, `AssignedLoads.jsx` unused `confirmingParkId`/`e`,
   `OrderFullDetail.jsx` exhaustive-deps warning, `WebApp.jsx` `SideContent` static-component warning
