@@ -110,14 +110,35 @@ saves with `status='pending_approval'`.
 return` inside the invoice loop — pending-approval invoices don't count toward achievement until 
 Admin approves. Existing direct-entry invoices unaffected (default to 'approved').
 
-**NOT YET BUILT:**
-1. Admin's Invoice Approval list/screen (approve pending_approval → approved, stamps approved_by/at)
-2. Alert to Admin specifically when Driver confirms Loading Complete (currently only surfaces via the 
-   Awaiting Invoice tile, not a push notification)
-3. Invoice No./Amount display on Order Status screen
-4. PDF download (confirmed approach: browser print-to-PDF via `window.print()`, no library)
-5. Testing of the AwaitingInvoiceTile flow end-to-end was interrupted by a "forgot to paste code" 
-   issue — re-verify before building Approval screen
+**Built (as of 1 Aug 2026 session):**
+1. `InvoiceApprovalTile.jsx` (Admin+Accounts, on Invoices.jsx) — lists `pending_approval` invoices,
+   Review sheet with line items + ERP mismatch warning, Approve button calls existing
+   `db.approveInvoice(id, approvedBy)`.
+2. `NotificationBell.jsx` (WebApp.jsx top bar) — new `notifications` table (`target_roles` jsonb,
+   title, body, type, ref_id, read, created_at), 30s poll. `LoadingScreen.jsx` fires a
+   `type: 'loading_complete'` notification to `['r1','r3']` the moment the driver confirms the
+   final stop (`markLoadingComplete` call site).
+3. Invoice No./Date/Amount/Status card added to `OrderFullDetail.jsx` (shared by `OrderStatus.jsx`
+   across Admin/Manager/Accounts/Team) via new `db.fetchInvoiceForOrder(orderId)`.
+4. PDF download — `src/lib/printInvoice.js`, `window.print()` in a new tab, no library. Wired into
+   the Invoices list (PDF column), `InvoiceApprovalTile.jsx` review sheet, and the new invoice card
+   on `OrderFullDetail.jsx`.
+
+**Bugs fixed same session (same root cause as the 31 July fix below, found in two more spots):**
+- `Invoices.jsx`'s manual "Add invoice" flow (`InvSheet`) was still sending `customer_id` on
+  insert/update instead of `distributor_id` — every manual add/edit 400'd silently, and the list's
+  Customer column read the wrong field too. Fixed both.
+- `achievementEngine.js` line ~58 read `invoice.customer_id` for the per-customer achievement
+  breakdown (`ach.custs`) — always undefined on real rows, so per-customer goal progress in the
+  Team app has been stuck at 0 since that feature shipped. Fixed to `invoice.distributor_id`.
+- Also found and fixed: `Invoices.jsx` had db.js's own functions
+  (`fetchOrdersAwaitingInvoice`/`createInvoiceFromLoad`/`fetchPendingInvoices`/`approveInvoice`)
+  accidentally duplicated into the page file, referencing `supabase` with no import —
+  would have thrown `ReferenceError` on load. Removed the duplicate block (real versions stay in
+  db.js only, per the architecture rule).
+
+**Still open:** re-verify `achievementEngine.js`'s approval-gating fix end-to-end now that the
+customer_id fix is in (per-customer goal progress bars should now move).
 
 ## Deferred / Known Issues (not blocking, revisit later)
 - `createUser()` in db.js needs `service_role` key (client-side `auth.admin.createUser()` fails 
@@ -130,32 +151,103 @@ Admin approves. Existing direct-entry invoices unaffected (default to 'approved'
 - Google Maps migration path open — currently Leaflet+OSRM, swap = one component (`RouteMapSheet.jsx`).
 - Pre-existing: `db.fetchAttendance` queries nonexistent month/year columns (very old bug, may still 
   exist).
-  ## Session Update — 31 July 2026 (Invoicing bug fix)
 
-**Bug found and fixed:** `AwaitingInvoiceTile.jsx`'s `createInvoiceFromLoad` header sent 
-`customer_id: creating.distributor_id` — but the actual `invoices` table column is named 
-`distributor_id`, not `customer_id`. This caused every "Save Invoice" attempt to fail silently with 
-a 400 Bad Request (Postgres rejecting the unknown column). Fixed: header now sends 
-`distributor_id: creating.distributor_id`. Confirmed member_id/date/other fields were correctly typed 
-(`invoices.date` is `text`, not `date` type — string from `<input type="date">` is fine as-is).
+## Delivery/Transit Tracking — PLANNED, NOT STARTED (spec'd 1 Aug 2026, build in a new chat)
 
-**Lesson reinforced:** when a Supabase insert/update returns 400, check 
-`information_schema.columns` for the actual table structure before assuming the payload is correct — 
-column names can silently drift from what a component assumes (this table's customer-reference 
-column was named `distributor_id` even though the app's domain language mostly says "distributor" 
-elsewhere too, so this was an easy mismatch to miss).
+**Where this picks up:** `vehicle_allocations.status` today dead-ends at `loading_complete` — 
+nothing built past it. Per-order `loading_stage` (`wm_loaded` → `driver_confirmed`) is only used 
+during the loading phase via `LoadingScreen.jsx`. `AwaitingInvoiceTile.jsx` already lists orders at 
+`allocation.status='loading_complete'` with no invoice, but ungrouped (one order at a time).
 
-## Invoicing — Status (continued from previous update)
+**User's ask, condensed:** invoice creation should be grouped/worked through per vehicle allocation 
+(all loads in one allocation back-to-back) → driver sees per-load invoice-done status → once ALL 
+orders in the allocation are invoiced, driver confirms 3 items (Collected Invoice / Collected 
+Waybill / Informed to Distributor, all Yes) → unlocks **Start Journey** → shows route map 
+(stop 1, 2, 3...) → order status shows "in transit" with vehicle+driver details to all roles → 
+Admin sees live vehicle position via websocket with idle alerts (>30 min not moving) → driver 
+presses **Arrived** at each stop (est. vs actual time shown) → all roles see "arrived at 
+distributor" with timestamp on order status.
 
-**Now confirmed working:** `AwaitingInvoiceTile.jsx`'s full create flow — Order Items auto-populate, 
-Invoice No./Date entry, ERP fields with soft-warning mismatch banner, save → `status='pending_approval'`.
+### Phase 1 — invoice-gated checklist + route + arrival (build this first, no live GPS)
 
-**NOT YET BUILT (pick up next session):**
-1. Admin's Invoice Approval list/screen (approve `pending_approval` → `approved`, stamps 
-   `approved_by`/`approved_at`) — `db.approveInvoice(invoiceId, approvedBy)` function already exists 
-   in db.js, just needs a UI screen
-2. Alert to Admin specifically when Driver confirms Loading Complete (currently only surfaces via 
-   the Awaiting Invoice tile count, not a push/toast notification)
-3. Invoice No./Amount display on `OrderStatus.jsx` screen
-4. PDF download — confirmed approach: browser print-to-PDF via `window.print()`, no library needed
-5. Verify `achievementEngine.js`'s approval-gating fix (
+1. **Group invoice creation by allocation.** `db.fetchOrdersAwaitingInvoice()` returns a flat list — 
+   change `AwaitingInvoiceTile.jsx` to group by `allocation_id`, one section per Load.
+2. **Driver's per-load invoice status + checklist.** New tile on `AssignedLoads.jsx`, shown when 
+   `allocation.status === 'loading_complete'`: per-order Invoiced/Not badge (new batched 
+   `db.fetchInvoicesForOrders(orderIds)`, or reuse the `fetchInvoiceForOrder` pattern). "Invoiced" = 
+   invoice row exists, any status (pending_approval counts — this is about paperwork done, not 
+   approval). Once all orders in the allocation are invoiced: 3-item Yes/No confirmation (Collected 
+   Invoice, Collected Waybill, Informed to Distributor) → all Yes unlocks **Start Journey**.
+3. **Start Journey → route plan.** Reuse the OSRM `/trip/` call already in `RouteMapSheet.jsx` (don't 
+   reinvent) to get optimized stop order + leg durations. Store as `vehicle_allocations.route_plan` 
+   jsonb: `{ stops: [{order_id, distributor_name, leg_duration_min, cum_eta_min}], 
+   total_duration_min, total_distance_km }`. Set `status='in_transit'`, `journey_started_at=now()`. 
+   Show `RouteMapSheet.jsx` for stop order.
+4. **Per-stop arrival.** New driver tile: current stop = `route_plan.stops[delivery_stop_index]`. 
+   "Arrived" button → `distributor_orders.arrived_at=now()`, increment 
+   `vehicle_allocations.delivery_stop_index`. Show est. (from `cum_eta_min` relative to 
+   `journey_started_at`) vs actual elapsed. Last stop confirmed → `status='completed'`, 
+   `journey_completed_at=now()`.
+5. **Cross-role order status.** `OrderTimeline.jsx` + `OrderFullDetail.jsx` (shared by 
+   `OrderStatus.jsx` across Admin/Manager/Accounts/Team): add "In Transit" and "Arrived at 
+   Distributor — {timestamp}" stages, show vehicle number + driver name while in transit (check 
+   whether the order-fetching query already joins `allocation.vehicle`/`allocation.driver` — extend 
+   if not).
+
+**Phase 1 schema (give user as SQL to run manually in Supabase dashboard):**
+```sql
+alter table vehicle_allocations
+  add column collected_invoice boolean not null default false,
+  add column collected_waybill boolean not null default false,
+  add column informed_distributor boolean not null default false,
+  add column journey_started_at timestamptz,
+  add column journey_completed_at timestamptz,
+  add column route_plan jsonb,
+  add column delivery_stop_index integer not null default 0;
+
+alter table distributor_orders
+  add column arrived_at timestamptz;
+```
+`status` is a plain text column (no DB enum) — new string values `'in_transit'`/`'completed'` need 
+no migration.
+
+**Phase 1 files:** `AwaitingInvoiceTile.jsx`, `AssignedLoads.jsx` (or a new tile component following 
+the `DriverOrderConfirmTile.jsx` pattern), `OrderTimeline.jsx`, `OrderFullDetail.jsx`, `db.js` (new: 
+`fetchInvoicesForOrders`, `updateAllocationChecklist`, `startJourney`, `confirmArrival`), reuse 
+`RouteMapSheet.jsx`.
+
+### Phase 2 — live GPS tracking, websocket admin map, idle alerts (separate follow-up, after Phase 1 is tested)
+
+**Real constraint, not a choice:** live position only works while the driver keeps a dedicated 
+Journey screen open/foregrounded (`navigator.geolocation.watchPosition`) — no native app or PWA 
+background service worker exists. Same precedent as `LoadingScreen.jsx` (explicitly "NOT globally 
+persistent across navigation").
+
+1. **New table `vehicle_locations`** (ping history):
+```sql
+create table vehicle_locations (
+  id bigserial primary key,
+  allocation_id text not null references vehicle_allocations(id),
+  lat double precision not null,
+  lng double precision not null,
+  recorded_at timestamptz not null default now()
+);
+```
+Must also enable Realtime replication on this table via Supabase Dashboard (manual step, can't be 
+done from code).
+2. **Driver side:** while `status='in_transit'` and the Journey screen is open, `watchPosition` 
+   throttled to ~1 ping/45s → new `db.recordVehicleLocation(allocationId, lat, lng)`. Throttle to 
+   protect the Nano-tier instance (see Recurring Bug Patterns #5).
+3. **Admin side:** new `VehicleLiveMap.jsx`, Supabase Realtime `postgres_changes` subscription on 
+   `vehicle_locations` INSERT, Leaflet markers (reuse loader pattern from `RouteMapSheet.jsx`). Idle 
+   detection computed client-side (no Edge Functions exist yet — same gap as `createUser()`): track 
+   `last_moved_at` per allocation = last ping that differs from prior by >~50m; 
+   `now() - last_moved_at > 30min` while `in_transit` → idle badge + push into existing 
+   `notifications` table targeting `['r1']` (reuses `NotificationBell.jsx`, no new alert system).
+4. **ETA vs actual on the live map:** per active leg, `route_plan` estimate vs elapsed time since 
+   previous stop's `arrived_at` (or `journey_started_at` for leg 1).
+
+### To start Phase 1 in a new chat
+Say: "Read CLAUDE.md, build Phase 1 of Delivery/Transit Tracking." The new chat should read this 
+section, confirm the Phase 1 SQL has been run, then implement in the order listed above (1→5), 
+building and testing incrementally rather than all at once.
