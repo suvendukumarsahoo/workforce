@@ -245,14 +245,38 @@ alter table distributor_orders
   `OrderFullDetail.jsx` exhaustive-deps warning, `WebApp.jsx` `SideContent` static-component warning
   + unused `Btn` import, `Settings.jsx` unused `Inp` import.
 
-### Phase 2 — live GPS tracking, websocket admin map, idle alerts (separate follow-up, after Phase 1 is tested)
+### Phase 2 — live GPS tracking, websocket admin map, idle alerts — BUILT & PUSHED (2 Aug 2026
+session, commit `d5e98a1`). User confirmed everything EXCEPT the actual live-position ping is
+working — the geolocation-driven movement/idle-detection part still needs a real moving device to
+verify and is explicitly deferred ("will check the live tracker later with a moving device").
 
 **Real constraint, not a choice:** live position only works while the driver keeps a dedicated 
 Journey screen open/foregrounded (`navigator.geolocation.watchPosition`) — no native app or PWA 
 background service worker exists. Same precedent as `LoadingScreen.jsx` (explicitly "NOT globally 
 persistent across navigation").
 
-1. **New table `vehicle_locations`** (ping history):
+**Built:**
+1. **`vehicle_locations` table** (ping history, schema below) — append-only, nothing prunes it
+   (see "Still open" — retention explicitly deferred by user).
+2. **Driver side** (`AllocationJourneyTile.jsx`): while an allocation is `in_transit` and the
+   Journey tab is mounted, `watchPosition` throttled to ~1 ping/45s per allocation →
+   `db.recordVehicleLocation(allocationId, lat, lng)`. Geolocation errors are swallowed silently
+   (`() => {}`) — if a driver denies the location permission prompt there's currently no visible
+   feedback, just no pings. Requires a secure context (HTTPS or localhost); Vercel prod is fine.
+3. **Admin side:** new `VehicleLiveMap.jsx` (menu id `vehicleLiveMap`, label "Live Tracking", under
+   Distributor Functions section — mirrored into `Settings.jsx` per Recurring Bug Pattern #6).
+   Leaflet map (same CDN-loader pattern as `RouteMapSheet.jsx`) + new `db.subscribeVehicleLocations()`
+   wrapping a real Supabase Realtime `postgres_changes` INSERT subscription (actual WebSocket, not
+   polling — kept inside `db.js` rather than importing `supabase` directly in the page, per the
+   architecture rule). Idle detection computed client-side (no Edge Functions exist yet — same gap
+   as `createUser()`): tracks last-significant-movement (>50m, via new `geo.js` `haversineMeters`)
+   per allocation; idle >30min while `in_transit` → red badge + one `notifications` row to `['r1']`
+   per continuous idle episode (cleared once movement resumes), reuses `NotificationBell.jsx`.
+4. **ETA vs actual**, shown per-vehicle in the list above the map: current leg's `route_plan`
+   estimate vs elapsed time since the previous stop's `arrived_at` (or `journey_started_at` for leg
+   1), flagged "running Xm late" past a 10min threshold.
+
+**Schema — user must apply manually, not yet confirmed done:**
 ```sql
 create table vehicle_locations (
   id bigserial primary key,
@@ -261,24 +285,80 @@ create table vehicle_locations (
   lng double precision not null,
   recorded_at timestamptz not null default now()
 );
+
+create index vehicle_locations_allocation_recorded_idx
+  on vehicle_locations(allocation_id, recorded_at desc);
 ```
-Must also enable Realtime replication on this table via Supabase Dashboard (manual step, can't be 
-done from code).
-2. **Driver side:** while `status='in_transit'` and the Journey screen is open, `watchPosition` 
-   throttled to ~1 ping/45s → new `db.recordVehicleLocation(allocationId, lat, lng)`. Throttle to 
-   protect the Nano-tier instance (see Recurring Bug Patterns #5).
-3. **Admin side:** new `VehicleLiveMap.jsx`, Supabase Realtime `postgres_changes` subscription on 
-   `vehicle_locations` INSERT, Leaflet markers (reuse loader pattern from `RouteMapSheet.jsx`). Idle 
-   detection computed client-side (no Edge Functions exist yet — same gap as `createUser()`): track 
-   `last_moved_at` per allocation = last ping that differs from prior by >~50m; 
-   `now() - last_moved_at > 30min` while `in_transit` → idle badge + push into existing 
-   `notifications` table targeting `['r1']` (reuses `NotificationBell.jsx`, no new alert system).
-4. **ETA vs actual on the live map:** per active leg, `route_plan` estimate vs elapsed time since 
-   previous stop's `arrived_at` (or `journey_started_at` for leg 1).
+Plus: Supabase Dashboard → Database → Replication → toggle `vehicle_locations` on, Insert event
+(manual step, can't be done from code).
+
+**Still open / not done yet:**
+- **Live-position ping itself not yet verified** (2 Aug 2026) — everything else in Phase 2 the user
+  confirmed working; only the `watchPosition` → `vehicle_locations` → Realtime → map-marker chain
+  needs a real moving device, which the user will test later and report back. If it turns out
+  broken when tested, check in order: SQL/Replication steps actually applied? Admin's
+  `vehicleLiveMap` menu box checked in Settings (+ re-login)? Allocation actually `in_transit` (not
+  still at `loading_complete`)? Driver actually on the Journey tab? Location permission granted?
+- **Retention on `vehicle_locations` explicitly deferred by user** (2 Aug 2026): grows forever,
+  nothing deletes old ping rows (cheap for now — ~20MB/year at moderate volume, not urgent). User
+  confirmed they want cleanup eventually but parked it. Cheapest fix when picked back up: delete an
+  allocation's rows once `status='completed'` inside `confirmArrival` — no Edge Function needed,
+  unlike the `createUser()` gap.
+- **Members/driver master has no create/edit UI at all** — `createMember`/`updateMember`/
+  `deleteMember` in `db.js` are unused; `members` rows are apparently created directly in Supabase.
+  Surfaced because user asked whether a driver phone number field was needed (it's not — login is
+  email/password only, no phone/OTP anywhere). Building a proper Members master screen (with phone
+  as a field) explicitly deferred by user ("we will update it later").
+
+### Phase 3 — per-stop delivery workflow (unloading → complete → POD) + driver lock-out — NOT
+STARTED, spec'd 2 Aug 2026, to be built in a new chat
+
+**User's ask, verbatim-condensed:** on **Arrived** (Phase 1's existing button), admin gets the
+estimate-vs-actual arrival record (partly exists already via Phase 1's `arrived_at` + `route_plan`
+— confirm what's actually surfaced today vs what's still needed). Driver then gets a **Start
+Unloading** button (timestamp). Next button is **Delivery Complete** (timestamp + capture GPS
+location at that moment). This prompts **POD upload** directly from the phone camera; once
+uploaded and confirmed, the order's status reflects the phase — **Arrived → Unloading in Progress →
+Delivery Complete**, each with its own timestamp, visible to all roles same as Phase 1's stage
+labels. After a stop's delivery is complete, driver chooses **Next Stop** (if more remain) or
+**Return to Base** (if this was the last stop) — same loop repeats per stop. Once back, driver runs
+a **Journey Complete** step confirming 3 items: Vehicle Parked / Keys Handover / POD Handover.
+**Admin must approve** this Journey Complete before the driver is available again. Explicit new
+constraint (didn't exist before): **a driver stays locked out of new vehicle allocations from the
+moment they're assigned a load until Admin approves their Journey Complete** — today
+`LoadCreatedList.jsx`'s driver dropdown (`db.fetchDrivers()`) has no such check at all.
+
+**First-pass technical shape (confirm/refine when actually planning in the new chat, not final):**
+- Per-order additions likely needed on `distributor_orders`: `unloading_started_at`,
+  `delivery_completed_at`, `delivery_lat`/`delivery_lng` (captured at Delivery Complete, same
+  `navigator.geolocation` pattern as vehicle pings), `pod_url` (photo — needs Supabase Storage, not
+  used anywhere in this codebase yet, so bucket/upload flow is new plumbing). Stage label likely
+  derived from which timestamps are set, matching how `orderStageLabel.js` already works — probably
+  extend that file rather than add a new status enum column.
+- Per-allocation additions likely needed on `vehicle_allocations`: something marking
+  return-to-base intent, the 3-item Journey Complete checklist (mirror the existing
+  `collected_invoice`/`collected_waybill`/`informed_distributor` checklist pattern from Phase 1 —
+  `vehicle_parked_confirmed`/`keys_handed_over`/`pod_handed_over` or similar), an
+  admin-approval timestamp + approver (mirror `invoices.approved_by`/`approved_at`), and a
+  driver-availability gate derived from "has an allocation with no admin approval yet" rather than
+  a boolean flag, to avoid a second source of truth.
+- Driver-lock-out check belongs in `LoadCreatedList.jsx`'s driver-selection step (`db.fetchDrivers`
+  or wherever the dropdown is populated) — filter out any driver with an unapproved active
+  allocation. New UI likely needed for Admin to review/approve pending Journey Completes (could live
+  on `WMDashboard.jsx` as a new tile, or its own screen — not decided).
+- Camera capture on mobile web = `<input type="file" accept="image/*" capture="environment">`, no
+  library needed; upload target = Supabase Storage (new — nothing in this codebase currently uses
+  Storage, check bucket/policy setup before assuming it's ready).
+- Extend `AllocationJourneyTile.jsx`'s in-transit branch (currently just shows the Arrived button)
+  to add the unloading/delivery-complete/POD/next-stop-or-return-to-base flow; extend
+  `OrderFullDetail.jsx`/`orderStageLabel.js` for the new stages same as Phase 1 did.
 
 ### To continue in a new chat
-Say: "Read CLAUDE.md. Phase 1 of Delivery/Transit Tracking is built, tested, and pushed, and the
-driver bottom-nav split is also built and pushed. Confirm the Driver role's two new menu boxes are
-checked in Settings, then start Phase 2 (live GPS tracking)." The new chat should read this
-section and the Driver + Loading bullet under the Distributor Order pipeline section before
-touching Phase 2.
+Say: "Read CLAUDE.md. Phase 2 (live GPS tracking) is built and pushed; everything except the actual
+moving-device location ping is confirmed working, and that part is still pending the user's test.
+Start planning and building Phase 3 (per-stop delivery workflow: start unloading → delivery
+complete + GPS capture → POD upload from camera → next stop or return to base → Journey Complete
+checklist → Admin approval → driver unlocked for new allocation)." The new chat should read the
+Phase 3 section above in full (it's a first-pass technical sketch, not a finalized schema — expect
+to refine it during actual planning) plus the Driver + Loading bullet under the Distributor Order
+pipeline section before starting.
