@@ -622,6 +622,45 @@ export async function markNotificationRead(id) {
   return { data, error }
 }
 
+// ─── VEHICLE LOCATIONS (LIVE TRACKING) ─────────────────────────────────────────
+
+export async function recordVehicleLocation(allocationId, lat, lng) {
+  const { data, error } = await supabase
+    .from('vehicle_locations')
+    .insert({ allocation_id: allocationId, lat, lng })
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function fetchInTransitAllocations() {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .select('*, vehicle:vehicles(id, vehicle_number), warehouse:warehouses(id, name, latitude, longitude), driver:members!vehicle_allocations_driver_id_fkey(id, name)')
+    .eq('status', 'in_transit')
+    .order('journey_started_at', { ascending: true })
+  return { data, error }
+}
+
+export async function fetchLatestVehicleLocation(allocationId) {
+  const { data, error } = await supabase
+    .from('vehicle_locations')
+    .select('*')
+    .eq('allocation_id', allocationId)
+    .order('recorded_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  return { data, error }
+}
+
+export function subscribeVehicleLocations(onInsert) {
+  const channel = supabase
+    .channel('vehicle-locations-live')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'vehicle_locations' }, payload => onInsert(payload.new))
+    .subscribe()
+  return () => supabase.removeChannel(channel)
+}
+
 // ─── EXPENSES ─────────────────────────────────────────────────────────────────
 
 export async function fetchExpenses() {

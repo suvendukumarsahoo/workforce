@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../hooks/useAuth.jsx'
 import { Card, CH, Btn } from './ui.jsx'
 import * as db from '../lib/db.js'
@@ -24,6 +24,39 @@ export default function AllocationJourneyTile() {
     const interval = setInterval(() => setNow(Date.now()), 30000)
     return () => clearInterval(interval)
   }, [])
+
+  const lastPingRef = useRef({})
+  const watchIdRef = useRef(null)
+
+  // Report position for in-transit loads while this Journey screen stays open — only source of
+  // live tracking data, see CLAUDE.md Phase 2: no background service worker exists.
+  useEffect(() => {
+    const inTransitIds = allocations
+      .filter(a => a.allocation.status === 'in_transit')
+      .map(a => a.allocation.id)
+
+    if (inTransitIds.length === 0 || !navigator.geolocation) return
+
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      pos => {
+        const nowMs = Date.now()
+        inTransitIds.forEach(id => {
+          const last = lastPingRef.current[id] || 0
+          if (nowMs - last >= 45000) {
+            lastPingRef.current[id] = nowMs
+            db.recordVehicleLocation(id, pos.coords.latitude, pos.coords.longitude)
+          }
+        })
+      },
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 20000 }
+    )
+
+    return () => {
+      if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current)
+      watchIdRef.current = null
+    }
+  }, [allocations])
 
   const loadData = async () => {
     const { data } = await db.fetchDriverAllocations(currentUser?.member_id)
