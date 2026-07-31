@@ -528,6 +528,46 @@ export async function approveInvoice(invoiceId, approvedBy) {
   return { data, error }
 }
 
+export async function fetchInvoiceForOrder(orderId) {
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('*, lines:invoice_lines(*, product:products(id, name, unit, category_id))')
+    .eq('order_id', orderId)
+    .maybeSingle()
+  return { data, error }
+}
+
+// ─── NOTIFICATIONS ────────────────────────────────────────────────────────────
+
+export async function createNotification({ target_roles, title, body, type, ref_id }) {
+  const { data, error } = await supabase
+    .from('notifications')
+    .insert({ target_roles, title, body, type, ref_id })
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function fetchNotifications(roleId) {
+  const { data, error } = await supabase
+    .from('notifications')
+    .select('*')
+    .contains('target_roles', [roleId])
+    .order('created_at', { ascending: false })
+    .limit(30)
+  return { data, error }
+}
+
+export async function markNotificationRead(id) {
+  const { data, error } = await supabase
+    .from('notifications')
+    .update({ read: true })
+    .eq('id', id)
+    .select()
+    .single()
+  return { data, error }
+}
+
 // ─── EXPENSES ─────────────────────────────────────────────────────────────────
 
 export async function fetchExpenses() {

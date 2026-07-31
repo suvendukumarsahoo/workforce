@@ -101,6 +101,14 @@ export default function LoadingScreen({ allocation, products, onClose, onAllComp
         const nextIndex = stopIndex + 1
         if (nextIndex >= stopSequence.length) {
           await db.markLoadingComplete(allocation.id)
+          const distNames = orders.map(o => o.distributor?.name).filter(Boolean).join(', ')
+          await db.createNotification({
+            target_roles: ['r1', 'r3'],
+            title: 'Loading Complete',
+            body: `${distNames || 'Load #' + allocation.id} — ready for invoicing`,
+            type: 'loading_complete',
+            ref_id: String(allocation.id),
+          })
           onAllComplete()
         } else {
           await db.advanceStopIndex(allocation.id, nextIndex)

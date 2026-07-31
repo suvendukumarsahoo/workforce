@@ -55,7 +55,7 @@ export function computeAchievements(invoices = [], goals = {}, products = [], di
     ach.value += invoiceTotal
 
     // Customer value
-    const custId = invoice.customer_id || invoice.custId
+    const custId = invoice.distributor_id || invoice.custId
     ach.custs[custId] = (ach.custs[custId] || 0) + invoiceTotal
   })
 

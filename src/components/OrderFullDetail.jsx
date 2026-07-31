@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Card, CH, Btn, Sheet, F } from './ui.jsx'
 import OrderTimeline from './OrderTimeline.jsx'
 import * as db from '../lib/db.js'
+import { printInvoice } from '../lib/printInvoice.js'
 
 export default function OrderFullDetail({ order, payment, products, canCreateLoad = false, onClose, onChanged }) {  const [busy, setBusy] = useState(false)
   const productName = pid => (products || []).find(p => p.id === pid)?.name || pid
@@ -17,6 +18,14 @@ const pickingStarted = ['picking_done', 'ready_for_load'].includes(order.picking
     })
     return groups
   })()
+
+const [invoice, setInvoice] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    db.fetchInvoiceForOrder(order.id).then(({ data }) => { if (!cancelled) setInvoice(data || null) })
+    return () => { cancelled = true }
+  }, [order.id])
 
 const [loadedQtyMap, setLoadedQtyMap] = useState({})
 
@@ -78,6 +87,20 @@ const [loadedQtyMap, setLoadedQtyMap] = useState({})
             <div><strong>{payment.mode_of_payment}</strong> · {payment.transaction_id}</div>
             <div>{payment.bank_name}, {payment.bank_branch}</div>
             <div>Amount: <strong>{F(payment.transaction_amount)}</strong></div>
+          </div>
+        </Card>
+      )}
+
+      {invoice && (
+        <Card>
+          <CH title="Invoice" right={
+            <Btn sm onClick={() => printInvoice({ invoice, distributorName: order.distributor?.name, memberName: order.member?.name, productName })}>⬇ Download PDF</Btn>
+          } />
+          <div style={{ padding: 14, fontSize: 12, display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
+            <div>Invoice No: <strong>{invoice.id}</strong></div>
+            <div>Date: <strong>{invoice.date}</strong></div>
+            <div>Amount: <strong>{F((invoice.lines || []).reduce((s, l) => s + l.qty * l.rate, 0))}</strong></div>
+            <div>Status: <strong style={{ color: invoice.status === 'approved' ? '#10b981' : '#f59e0b' }}>{invoice.status === 'approved' ? 'Approved' : 'Pending Approval'}</strong></div>
           </div>
         </Card>
       )}

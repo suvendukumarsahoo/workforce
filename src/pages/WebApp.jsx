@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useAuth } from '../hooks/useAuth.jsx'
 import { useData } from '../hooks/useData.jsx'
 import { Btn, Av } from '../components/ui.jsx'
+import NotificationBell from '../components/NotificationBell.jsx'
 
 // Pages
 import Dashboard     from './shared/Dashboard.jsx'
@@ -184,6 +185,7 @@ export default function WebApp() {
         <div style={{ background: '#fff', borderBottom: '1px solid #e5e7eb', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
           <button onClick={() => setSideOpen(true)} className="wf-hamburger" style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 16, flexShrink: 0 }}>☰</button>
           <div style={{ fontWeight: 700, fontSize: 15, flex: 1 }}>{curLabel}</div>
+          <NotificationBell onNavigate={goTo} />
           <div style={{ fontSize: 11, color: '#6b7280', background: '#f3f4f6', padding: '3px 8px', borderRadius: 6 }}>
             {new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
           </div>

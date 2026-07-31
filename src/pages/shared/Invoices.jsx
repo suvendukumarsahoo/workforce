@@ -4,6 +4,8 @@ import { useData } from '../../hooks/useData.jsx'
 import { CrudTable, Av, Sheet, Inp, Btn } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
 import AwaitingInvoiceTile from '../../components/AwaitingInvoiceTile.jsx'
+import InvoiceApprovalTile from '../../components/InvoiceApprovalTile.jsx'
+import { printInvoice } from '../../lib/printInvoice.js'
 
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 
@@ -15,14 +17,22 @@ const { invoices, setInvoices, members, products, categories, distributors: cust
   const cols = [
     { key: 'id', label: 'Invoice' },
     { key: 'member', label: 'Member', render: r => { const m = (members || []).find(x => x.id === r.member_id); return <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>{m && <Av av={m.avatar} color={m.color} sz={22} />}<span style={{ fontSize: 12 }}>{m?.name}</span></div> } },
-    { key: 'customer', label: 'Customer', render: r => { const c = (customers || []).find(x => x.id === r.customer_id); return <span style={{ fontSize: 12 }}>{c?.name || r.customer_id}</span> } },
+    { key: 'customer', label: 'Customer', render: r => { const c = (customers || []).find(x => x.id === r.distributor_id); return <span style={{ fontSize: 12 }}>{c?.name || r.distributor_id}</span> } },
     { key: 'date', label: 'Date' },
     { key: 'total', label: 'Amount', render: r => <span style={{ fontWeight: 600 }}>{F((r.lines || r.invoice_lines || []).reduce((s, l) => s + l.qty * l.rate, 0))}</span> },
     { key: 'lines', label: 'Lines', render: r => <span style={{ fontSize: 11, color: '#9ca3af' }}>{(r.lines || r.invoice_lines || []).length} items</span> },
+    { key: 'pdf', label: 'PDF', render: r => (
+      <Btn sm onClick={() => printInvoice({
+        invoice: r,
+        distributorName: (customers || []).find(c => c.id === r.distributor_id)?.name || r.distributor_id,
+        memberName: (members || []).find(m => m.id === r.member_id)?.name,
+        productName: pid => (products || []).find(p => p.id === pid)?.name || pid,
+      })}>⬇</Btn>
+    ) },
   ]
 
   const save = async (inv) => {
-    const header = { id: inv.id, member_id: Number(inv.memberId), customer_id: inv.custId, date: inv.date }
+    const header = { id: inv.id, member_id: Number(inv.memberId), distributor_id: inv.custId, date: inv.date }
     const lines  = inv.lines.filter(l => l.qty).map(l => ({ product_id: l.pid, qty: Number(l.qty), rate: Number(l.rate) }))
     const isEdit = invoices.some(x => x.id === inv.id)
     const { data, error } = isEdit ? await db.updateInvoice(inv.id, header, lines) : await db.createInvoice(header, lines)
@@ -35,6 +45,7 @@ const { invoices, setInvoices, members, products, categories, distributors: cust
   return (
     <div>
       <AwaitingInvoiceTile />
+      <InvoiceApprovalTile />
       {sheet && <InvSheet inv={sheet === 'new' ? null : sheet} members={members} products={products} customers={customers} onSave={save} onClose={() => setSheet(null)} />}
       <CrudTable
         title={`Invoices (${(invoices || []).length})`}
@@ -49,51 +60,11 @@ const { invoices, setInvoices, members, products, categories, distributors: cust
     </div>
   )
 }
-export async function fetchOrdersAwaitingInvoice() {
-  const { data, error } = await supabase
-    .from('distributor_orders')
-    .select('*, distributor:distributors(id, name, area, town), member:members!distributor_orders_member_id_fkey(id, name), items:distributor_order_items(*), allocation:vehicle_allocations(id, status)')
-    .not('allocation_id', 'is', null)
-  if (error) return { data: null, error }
-  const awaiting = (data || []).filter(o => o.allocation?.status === 'loading_complete')
-  // exclude orders that already have an invoice
-  const { data: existingInvoices } = await supabase.from('invoices').select('order_id').not('order_id', 'is', null)
-  const invoicedOrderIds = new Set((existingInvoices || []).map(i => i.order_id))
-  return { data: awaiting.filter(o => !invoicedOrderIds.has(o.id)), error: null }
-}
-
-export async function createInvoiceFromLoad(header, lines) {
-  const { data: inv, error } = await supabase.from('invoices').insert(header).select().single()
-  if (error) return { data: null, error }
-  const lineRows = lines.map(l => ({ invoice_id: inv.id, product_id: l.product_id, qty: l.qty, rate: l.rate }))
-  const { error: lineError } = await supabase.from('invoice_lines').insert(lineRows)
-  return { data: inv, error: lineError }
-}
-
-export async function fetchPendingInvoices() {
-  const { data, error } = await supabase
-    .from('invoices')
-    .select('*, lines:invoice_lines(*, product:products(id, name, unit, category_id)), member:members!invoices_created_by_fkey(id, name)')
-    .eq('status', 'pending_approval')
-    .order('date', { ascending: false })
-  return { data, error }
-}
-
-export async function approveInvoice(invoiceId, approvedBy) {
-  const { data, error } = await supabase
-    .from('invoices')
-    .update({ status: 'approved', approved_by: approvedBy, approved_at: new Date().toISOString() })
-    .eq('id', invoiceId)
-    .select()
-    .single()
-  return { data, error }
-}
-
 function InvSheet({ inv, members, products, customers, onSave, onClose }) {
   const [d, setD] = useState({
     id: inv?.id || '',
     memberId: inv?.member_id || (members || [])[0]?.id || '',
-    custId: inv?.customer_id || '',
+    custId: inv?.distributor_id || '',
     date: inv?.date || '',
     lines: (inv?.lines || inv?.invoice_lines || [{ pid: (products || [])[0]?.id || '', qty: '', rate: (products || [])[0]?.price || '' }]).map(l => ({ pid: l.product_id || l.pid, qty: l.qty, rate: l.rate })),
   })
