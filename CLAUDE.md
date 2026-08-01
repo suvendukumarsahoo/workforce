@@ -165,8 +165,11 @@ customer_id fix is in (per-customer goal progress bars should now move).
 - Performance/polling issue (see Recurring Bug Patterns #5) — flagged, not fixed.
 - RLS disabled across all tables — flagged multiple times pre-launch requirement.
 - Google Maps migration path open — currently Leaflet+OSRM, swap = one component (`RouteMapSheet.jsx`).
-- Pre-existing: `db.fetchAttendance` queries nonexistent month/year columns (very old bug, may still 
-  exist).
+- Pre-existing: `db.fetchAttendance`/`db.upsertAttendance` (old `attendance` table, `member_id`-keyed)
+  — now fully superseded and orphaned by the new Attendance/Punch-In System below (2 Aug 2026
+  session); left untouched rather than deleted since the underlying table's real state in Supabase
+  hasn't been inspected. Safe to delete both functions + the old table once the new system is
+  confirmed working.
 
 ## Delivery/Transit Tracking — Phase 1 BUILT & PUSHED (1 Aug 2026 session), NOT YET BROWSER-TESTED
 
@@ -426,9 +429,187 @@ moment they're assigned a load until Admin approves their Journey Complete** —
 POD upload was descoped from this build per the user's mid-session call (see "Explicitly deferred"
 above) — everything else in this ask is built.
 
+### Phase 4 — Journey Vein-Diagram Timeline, Approved-List, Admin Remarks + PDF Export — BUILT &
+PUSHED (2 Aug 2026 session, commit `42c9797`), NOT YET BROWSER-TESTED
+
+**User's ask, condensed:** Journey Approvals page should show a full visual timeline ("vein diagram")
+of every driver activity from Accept Load through Parking/Loading/Loading Complete/Start
+Journey/Arrival/Delivery Complete per stop/Return to Base, each with a timestamp and the time
+difference to the previous activity, plus a header/footer. Header should also show driver name,
+vehicle number, per-stop town route, journey start/end + total elapsed, total qty loaded, estimated
+journey time + actual-vs-estimate difference. Admin approves with a remarks field. PDF copy
+downloadable. All *approved* journeys should also show up as a browsable list (not just pending
+ones), clickable into the same full detail screen (a proper full-screen Sheet, not a toast). Same
+list + detail screen needed on the driver's own Journey tab too.
+
+**Built:**
+1. **`src/lib/journeyTimeline.js`** (new, shared) — single source of truth for both the on-screen
+   diagram and the PDF: `buildJourneyEvents(allocation, orders)` walks every stage timestamp
+   (`driver_accepted_at` → `vehicle_parked_at` → `loading_started_at` → `loading_completed_at` →
+   `journey_started_at` → per-stop `arrived_at`/`unloading_started_at`/`delivered_at` in
+   `route_plan.stops` order → `returning_to_base_at` → `journey_complete_submitted_at` →
+   `journey_complete_approved_at`), sorted chronologically. `journeySummary()` derives header stats
+   (stop towns, start/end, total elapsed, estimated vs actual). `fmtTs`/`fmtDur` shared formatters,
+   `CATEGORY_COLOR` per-stage color map.
+2. **`JourneyVeinTimeline.jsx`** (new component) — vertical connected-node timeline: header (driver,
+   vehicle, `Stop 1: Town → Stop 2: Town...` route, Journey Start/End, Total Elapsed, Total Qty
+   Loaded — summed from `load_item_progress.loaded_qty` via `db.fetchLoadItemProgress`, Estimated
+   Journey Time from `route_plan.total_duration_min`, Est. vs Actual delta), the diagram itself
+   (each node = stage + timestamp + "+Xh Ym since previous activity", color-coded by stage), footer
+   (Stops Delivered X/Y, Submitted for Approval timestamp). Used identically on both the admin and
+   driver side — same component, same data shape.
+3. **`src/lib/printJourney.js`** (new) — PDF export, same `window.print()`-in-new-tab pattern as the
+   existing `printInvoice.js` (no library). Reuses `journeyTimeline.js` so the PDF always matches the
+   on-screen diagram.
+4. **`JourneyApprovals.jsx` (admin)** — timeline now renders inside each pending card; added a
+   remarks `<textarea>` per allocation; `db.approveJourneyComplete(id, approvedBy, remarks)` gained a
+   third param, stores it in new `journey_complete_approval_remarks` column; "⬇ PDF" button per card.
+   New **"Approved Journey Completions"** list card (new `db.fetchApprovedJourneys()` — any
+   allocation with `journey_complete_approved_at` set) — clicking a row lazily fetches that
+   allocation's orders + loaded-qty and opens the same `JourneyVeinTimeline` in a full-screen `Sheet`
+   (not a toast) with a green "✓ Approved" block (approver name resolved via `db.fetchMembers()`
+   lookup on `journey_complete_approved_by`, since that column stores a member id not a name) and its
+   own "⬇ PDF" button.
+5. **`AllocationJourneyTile.jsx` (driver Journey tab)** — same "Completed Journeys" list + click-to-
+   detail Sheet pattern, scoped to the logged-in driver only (new
+   `db.fetchDriverCompletedJourneys(driverId)`). No PDF button on the driver side (wasn't asked for —
+   trivial to add later, same `printJourneyReport` call as the admin side). Required removing the
+   component's old `if (allocations.length === 0) return <Card>...</Card>` early return (it was
+   blocking everything below it, including this new list, whenever there was no active load) — the
+   empty-state placeholder now renders inline instead.
+
+**Schema — NOT yet applied, user must run:**
+```sql
+alter table vehicle_allocations
+  add column journey_complete_approval_remarks text;
+```
+
+**Still open / not done yet:**
+- **Schema not yet applied** — Approve Journey Complete will error until the column above exists.
+- **Not browser-tested** — same constraint as every phase before it (no chromium-cli/Playwright in
+  this Windows dev environment). Only `vite build` + scoped `eslint` were run clean.
+
+## Attendance / Punch-In System (NEW module, 2 Aug 2026 session, commit `42c9797`) — schema NOT yet
+applied, NOT browser-tested
+
+**User's ask, condensed:** every employee (all 7 roles, web + driver) must punch in before reaching
+the app on every login. Current location captured at punch-in; attendance auto-marked Present
+regardless. Distance from the employee's headquarter lat/long is calculated (haversine); >20m
+deviation shows a message to HR. All employees see their own attendance calendar with Present/Absent
+summaries. For drivers specifically, HR sees a day-by-day activity summary. HR approves attendance.
+
+**Key design calls made without asking (flag if wrong, easy to change):**
+- **Keyed by `users.id`, not `members.id`.** `member_id` on `users` is only populated for Sales Team
+  + drivers (per `Employees.jsx`'s own form label, "for Sales Team only") — most Admin/HR/Manager/
+  Accounts/Warehouse Manager accounts have no `members` row at all. Gating login on a
+  `members`-keyed table would have locked most of the company out. HQ lat/long was therefore added
+  to `users`, not `members`.
+- **New `attendance_punches` table**, NOT a fix to the legacy `attendance` table/`db.fetchAttendance`
+  (the pre-existing "queries nonexistent month/year columns" bug noted under Deferred/Known Issues
+  below). Left the old table and its two `db.js` functions (`fetchAttendance`/`upsertAttendance`)
+  completely untouched and now fully unused, rather than risk touching data of unknown state that
+  can't be inspected from this environment.
+- **HR approval is scoped to flagged punches only** (>20m deviation, no HQ location set, or no GPS
+  captured) — normal in-range punches auto-approve with no queue. Inferred from the user's phrasing
+  ("if deviation is more than 20m... HR will approve attendance"). If HR should actually review
+  *every* day for *every* employee instead, flip the `approval_status` default in `db.punchIn`.
+- **Geolocation denial doesn't block punch-in** (soft-fail, matches every other GPS-capture point in
+  this app, e.g. `AllocationJourneyTile.jsx`'s delivery GPS) but IS treated as a flag needing HR
+  review, same as an actual >20m deviation, rather than silently letting it through unverified.
+- **HQ-location editor** added as two number fields + a "📍 Use my current location" button on the
+  existing `Employees.jsx` user edit form (the real `users` CRUD screen) — NOT a new page, and NOT
+  the full `members`-master screen that's separately deferred above ("Members/driver master has no
+  create/edit UI at all" — that's a different table).
+- **`Dashboard.jsx`'s `MemberDetailSheet`** (Manager's team-member popup) still reads the OLD legacy
+  `attendance` array — intentionally not rewired this session, out of scope.
+- No leave/holiday calendar exists anywhere in this app — "Absent" simply means "no punch recorded
+  for a past calendar day," weekends included.
+
+**Built:**
+1. **`PunchInGate.jsx`** (new) — wraps the routes in `App.jsx`, above both `WebApp` and `TeamApp`, a
+   single choke point covering every role/shell. On mount, checks
+   `db.fetchTodayPunch(currentUser.id)`; if no punch exists today, renders a full-screen "Punch In to
+   Continue" card instead of the app (name, date, Punch In button; falls back to "Punch In Without
+   Location" if the browser denies the geolocation prompt; a Logout link so nobody's fully trapped).
+   Computes distance via existing `geo.js` `haversineMeters` against `currentUser.hq_latitude/
+   hq_longitude`, flags if >20m (or HQ unset, or no GPS), then calls new `db.punchIn(userId, {...})`.
+2. **`db.punchIn()`** inserts into `attendance_punches` with `status='present'` unconditionally;
+   `approval_status` is `'pending'` only when flagged, else auto-`'approved'`; fires a
+   `notifications` row to `['r4']` (HR) when flagged, reusing the existing `createNotification`/
+   `NotificationBell.jsx` pattern.
+3. **`MyAttendanceCalendar.jsx`** (new, shared self-view) — fetches `db.fetchMyAttendance(userId,
+   month, year)`, renders Present/Absent/Flagged/Rate tiles + the existing `AttCal` calendar (now
+   correctly sized to real days-in-month via `new Date(year, month, 0).getDate()`, replacing the old
+   hardcoded 27-day loop). Used in two places:
+   - `Attendance.jsx` (WebApp, menu id `attendance`) — now role-aware: HR/Admin (`r4`/`r1`) get the
+     full HR view (below); every other role gets `<MyAttendanceCalendar />` as their self-view. No
+     new menu id needed.
+   - `TeamApp.jsx` (Sales Team shell) — swapped into both the dashboard's "Attendance" card and the
+     existing `myAttendance` tab, replacing the old `getAtt()`/`att`/`attRate` logic that read the
+     legacy `member_id`-keyed `attendance` array with a hardcoded 26/27-day month and P/A/H codes
+     (`useData()`'s `attendance` destructure removed from `TeamApp.jsx` — no longer used there).
+4. **`Attendance.jsx`'s HR view** — "Pending Location Approvals" queue (`db.
+   fetchPendingAttendanceApprovals()`, Approve button → `db.approveAttendancePunch(id, approvedBy)`)
+   + a full company "Attendance Roster" (all `users`, present/absent calendar per employee via
+   `db.fetchAllAttendanceForMonth()`). Clicking any day-cell (new optional `onDayClick` prop added to
+   the shared `AttCal` component in `ui.jsx`, backward-compatible) opens a detail Sheet: punch time,
+   distance from HQ, flag/approval status, and — **for driver-role (`r7`) employees only** — that
+   day's actual load/journey activity, reusing `journeyTimeline.js`'s `buildJourneyEvents` against
+   `db.fetchDriverAllocations(user.member_id)` filtered to allocations active on that date (exact
+   top-level timestamp match, or falling inside a multi-day journey's start→submitted/return window).
+
+**Schema — NOT yet applied, user must run:**
+```sql
+alter table users
+  add column hq_latitude double precision,
+  add column hq_longitude double precision;
+
+create table attendance_punches (
+  id bigserial primary key,
+  user_id bigint not null references users(id),
+  date date not null,
+  punch_in_at timestamptz not null default now(),
+  lat double precision,
+  lng double precision,
+  distance_from_hq_m double precision,
+  location_flag boolean not null default false,
+  flag_reason text,
+  approval_status text not null default 'approved',
+  approved_by bigint references users(id),
+  approved_at timestamptz,
+  status text not null default 'present',
+  unique(user_id, date)
+);
+
+create index attendance_punches_user_date_idx on attendance_punches(user_id, date);
+```
+
+**Still open / not done yet:**
+- **Schema not applied — DO NOT let real users hit this until it is.** Every login now goes through
+  `PunchInGate`, which queries `attendance_punches` on mount. Until the table exists, that query
+  errors and the gate cannot confirm "already punched in today," which will likely block every user
+  from ever reaching the app. Apply the SQL above before this reaches anyone but the dev.
+- **No HQ location set for any employee yet** — until Admin edits each user in `Employees.jsx` and
+  sets lat/long, every punch-in will flag (falls into the "HQ location not set" branch) and land in
+  HR's approval queue. Expected/correct behavior, just needs manual data entry per employee first.
+- **Not browser-tested** — same constraint as every phase before it. Only `vite build` + scoped
+  `eslint` were run clean. This one changes the login gate for every role — test carefully, ideally
+  with a throwaway test account first.
+
 ### To continue in a new chat
-Phase 3 (this session) is built and pushed (commit `1ca39ef`) but **not yet browser-tested** and its
-schema **not yet applied** — say "Read CLAUDE.md, walk me through applying Phase 3's SQL and
-browser-testing it" to pick up from here. Once that's done and confirmed, the only remaining open
-item across all three phases is POD photo upload (needs a new Supabase Storage bucket — see
-"Explicitly deferred" under Phase 3).
+Two pieces landed this session (2 Aug 2026), both pushed as commit `42c9797`, **neither
+browser-tested, neither schema-applied**:
+1. **Journey Phase 4** (vein-diagram timeline header/footer, admin remarks, PDF export, Approved
+   Journeys lists on both admin + driver) — needs `journey_complete_approval_remarks` added to
+   `vehicle_allocations` before Approve will work. Low risk if untested — only affects the Journey
+   Approvals page and driver Journey tab.
+2. **Attendance / Punch-In System** (mandatory GPS punch-in gate on every login, HQ-location
+   deviation flagging, HR approval queue, self-view calendars, driver day-activity detail) — needs
+   BOTH the `users.hq_latitude/hq_longitude` columns AND the new `attendance_punches` table applied
+   **before this branch reaches any real user** — until then the login gate can lock everyone out.
+
+Say "Read CLAUDE.md, walk me through applying this session's SQL (Journey remarks column + the
+Attendance system) and browser-testing both" to pick up from here. After the SQL is applied: set at
+least one employee's HQ location in Employees.jsx to test the >20m deviation-flagging path end to
+end, and re-verify the still-open POD photo upload item from Phase 3 (unrelated, older, still
+parked).
