@@ -633,15 +633,59 @@ roster P/X/A states, HR/Admin day-detail Sheet.
   Stage 2 is a manual judgment call by HR/Admin with no auto-populated activity feed.
 - No leave/holiday calendar — Absent is purely "no punch on a past calendar day."
 
+## Daily Stock Update — Warehouse Manager (NOT YET BUILT — spec captured 2 Aug 2026, build next
+session)
+
+**User's ask, verbatim-condensed:** new menu for Warehouse Manager: a page listing all products,
+grouped category-wise. For each item, WM marks one of three statuses: **Available**, **Unavailable**,
+or **Wait**. WM can change any item's status at any time (not locked/one-shot). Each status change is
+timestamped.
+
+This status then affects the **order-creation screen** (`DistributorOrder.jsx`, Sales Team): rows for
+Available items show green; Wait items and Unavailable items both show red, but only Unavailable
+items are selection-disabled (Wait items are still selectable, just visually flagged red like
+Unavailable — as literally described; worth confirming this is intentional and not meant to be a
+third color, e.g. amber, for Wait specifically, since visually collapsing two different meanings into
+the same color is easy to misread at a glance).
+
+**Important distinction from what already exists:** this is a NEW concept, not a rename of something
+already built. `distributor_order_items.availability` (see Distributor Order → Picking → Load →
+Delivery Pipeline above) is set per **order item**, during the **Picking** phase, after an order
+already exists (WM marks what's physically available while fulfilling a specific order). This new
+feature is per **product**, set **proactively/daily** independent of any order, and is meant to guide
+Sales Team *before* they even create an order. Don't conflate the two — likely two separate
+status fields on two different tables (or a new table), not a reuse of the existing picking
+`availability` column.
+
+**Open questions to resolve at the start of next session, before writing schema:**
+- Does "daily" mean the status should auto-reset each day (WM re-confirms every product every
+  morning), or is it just a live/current field that persists until WM changes it again (with "daily"
+  only describing how often WM is expected to *use* the page, not a scheduled reset)? Changes
+  whether this needs a per-day history table (`product_stock_status` rows keyed by product+date) or
+  a single current-status column on `products` (simpler, but no historical record of past days'
+  stock beyond the single "last changed at" timestamp).
+- Does the red/red (Wait vs Unavailable) color collapse above need a third color instead?
+- Single WM per warehouse, or does status need to be per-warehouse (a product available at one
+  warehouse but not another)? `products` today has no warehouse linkage anywhere else in the schema
+  — worth checking whether stock is tracked per-warehouse elsewhere before assuming a single global
+  status per product is correct.
+
+**Likely shape (not yet built, for reference only):** either add `stock_status text`,
+`stock_status_updated_at timestamptz`, `stock_status_updated_by` to `products`, or a small new table
+if per-warehouse/per-day history turns out to be needed. New WM-only page + menu id (mirror into both
+`WebApp.jsx`'s `ALL_MENUS` and `Settings.jsx`'s copy per Recurring Bug Pattern #6). `DistributorOrder.jsx`'s
+item-selection UI needs the color/disable logic added wherever it currently renders the product list.
+
 ### To continue in a new chat
 **Attendance / Punch-In System is fully built, schema-applied, and browser-confirmed working** as of
-this session (commits `42c9797` → `190c1ac`). Nothing further needed to pick it back up.
+the 2 Aug 2026 session (commits `42c9797` → `190c1ac`). Nothing further needed to pick it back up.
 
-Still open from earlier in the same overall session, untouched since — unrelated to Attendance:
+Next planned piece of work: **Daily Stock Update for Warehouse Manager** (spec above, not yet built —
+say "Read CLAUDE.md, let's build the Daily Stock Update feature for Warehouse Manager" to start,
+resolving the open questions above first).
+
+Also still open from earlier in the same overall session, untouched since — unrelated to Attendance:
 1. **Journey Phase 4** (vein-diagram timeline, admin remarks, PDF export, Approved Journeys lists) —
    still needs `journey_complete_approval_remarks` added to `vehicle_allocations`, and still not
    browser-tested.
 2. **POD photo upload** (Phase 3, older, still parked) — needs a new Supabase Storage bucket.
-
-Say "Read CLAUDE.md, walk me through applying Journey Phase 4's SQL and browser-testing it" to pick
-up the one remaining untested piece.
