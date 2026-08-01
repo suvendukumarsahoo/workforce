@@ -81,7 +81,8 @@ const [step, setStep] = useState('list') // list -> select -> payment -> items -
     if (!pickProduct) { showToast('Select a product'); return }
     const prod = (products || []).find(p => p.id === pickProduct)
     if (!prod) return
-const volume = prod.volume || 0
+    if ((prod.stock_status || 'Available') === 'Unavailable') return
+    const volume = prod.volume || 0
     setItems(prev => [...prev, {
       product_id: prod.id, name: prod.name, category_id: prod.category_id,
       rate: Number(prod.price) || 0, weight: Number(prod.weight) || 0, volume,
@@ -245,15 +246,27 @@ if (step === 'list' && myOrders.length === 0) loadMyOrders()
           )}
        
           <Card>
-            <CH title="Add item" />
+            <CH title="Add item" sub="🟢 Available · 🟡 Wait — flagged, still orderable · 🔴 Unavailable — cannot be selected" />
             <div style={{ padding: 14, display: 'flex', gap: 8, alignItems: 'flex-end' }}>
               <div style={{ flex: 1 }}>
-                <Inp
-                  label="Product"
+                <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Product</label>
+                <select
                   value={pickProduct}
-                  onChange={setPickProduct}
-                  options={[{ value: '', label: 'Select product...' }, ...availableProducts.map(p => ({ value: p.id, label: p.name }))]}
-                />
+                  onChange={e => setPickProduct(e.target.value)}
+                  style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 13, fontFamily: 'inherit', background: '#fff' }}
+                >
+                  <option value="">Select product...</option>
+                  {availableProducts.map(p => {
+                    const status = p.stock_status || 'Available'
+                    const bg = status === 'Available' ? '#dcfce7' : status === 'Wait' ? '#ffedd5' : '#fee2e2'
+                    const color = status === 'Available' ? '#15803d' : status === 'Wait' ? '#c2410c' : '#b91c1c'
+                    return (
+                      <option key={p.id} value={p.id} disabled={status === 'Unavailable'} style={{ background: bg, color }}>
+                        {p.name}{status !== 'Available' ? ` (${status})` : ''}
+                      </option>
+                    )
+                  })}
+                </select>
               </div>
               <div style={{ marginBottom: 12 }}>
                 <Btn v="pri" onClick={addItem}>+ Add</Btn>

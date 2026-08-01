@@ -27,6 +27,8 @@ const ALL_MENUS = [
   { id:'distributorOrder',     label:'Distributor Order'       },
   { id:'orderApproval',        label:'Order Approval'          },
   { id:'wmDashboard',          label:'Warehouse Dashboard'     },
+  { id:'stockUpdate',          label:'Daily Stock Update'      },
+  { id:'productionIssues',     label:'Production Issues'       },
   { id:'vehicles',             label:'Vehicles'                },
   { id:'warehouses',           label:'Warehouses'              },
   { id:'pickingDoneReport',    label:'Picking Done Report'     },

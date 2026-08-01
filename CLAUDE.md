@@ -638,60 +638,212 @@ roster P/X/A states, HR/Admin day-detail Sheet.
   Stage 2 is a manual judgment call by HR/Admin with no auto-populated activity feed.
 - No leave/holiday calendar — Absent is purely "no punch on a past calendar day."
 
-## Daily Stock Update — Warehouse Manager (NOT YET BUILT — spec captured 2 Aug 2026, build next
-session)
+## Daily Stock Update — Warehouse Manager — BUILT (1 Aug 2026 session), SCHEMA NOT YET APPLIED,
+NOT YET BROWSER-TESTED
 
 **User's ask, verbatim-condensed:** new menu for Warehouse Manager: a page listing all products,
 grouped category-wise. For each item, WM marks one of three statuses: **Available**, **Unavailable**,
 or **Wait**. WM can change any item's status at any time (not locked/one-shot). Each status change is
-timestamped.
+timestamped. This status then affects the **order-creation screen** (`DistributorOrder.jsx`, Sales
+Team): Available/Wait/Unavailable items are visually distinguished, and only Unavailable items are
+selection-disabled.
 
-This status then affects the **order-creation screen** (`DistributorOrder.jsx`, Sales Team): rows for
-Available items show green; Wait items and Unavailable items both show red, but only Unavailable
-items are selection-disabled (Wait items are still selectable, just visually flagged red like
-Unavailable — as literally described; worth confirming this is intentional and not meant to be a
-third color, e.g. amber, for Wait specifically, since visually collapsing two different meanings into
-the same color is easy to misread at a glance).
+**Important distinction from what already exists:** this is a separate concept from
+`distributor_order_items.availability` (see Distributor Order → Picking → Load → Delivery Pipeline
+above), which is set per **order item** during the **Picking** phase, after an order already exists.
+This feature is per **product**, set **proactively/daily** independent of any order, to guide Sales
+Team *before* they create an order. Two unrelated fields on two different tables — not a reuse of the
+picking `availability` column.
 
-**Important distinction from what already exists:** this is a NEW concept, not a rename of something
-already built. `distributor_order_items.availability` (see Distributor Order → Picking → Load →
-Delivery Pipeline above) is set per **order item**, during the **Picking** phase, after an order
-already exists (WM marks what's physically available while fulfilling a specific order). This new
-feature is per **product**, set **proactively/daily** independent of any order, and is meant to guide
-Sales Team *before* they even create an order. Don't conflate the two — likely two separate
-status fields on two different tables (or a new table), not a reuse of the existing picking
-`availability` column.
+**Resolved before build (2 Aug 2026, asked via AskUserQuestion at start of this session):**
+- **Persistent, not daily-reset** — single current-status column on `products`, no per-day history
+  table. Status stays whatever WM last set until changed again; "daily" only describes how often WM
+  is expected to use the page.
+- **Third color for Wait** — Available=green, Wait=amber (still selectable, flagged), Unavailable=red
+  (selection-disabled). Not the collapsed red/red originally described.
+- Status is **global per product, not per-warehouse** (resolved 2 Aug 2026, unchanged from before) —
+  products will be tagged to a specific warehouse in a **later**, separate session.
 
-**Open questions to resolve at the start of next session, before writing schema:**
-- Does "daily" mean the status should auto-reset each day (WM re-confirms every product every
-  morning), or is it just a live/current field that persists until WM changes it again (with "daily"
-  only describing how often WM is expected to *use* the page, not a scheduled reset)? Changes
-  whether this needs a per-day history table (`product_stock_status` rows keyed by product+date) or
-  a single current-status column on `products` (simpler, but no historical record of past days'
-  stock beyond the single "last changed at" timestamp).
-- Does the red/red (Wait vs Unavailable) color collapse above need a third color instead?
+**Built:**
+1. **`src/pages/shared/StockUpdate.jsx`** (new, WM-only page) — products grouped by category (via
+   the existing `categories` state from `useData()`), one table per category. Each row: product name,
+   a `<select>` (Available/Wait/Unavailable) that saves immediately on change (no separate save
+   button — matches the "can change any item's status at any time" ask), and a "Last Updated"
+   timestamp column. Row background color mirrors `PickingEditSheet.jsx`'s existing
+   Available/Wait/Unavailable color convention (`#dcfce7`/`#ffedd5`/`#fee2e2`) for visual consistency
+   with the picking screens WM already uses.
+2. **`db.updateProductStockStatus(id, status, updatedBy)`** (new, in `db.js` under PRODUCTS) — updates
+   `stock_status`/`stock_status_updated_at`/`stock_status_updated_by`, `updatedBy` is
+   `currentUser.id` (the `users.id`, same convention as the Attendance system's `approved_by`).
+3. **Menu wiring** — new menu id `stockUpdate` ("Daily Stock Update", 📦, `Overview` section,
+   alongside WM's existing `wmDashboard`/`picking`) added to both `WebApp.jsx`'s `ALL_MENUS`+
+   `PAGE_MAP` and `Settings.jsx`'s separate copy, per Recurring Bug Pattern #6 — Admin must still
+   check the box under Settings → Warehouse Manager role → Menu access before WM can see it.
+4. **`DistributorOrder.jsx`'s item picker is the original native `<select>` dropdown** ("Select
+   product..." + "+ Add" button, `pickProduct` state + `addItem()`) — first draft of this session
+   replaced it with a clickable colored row list instead (reasoning: `<option>` background-color
+   isn't reliable cross-browser), but the user explicitly asked for the dropdown pattern back
+   (1 Aug 2026, follow-up). Reverted to the dropdown; the only change from the pre-existing version
+   is that each `<option>` now carries an inline `style={{ background, color }}` per `stock_status`
+   (green/amber/red, same palette as `StockUpdate.jsx`) and Unavailable options get the native
+   `disabled` attribute (browser renders them non-selectable and greyed). Option label also appends
+   `(Wait)`/`(Unavailable)` as a text fallback since inline `<option>` coloring support varies by
+   browser/OS. `addItem()` still hard-guards against submitting an Unavailable product even if
+   somehow selected. Products with no `stock_status` set yet (all pre-existing products, until WM
+   touches them) default to `'Available'` — matches the fully-open behavior that existed before this
+   feature.
 
-**Resolved (2 Aug 2026):** status is **global per product, not per-warehouse** — user confirmed
-products will be tagged to a specific warehouse in a **later** session (separate piece of work, not
-part of this build). Build Daily Stock Update against a single status per product for now; revisit
-once warehouse-tagging exists if per-warehouse stock status turns out to be needed then.
+**Schema — NOT yet applied, user must run:**
+```sql
+alter table products
+  add column stock_status text not null default 'Available',
+  add column stock_status_updated_at timestamptz,
+  add column stock_status_updated_by bigint references users(id);
+```
 
-**Likely shape (not yet built, for reference only):** add `stock_status text`, `stock_status_updated_at
-timestamptz`, `stock_status_updated_by` to `products` (single global status per product, per the
-resolved question above — no per-warehouse or per-day history table needed unless the "daily reset"
-question above resolves to needing one). New WM-only page + menu id (mirror into both `WebApp.jsx`'s
-`ALL_MENUS` and `Settings.jsx`'s copy per Recurring Bug Pattern #6). `DistributorOrder.jsx`'s
-item-selection UI needs the color/disable logic added wherever it currently renders the product list.
+**Still open / not done yet:**
+- **Schema not yet applied** — `StockUpdate.jsx` will show every product as "Available" (the column
+  default) until the migration above runs; `db.updateProductStockStatus` will error until then.
+- **Admin's `stockUpdate` menu box not yet checked** in Settings → Warehouse Manager role.
+- **Not browser-tested** — same constraint as every other recent phase (no chromium-cli/Playwright in
+  this Windows dev environment). Only `vite build` + scoped `eslint` (StockUpdate.jsx, db.js,
+  DistributorOrder.jsx clean; WebApp.jsx/Settings.jsx errors are pre-existing, unrelated to this
+  change) were run.
+- **`Products.jsx` (admin master screen) does not surface `stock_status`** — not asked for, only the
+  new WM page and the order-creation screen show/use it. Revisit only if the user wants Admin to see
+  current stock status from the master list too.
+
+## Production Issues (3M — Material/Machinery/Manpower) — BUILT (1 Aug 2026 session, same session as
+Daily Stock Update above), SCHEMA NOT YET APPLIED, NOT YET BROWSER-TESTED
+
+**User's ask, verbatim-condensed:** when a product can't be fully produced/packed, WM needs to tick
+which specific reason(s) apply across 3 fixed categories — **Material**: Main Ingredient RM
+Unavailable, Packing Materials Unavailable; **Machinery**: Production Breakdown, Packing Breakdown;
+**Manpower**: Section Head Absent, Section Labourer Absent. Itemwise issues show in a new "Production
+Issues" menu for both Admin and Warehouse Manager, flippable to an issuewise view (grouped by reason
+instead of by product). Manpower-related issues also need to show under the HR menu.
+
+**Resolved via AskUserQuestion at the start of this session:**
+- **Independent of `stock_status`** — the 3M checklist does NOT drive the Available/Wait/Unavailable
+  dropdown built earlier in this same session. It's a separate annotation; ticking a reason does not
+  auto-flip status, and the status dropdown is unchanged.
+- **Multi-select** — any combination of the 6 reasons can be ticked on the same product at once.
+- **Ticked from `StockUpdate.jsx`** (Daily Stock Update page), not from the Production Issues page
+  itself — Production Issues is a read/report view only (itemwise ↔ issuewise toggle).
+
+**Built:**
+1. **`src/lib/productionIssues.js`** (new, shared) — single source of truth for the 3 categories × 2
+   reasons each, each reason mapped to one boolean column on `products`. Exports
+   `ISSUE_CATEGORIES`, `ALL_ISSUE_FIELDS`, `hasAnyIssue(product)`, `MANPOWER_FIELDS`,
+   `hasManpowerIssue(product)`. Used by `StockUpdate.jsx`, `ProductionIssues.jsx`, and
+   `Attendance.jsx`.
+2. **`db.updateProductIssues(id, fieldUpdates, updatedBy)`** (new, in `db.js`) — takes a partial
+   `{ [field]: bool }` update (one checkbox toggle at a time), stamps
+   `issue_updated_at`/`issue_updated_by`.
+3. **`StockUpdate.jsx` gained an "Issues" column** — a button per product ("Add Issue" / "⚠ Issues"
+   once any are ticked) opens a Sheet with the 3 categories and their checkboxes; each checkbox
+   toggles and saves immediately (no separate save step, matching the status dropdown's auto-save
+   UX). Does not touch `stock_status`.
+4. **New `src/pages/shared/ProductionIssues.jsx`** — menu id `productionIssues` ("Production
+   Issues", ⚠️, `Overview` section, same placement pattern as `stockUpdate`/`wmDashboard`), wired
+   into both `WebApp.jsx` and `Settings.jsx` per Recurring Bug Pattern #6. Itemwise/Issuewise toggle
+   (plain tab buttons, same style as `WMDashboard.jsx`'s Today/Monthly tabs): Itemwise lists every
+   flagged product as a card with its ticked reason chips; Issuewise lists the 3 categories, each
+   reason showing its affected-product count and names.
+5. **`Attendance.jsx`'s HR/Admin view (`AttendanceHR`)** gained a "Manpower Production Issues" card
+   at the top, listing only products with `issue_section_head_absent`/`issue_section_labourer_absent`
+   ticked (via `hasManpowerIssue`) — same chip style as the Production Issues page, scoped to just
+   the Manpower category since that's what's relevant to HR.
+
+**Schema — NOT yet applied, user must run (can be combined with the Daily Stock Update migration
+above in one script):**
+```sql
+alter table products
+  add column issue_rm_unavailable boolean not null default false,
+  add column issue_packing_material_unavailable boolean not null default false,
+  add column issue_production_breakdown boolean not null default false,
+  add column issue_packing_breakdown boolean not null default false,
+  add column issue_section_head_absent boolean not null default false,
+  add column issue_section_labourer_absent boolean not null default false,
+  add column issue_updated_at timestamptz,
+  add column issue_updated_by bigint references users(id);
+```
+
+**Auto-resolve + resolution history (added same session, right after the above was first built):**
+User's follow-up ask: once a product's status flips back from Unavailable to Available, its 3M
+issues should auto-resolve, and a timestamp should be shown against each resolved issue.
+- **`StockUpdate.jsx`'s `setStatus`** — whenever the new status is `'Available'` (covers both
+  Unavailable→Available and Wait→Available; a product marked Available shouldn't still carry a
+  stale issue flag regardless of what it came from), any currently-active issue fields on that
+  product are auto-cleared via the new `db.resolveProductIssues()`.
+- **Manual untick also resolves** — `toggleIssue` in `StockUpdate.jsx` now calls
+  `db.resolveProductIssues()` (not the plain field-setter) when a checkbox goes from ticked to
+  unticked, so both the automatic and manual paths log the same way.
+- **`db.resolveProductIssues(productId, fields, resolvedBy, labels)`** (new) — clears the given
+  boolean field(s) back to `false` on `products` AND inserts one row per field into a new
+  `product_issue_resolutions` log table (append-only, same pattern as the existing
+  `vehicle_locations`/`notifications` tables) — this is what makes a resolved-at timestamp
+  available per specific issue, which a bare boolean column can't represent once it flips back to
+  false.
+- **`db.fetchProductIssueResolutions(limit=50)`** (new) — joins product name + resolver name for
+  display.
+- **`ProductionIssues.jsx` gained a third "Resolved" tab** (alongside Itemwise/Issuewise) — lists
+  recent resolutions with product, reason, resolved-at timestamp, and who resolved it. Fetched via
+  `useEffect` on first switching to that tab (deliberately NOT the `if (!loaded) fetchX()`
+  render-time pattern flagged in Recurring Bug Pattern #5 — this is new code, no reason to repeat a
+  known-bad pattern).
+- **`src/lib/productionIssues.js` gained `activeIssueFields(product)` and `labelForField(field)`**
+  helpers to support the above without duplicating the category/reason lookup logic.
+
+**Schema — NOT yet applied, user must run (in addition to the two migrations already listed for
+Daily Stock Update and the 3M boolean columns above):**
+```sql
+create table product_issue_resolutions (
+  id bigserial primary key,
+  product_id text not null references products(id),
+  field text not null,
+  reason_label text not null,
+  resolved_at timestamptz not null default now(),
+  resolved_by bigint references users(id)
+);
+create index product_issue_resolutions_product_idx on product_issue_resolutions(product_id, resolved_at desc);
+```
+
+**Still open / not done yet:**
+- **All three schema migrations for this session (stock_status columns, 3M boolean columns,
+  product_issue_resolutions table) not yet applied** — nothing in this session's work is live until
+  they run. `db.updateProductIssues`/`db.resolveProductIssues` will error until then.
+- **Admin's `productionIssues` menu box not yet checked** for either Admin or Warehouse Manager role
+  in Settings.
+- **Not browser-tested** — `vite build` + scoped `eslint` clean (only pre-existing errors elsewhere:
+  `WebApp.jsx`'s `SideContent`/unused `Btn`, `Settings.jsx`'s unused `Inp`, and a pre-existing
+  `Attendance.jsx` exhaustive-deps warning on `month`/`year`, none introduced this session).
+- **HR's Attendance page's Manpower card shows only currently-active issues, no resolved history**
+  — deliberately kept simple; the Resolved tab with full timestamps lives on the Production Issues
+  page (Admin + WM only, not HR's menu). Revisit only if HR specifically asks to see resolved
+  manpower issues too.
 
 ### To continue in a new chat
 **Attendance / Punch-In System is fully built, schema-applied, and browser-confirmed working** as of
 the 2 Aug 2026 session (commits `42c9797` → `190c1ac`). Nothing further needed to pick it back up.
 
-Next planned piece of work: **Daily Stock Update for Warehouse Manager** (spec above, not yet built —
-say "Read CLAUDE.md, let's build the Daily Stock Update feature for Warehouse Manager" to start,
-resolving the open questions above first).
+**Daily Stock Update + Production Issues (3M) + auto-resolve for Warehouse Manager are all built but
+not yet live** (this session) — run all three SQL migrations above (stock_status columns, 3M boolean
+columns, `product_issue_resolutions` table — can combine into one script), check the `stockUpdate`
+and `productionIssues` menu boxes for both the Warehouse Manager and Admin roles in Settings, then
+browser-test:
+1. WM marks a product Wait/Unavailable on Daily Stock Update → confirm the product's `<option>` row
+   in the Sales Team's Distributor Order dropdown shows amber/red, and (for Unavailable) can't be
+   selected.
+2. WM ticks a 3M reason on a product (the "Issues" button/Sheet on the same page) → confirm it shows
+   up on the Production Issues page for both Admin and WM (itemwise and issuewise), and that ticking
+   a Manpower reason specifically also shows up on the HR/Admin Attendance page's new card.
+3. WM flips that product's status back to Available → confirm the ticked issue(s) auto-clear, and
+   show up with a resolved-at timestamp on the Production Issues page's new "Resolved" tab. Also
+   confirm manually unticking a checkbox (without changing status) logs a resolution the same way.
 
-Also still open from earlier in the same overall session, untouched since — unrelated to Attendance:
+Also still open from earlier in the same overall session, untouched since — unrelated to Attendance
+or Stock Update:
 1. **Journey Phase 4** (vein-diagram timeline, admin remarks, PDF export, Approved Journeys lists) —
    still needs `journey_complete_approval_remarks` added to `vehicle_allocations`, and still not
    browser-tested.

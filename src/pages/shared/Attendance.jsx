@@ -4,7 +4,10 @@ import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Av, Btn, Sheet, AttCal } from '../../components/ui.jsx'
 import MyAttendanceCalendar from '../../components/MyAttendanceCalendar.jsx'
 import { buildJourneyEvents, fmtTs } from '../../lib/journeyTimeline.js'
+import { ISSUE_CATEGORIES, hasManpowerIssue } from '../../lib/productionIssues.js'
 import * as db from '../../lib/db.js'
+
+const MANPOWER_REASONS = ISSUE_CATEGORIES.find(c => c.key === 'Manpower').reasons
 
 const ALLOCATION_DATE_FIELDS = [
   'driver_accepted_at', 'vehicle_parked_at', 'loading_started_at', 'loading_completed_at',
@@ -30,7 +33,9 @@ export default function Attendance() {
 
 function AttendanceHR() {
   const { currentUser } = useAuth()
-  const { users } = useData()
+  const { users, products, categories } = useData()
+  const categoryName = cid => (categories || []).find(c => c.id === cid)?.name || 'Uncategorized'
+  const manpowerFlagged = (products || []).filter(hasManpowerIssue)
   const [punchQueue, setPunchQueue] = useState([])
   const [activityQueue, setActivityQueue] = useState([])
   const [roster, setRoster] = useState([])
@@ -113,6 +118,21 @@ function AttendanceHR() {
           Could not load attendance data — {loadError}
         </div>
       )}
+
+      <Card>
+        <CH title="Manpower Production Issues" sub={`${manpowerFlagged.length} product(s) flagged — from Warehouse Manager's Daily Stock Update`} />
+        {manpowerFlagged.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>None</div>}
+        {manpowerFlagged.map(p => (
+          <div key={p.id} style={{ padding: '10px 14px', borderBottom: '1px solid #f3f4f6' }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name} <span style={{ fontWeight: 400, color: '#9ca3af', fontSize: 11 }}>· {categoryName(p.category_id)}</span></div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+              {MANPOWER_REASONS.filter(r => p[r.field]).map(r => (
+                <span key={r.field} style={{ fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 12, background: '#fee2e2', color: '#b91c1c' }}>{r.label}</span>
+              ))}
+            </div>
+          </div>
+        ))}
+      </Card>
 
       <Card>
         <CH title="Stage 1 — Punch-In Approvals" sub={`${punchQueue.length} punch(es)`} />

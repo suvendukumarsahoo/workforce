@@ -33,6 +33,8 @@ import DriverOrderConfirmTile from '../components/DriverOrderConfirmTile.jsx'
 import AllocationJourneyTile from '../components/AllocationJourneyTile.jsx'
 import VehicleLiveMap from './shared/VehicleLiveMap.jsx'
 import JourneyApprovals from './admin/JourneyApprovals.jsx'
+import StockUpdate from './shared/StockUpdate.jsx'
+import ProductionIssues from './shared/ProductionIssues.jsx'
 
 const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard',        icon:'📊', sec:'Overview'  },
@@ -54,6 +56,8 @@ const ALL_MENUS = [
   { id:'orderApproval', label:'Order Approval', icon:'📝', sec:'Distributor Functions' },
   { id:'wmDashboard', label:'Dashboard', icon:'📊', sec:'Overview' },
  { id:'picking', label:'Picking', icon:'📋', sec:'Overview' },
+ { id:'stockUpdate', label:'Daily Stock Update', icon:'📦', sec:'Overview' },
+ { id:'productionIssues', label:'Production Issues', icon:'⚠️', sec:'Overview' },
  { id:'vehicles', label:'Vehicles', icon:'🚚', sec:'Master' },
  { id:'warehouses', label:'Warehouses', icon:'🏭', sec:'Master' },
  { id:'pickingDoneReport', label:'Picking Done Report', icon:'📦', sec:'Distributor Functions' },
@@ -92,6 +96,8 @@ const PAGE_MAP = {
 loadCreatedList: LoadCreatedList,
 vehicleLiveMap: VehicleLiveMap,
 journeyApprovals: JourneyApprovals,
+stockUpdate: StockUpdate,
+productionIssues: ProductionIssues,
 assignedLoads: AssignedLoads,
 driverLoadingConfirm: DriverOrderConfirmTile,
 driverJourney: AllocationJourneyTile,

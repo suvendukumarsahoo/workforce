@@ -183,6 +183,52 @@ export async function deleteProduct(id) {
   const { error } = await supabase.from('products').delete().eq('id', id)
   return { error }
 }
+
+export async function updateProductStockStatus(id, status, updatedBy) {
+  const { data, error } = await supabase
+    .from('products')
+    .update({ stock_status: status, stock_status_updated_at: new Date().toISOString(), stock_status_updated_by: updatedBy })
+    .eq('id', id)
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function updateProductIssues(id, fieldUpdates, updatedBy) {
+  const { data, error } = await supabase
+    .from('products')
+    .update({ ...fieldUpdates, issue_updated_at: new Date().toISOString(), issue_updated_by: updatedBy })
+    .eq('id', id)
+    .select()
+    .single()
+  return { data, error }
+}
+
+// Clears the given (currently-true) issue fields back to false and logs a resolution row per
+// field — used both for a manual untick and for the auto-resolve-on-Available transition.
+export async function resolveProductIssues(productId, fields, resolvedBy, labels) {
+  if (!fields.length) return { data: null, error: null }
+  const clearUpdate = Object.fromEntries(fields.map(f => [f, false]))
+  const { data, error } = await supabase
+    .from('products')
+    .update({ ...clearUpdate, issue_updated_at: new Date().toISOString(), issue_updated_by: resolvedBy })
+    .eq('id', productId)
+    .select()
+    .single()
+  if (error) return { data: null, error }
+  const logRows = fields.map((f, i) => ({ product_id: productId, field: f, reason_label: labels[i], resolved_by: resolvedBy }))
+  const { error: logError } = await supabase.from('product_issue_resolutions').insert(logRows)
+  return { data, error: logError || null }
+}
+
+export async function fetchProductIssueResolutions(limit = 50) {
+  const { data, error } = await supabase
+    .from('product_issue_resolutions')
+    .select('*, product:products(id, name), resolver:users!product_issue_resolutions_resolved_by_fkey(id, name)')
+    .order('resolved_at', { ascending: false })
+    .limit(limit)
+  return { data, error }
+}
 // ─── VEHICLES ─────────────────────────────────────────────────────────────────
 
 export async function fetchVehicles() {
