@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
-import { Card, CH, Av, Btn, Inp, Bar, GBadge, SBadge, AttCal, Sheet } from '../../components/ui.jsx'
+import { Card, CH, Av, Btn, Inp, Bar, GBadge, SBadge, Sheet } from '../../components/ui.jsx'
+import MyAttendanceCalendar from '../../components/MyAttendanceCalendar.jsx'
 import { pct } from '../../lib/achievementEngine.js'
 import * as db from '../../lib/db.js'
 import NewCustomerVisit from '../shared/NewCustomerVisit.jsx'
@@ -27,7 +28,7 @@ const timeAgo = (isoDate) => {
 
 export default function TeamApp() {
   const { currentUser, logout, hasMenu } = useAuth()
-  const { params, goals, setGoals, achievements, expenses, setExpenses, attendance, salaries, products, categories, distributors: customers, visits, payments, showToast, loadAll } = useData()
+  const { params, goals, setGoals, achievements, expenses, setExpenses, salaries, products, categories, distributors: customers, visits, payments, showToast, loadAll } = useData()
   const [tab, setTab]           = useState('dashboard')
   const [showGoalEntry, setShowGoalEntry] = useState(false)
   const [showExpForm, setShowExpForm]     = useState(false)
@@ -64,18 +65,6 @@ const hasNewParam   = (p.enable_value && !g.value_status) ||
 const canEnter      = overallStatus === 'draft' || hasRejected || hasNewParam
   const approvedVal   = g.value_status === 'approved' ? (g.value_goal || 0) : 0
   const valPct        = approvedVal ? pct(a.value, approvedVal) : 0
-
-  const getAtt = () => {
-    const days = (attendance || []).filter(x => x.member_id === mid)
-    return {
-      present: days.filter(d => d.status === 'P').length,
-      absent:  days.filter(d => d.status === 'A').length,
-      half:    days.filter(d => d.status === 'H').length,
-      days:    Array.from({ length: 27 }, (_, i) => { const d = days.find(x => new Date(x.date).getDate() === i + 1); return d ? d.status : 'W' }),
-    }
-  }
-  const att = getAtt()
-  const attRate = Math.round(att.present / 26 * 100)
 
   const submitGoal = async (memberId, draft) => {
     const existing = (goals || {})[memberId] || {}
@@ -325,17 +314,7 @@ myLeads.forEach(d => {
               ))}
             </div>
             {approvedVal > 0 && <><Bar val={valPct} /><div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, marginBottom: 14, textAlign: 'right' }}>{valPct}% vs approved target</div></>}
-            <Card>
-              <CH title="Attendance" sub={new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })} />
-              <div style={{ padding: 14 }}>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 10 }}>
-                  {[['P', att.present, '#10b981'], ['A', att.absent, '#ef4444'], ['H', att.half, '#f59e0b'], ['Rate', attRate + '%', attRate >= 90 ? '#10b981' : attRate >= 75 ? '#f59e0b' : '#ef4444']].map(([l, v, c]) => (
-                    <div key={l} style={{ textAlign: 'center' }}><div style={{ fontSize: 9, color: '#6b7280' }}>{l}</div><div style={{ fontSize: 14, fontWeight: 700, color: c }}>{v}</div></div>
-                  ))}
-                </div>
-                <AttCal days={att.days} />
-              </div>
-            </Card>
+            <MyAttendanceCalendar compact />
           </>
         )}
 
@@ -488,19 +467,7 @@ myLeads.forEach(d => {
         )}
 
         {/* MY ATTENDANCE */}
-        {tab === 'myAttendance' && (
-          <Card>
-            <CH title="Attendance" sub={new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })} />
-            <div style={{ padding: 14 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: 12 }}>
-                {[['Present', att.present, '#10b981'], ['Absent', att.absent, '#ef4444'], ['Half', att.half, '#f59e0b'], ['Rate', attRate + '%', '#374151']].map(([l, v, c]) => (
-                  <div key={l} style={{ textAlign: 'center' }}><div style={{ fontSize: 9, color: '#6b7280' }}>{l}</div><div style={{ fontSize: 16, fontWeight: 700, color: c }}>{v}</div></div>
-                ))}
-              </div>
-              <AttCal days={att.days} />
-            </div>
-          </Card>
-        )}
+        {tab === 'myAttendance' && <MyAttendanceCalendar />}
 
         {/* MY SALARY */}
         {tab === 'mySalary' && sal && (

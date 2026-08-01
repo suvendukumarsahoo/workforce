@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../hooks/useAuth.jsx'
-import { Card, CH, Btn } from './ui.jsx'
+import { Card, CH, Btn, Sheet } from './ui.jsx'
 import * as db from '../lib/db.js'
 import RouteMapSheet from './RouteMapSheet.jsx'
+import JourneyVeinTimeline from './JourneyVeinTimeline.jsx'
+import { fmtTs } from '../lib/journeyTimeline.js'
 
 const CHECKLIST_ITEMS = [
   { key: 'collected_invoice', label: 'Collected Invoice' },
@@ -27,10 +29,32 @@ export default function AllocationJourneyTile() {
   const [now, setNow] = useState(() => Date.now())
   const [deliveryError, setDeliveryError] = useState(null)
 
+  const [completed, setCompleted] = useState([])
+  const [members, setMembers] = useState([])
+  const [openingId, setOpeningId] = useState(null)
+  const [detail, setDetail] = useState(null)
+
   useEffect(() => {
     const interval = setInterval(() => setNow(Date.now()), 30000)
     return () => clearInterval(interval)
   }, [])
+
+  useEffect(() => {
+    if (!currentUser?.member_id) return
+    db.fetchDriverCompletedJourneys(currentUser.member_id).then(({ data }) => setCompleted(data || []))
+    db.fetchMembers().then(({ data }) => setMembers(data || []))
+  }, [currentUser?.member_id])
+
+  const approverName = a => members.find(m => m.id === a.journey_complete_approved_by)?.name || a.journey_complete_approved_by || '—'
+
+  const openDetail = async (allocation) => {
+    setOpeningId(allocation.id)
+    const { data: orders } = await db.fetchAllocationOrders(allocation.id)
+    const { data: progress } = await db.fetchLoadItemProgress(allocation.id)
+    const totalQtyLoaded = (progress || []).reduce((s, p) => s + (p.loaded_qty || 0), 0)
+    setOpeningId(null)
+    setDetail({ allocation, orders: orders || [], totalQtyLoaded })
+  }
 
   const lastPingRef = useRef({})
   const watchIdRef = useRef(null)
@@ -79,15 +103,6 @@ export default function AllocationJourneyTile() {
     setLoaded(true)
   }
   if (!loaded) loadData()
-
-  if (allocations.length === 0) {
-    return (
-      <Card>
-        <CH title="Journey" />
-        <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No load ready for invoicing / dispatch right now</div>
-      </Card>
-    )
-  }
 
   const toggleChecklistItem = async (allocation, key) => {
     setBusyKey(`${allocation.id}-${key}`)
@@ -175,6 +190,13 @@ export default function AllocationJourneyTile() {
 
   return (
     <>
+      {allocations.length === 0 && (
+        <Card>
+          <CH title="Journey" />
+          <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No load ready for invoicing / dispatch right now</div>
+        </Card>
+      )}
+
       {allocations.map(({ allocation, orders, invoicedIds }) => {
         const allInvoiced = orders.length > 0 && orders.every(o => invoicedIds.has(o.id))
         const allChecked = CHECKLIST_ITEMS.every(c => allocation[c.key])
@@ -339,6 +361,55 @@ export default function AllocationJourneyTile() {
             </Btn>
           }
         />
+      )}
+
+      {completed.length > 0 && (
+        <Card>
+          <CH title="Completed Journeys" sub={`${completed.length} journey(s)`} />
+          {completed.map(a => (
+            <div
+              key={a.id}
+              onClick={() => openDetail(a)}
+              style={{
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10,
+                padding: '12px 14px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = '#f9fafb' }}
+              onMouseLeave={e => { e.currentTarget.style.background = '' }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, color: '#1f2937' }}>
+                  {a.id} — {a.vehicle?.vehicle_number || ''}
+                </div>
+                <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+                  From {a.warehouse?.name || '—'} · Approved {fmtTs(a.journey_complete_approved_at)}
+                </div>
+              </div>
+              <div style={{ fontSize: 12, color: '#9ca3af', flexShrink: 0 }}>
+                {openingId === a.id ? 'Loading…' : '›'}
+              </div>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {detail && (
+        <Sheet
+          title={`Journey Details — ${detail.allocation.id}`}
+          sub={`${detail.allocation.vehicle?.vehicle_number || ''} · From ${detail.allocation.warehouse?.name || '—'}`}
+          onClose={() => setDetail(null)}
+        >
+          <div style={{ border: '1px solid #f3f4f6', borderRadius: 12, overflow: 'hidden' }}>
+            <JourneyVeinTimeline allocation={detail.allocation} orders={detail.orders} totalQtyLoaded={detail.totalQtyLoaded} />
+          </div>
+
+          <div style={{ marginTop: 14, padding: 12, background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, fontSize: 12 }}>
+            <div style={{ fontWeight: 700, color: '#065f46', marginBottom: 4 }}>✓ Approved</div>
+            <div>By: {approverName(detail.allocation)}</div>
+            <div>At: {fmtTs(detail.allocation.journey_complete_approved_at)}</div>
+            <div style={{ marginTop: 6 }}>Remarks: {detail.allocation.journey_complete_approval_remarks || '—'}</div>
+          </div>
+        </Sheet>
       )}
     </>
   )

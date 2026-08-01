@@ -217,7 +217,7 @@ export const Confirm = ({ msg, onYes, onNo }) => (
 )
 
 // ─── ATTENDANCE CALENDAR ──────────────────────────────────────────────────────
-export const AttCal = ({ days = [] }) => {
+export const AttCal = ({ days = [], onDayClick }) => {
   const BG = { P: '#d1fae5', A: '#fee2e2', H: '#fef3c7', W: '#f9fafb', T: '#dbeafe' }
   const TC = { P: '#065f46', A: '#991b1b', H: '#92400e', W: '#d1d5db', T: '#1d4ed8' }
   return (
@@ -227,7 +227,11 @@ export const AttCal = ({ days = [] }) => {
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 2 }}>
         {days.map((d, i) => (
-          <div key={i} style={{ textAlign: 'center', fontSize: 9, padding: '4px 1px', borderRadius: 4, background: BG[d] || '#f9fafb', color: TC[d] || '#9ca3af', fontWeight: d === 'T' ? 700 : 400 }}>
+          <div
+            key={i}
+            onClick={onDayClick ? () => onDayClick(i + 1) : undefined}
+            style={{ textAlign: 'center', fontSize: 9, padding: '4px 1px', borderRadius: 4, background: BG[d] || '#f9fafb', color: TC[d] || '#9ca3af', fontWeight: d === 'T' ? 700 : 400, cursor: onDayClick ? 'pointer' : undefined }}
+          >
             {i + 1}
           </div>
         ))}

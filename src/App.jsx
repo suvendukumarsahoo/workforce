@@ -5,6 +5,7 @@ import { Toast } from './components/ui.jsx'
 import Login from './pages/Login.jsx'
 import TeamApp from './pages/team/TeamApp.jsx'
 import WebApp from './pages/WebApp.jsx'
+import PunchInGate from './components/PunchInGate.jsx'
 
 export default function App() {
   const { currentUser, loading: authLoading } = useAuth()
@@ -39,13 +40,15 @@ export default function App() {
 
   return (
     <>
-      <Routes>
-        {isTeam
-          ? <Route path="/*" element={<TeamApp />} />
-          : <Route path="/*" element={<WebApp />} />
-        }
-        <Route path="/login" element={<Navigate to="/" replace />} />
-      </Routes>
+      <PunchInGate>
+        <Routes>
+          {isTeam
+            ? <Route path="/*" element={<TeamApp />} />
+            : <Route path="/*" element={<WebApp />} />
+          }
+          <Route path="/login" element={<Navigate to="/" replace />} />
+        </Routes>
+      </PunchInGate>
       {toast && <Toast msg={toast} />}
     </>
   )

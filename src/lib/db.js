@@ -391,10 +391,34 @@ export async function fetchPendingJourneyApprovals() {
   return { data, error }
 }
 
-export async function approveJourneyComplete(allocationId, approvedBy) {
+export async function fetchApprovedJourneys() {
   const { data, error } = await supabase
     .from('vehicle_allocations')
-    .update({ status: 'completed', journey_complete_approved_at: new Date().toISOString(), journey_complete_approved_by: approvedBy })
+    .select('*, vehicle:vehicles(id, vehicle_number), warehouse:warehouses(id, name), driver:members!vehicle_allocations_driver_id_fkey(id, name)')
+    .not('journey_complete_approved_at', 'is', null)
+    .order('journey_complete_approved_at', { ascending: false })
+  return { data, error }
+}
+
+export async function fetchDriverCompletedJourneys(driverId) {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .select('*, vehicle:vehicles(id, vehicle_number), warehouse:warehouses(id, name), driver:members!vehicle_allocations_driver_id_fkey(id, name)')
+    .eq('driver_id', driverId)
+    .eq('status', 'completed')
+    .order('journey_complete_approved_at', { ascending: false })
+  return { data, error }
+}
+
+export async function approveJourneyComplete(allocationId, approvedBy, remarks) {
+  const { data, error } = await supabase
+    .from('vehicle_allocations')
+    .update({
+      status: 'completed',
+      journey_complete_approved_at: new Date().toISOString(),
+      journey_complete_approved_by: approvedBy,
+      journey_complete_approval_remarks: remarks || null,
+    })
     .eq('id', allocationId)
     .select()
     .single()
@@ -782,6 +806,89 @@ export async function upsertAttendance(payload) {
     .from('attendance')
     .upsert(payload, { onConflict: 'member_id,date' })
     .select()
+  return { data, error }
+}
+
+// ─── ATTENDANCE PUNCH-IN ────────────────────────────────────────────────────
+
+const todayStr = () => new Date().toISOString().split('T')[0]
+
+export async function fetchTodayPunch(userId) {
+  const { data, error } = await supabase
+    .from('attendance_punches')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('date', todayStr())
+    .maybeSingle()
+  return { data, error }
+}
+
+export async function punchIn(userId, { lat, lng, distanceM, locationFlag, flagReason }) {
+  const { data, error } = await supabase
+    .from('attendance_punches')
+    .insert({
+      user_id: userId, date: todayStr(), lat, lng,
+      distance_from_hq_m: distanceM, location_flag: locationFlag, flag_reason: flagReason || null,
+      approval_status: locationFlag ? 'pending' : 'approved',
+      status: 'present',
+    })
+    .select()
+    .single()
+  if (!error && locationFlag) {
+    await createNotification({
+      target_roles: ['r4'],
+      title: 'Attendance Location Flagged',
+      body: `${data?.date} — punch-in needs review (${flagReason || 'location deviation'})`,
+      type: 'attendance_flagged',
+      ref_id: String(data?.id),
+    })
+  }
+  return { data, error }
+}
+
+export async function fetchMyAttendance(userId, month, year) {
+  const from = `${year}-${String(month).padStart(2, '0')}-01`
+  const lastDay = new Date(year, month, 0).getDate()
+  const to = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+  const { data, error } = await supabase
+    .from('attendance_punches')
+    .select('*')
+    .eq('user_id', userId)
+    .gte('date', from)
+    .lte('date', to)
+    .order('date')
+  return { data, error }
+}
+
+export async function fetchAllAttendanceForMonth(month, year) {
+  const from = `${year}-${String(month).padStart(2, '0')}-01`
+  const lastDay = new Date(year, month, 0).getDate()
+  const to = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+  const { data, error } = await supabase
+    .from('attendance_punches')
+    .select('*, user:users(id, name, avatar, color, role_id)')
+    .gte('date', from)
+    .lte('date', to)
+    .order('date')
+  return { data, error }
+}
+
+export async function fetchPendingAttendanceApprovals() {
+  const { data, error } = await supabase
+    .from('attendance_punches')
+    .select('*, user:users(id, name, avatar, color, role_id)')
+    .eq('approval_status', 'pending')
+    .order('date', { ascending: false })
+  return { data, error }
+}
+
+export async function approveAttendancePunch(id, approvedBy) {
+  const { data, error } = await supabase
+    .from('attendance_punches')
+    .update({ approval_status: 'approved', approved_by: approvedBy, approved_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single()
   return { data, error }
 }
 

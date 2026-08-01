@@ -27,7 +27,12 @@ export default function Employees() {
   ]
 
   const save = async (d) => {
-    const payload = { name: d.name, email: d.email, role_id: d.role_id, member_id: d.member_id ? Number(d.member_id) : null, avatar: (d.name || '??').slice(0, 2).toUpperCase(), color: d.color || '#6b7280' }
+    const payload = {
+      name: d.name, email: d.email, role_id: d.role_id, member_id: d.member_id ? Number(d.member_id) : null,
+      avatar: (d.name || '??').slice(0, 2).toUpperCase(), color: d.color || '#6b7280',
+      hq_latitude: d.hq_latitude !== '' && d.hq_latitude != null ? Number(d.hq_latitude) : null,
+      hq_longitude: d.hq_longitude !== '' && d.hq_longitude != null ? Number(d.hq_longitude) : null,
+    }
     if (sheet?.id) {
       const { error } = await db.updateUser(sheet.id, payload)
       if (error) { showToast('Error saving user'); return }
@@ -64,7 +69,18 @@ export default function Employees() {
 
 function UserForm({ init, roles, onSave, onClose, isEdit }) {
   const [d, setD] = useState({ ...init })
+  const [locBusy, setLocBusy] = useState(false)
   const set = (k, v) => setD(x => ({ ...x, [k]: v }))
+
+  const useCurrentLocation = () => {
+    if (!navigator.geolocation) return
+    setLocBusy(true)
+    navigator.geolocation.getCurrentPosition(
+      pos => { set('hq_latitude', pos.coords.latitude); set('hq_longitude', pos.coords.longitude); setLocBusy(false) },
+      () => setLocBusy(false)
+    )
+  }
+
   return (
     <>
       <Inp label="Full name" value={d.name} onChange={v => set('name', v)} req />
@@ -73,6 +89,16 @@ function UserForm({ init, roles, onSave, onClose, isEdit }) {
       <Inp label="Role" value={d.role_id} onChange={v => set('role_id', v)} options={[{ value: '', label: 'Select role...' }, ...(roles || []).map(r => ({ value: r.id, label: r.name }))]} />
       <Inp label="Member ID (for Sales Team only)" value={d.member_id || ''} onChange={v => set('member_id', v)} type="number" ph="Leave blank for non-sales staff" />
       <Inp label="Colour (hex)" value={d.color || ''} onChange={v => set('color', v)} placeholder="#3b82f6" />
+
+      <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Headquarter Location (for attendance check-in)</label>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Inp label="" value={d.hq_latitude ?? ''} onChange={v => set('hq_latitude', v)} type="number" placeholder="Latitude" />
+        <Inp label="" value={d.hq_longitude ?? ''} onChange={v => set('hq_longitude', v)} type="number" placeholder="Longitude" />
+      </div>
+      <Btn sm onClick={useCurrentLocation} disabled={locBusy} style={{ marginBottom: 12 }}>
+        {locBusy ? 'Getting location...' : '📍 Use my current location'}
+      </Btn>
+
       <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
         <Btn v="pri" full onClick={() => onSave(d)}>Save</Btn>
         <Btn full onClick={onClose}>Cancel</Btn>
