@@ -489,80 +489,111 @@ alter table vehicle_allocations
 - **Not browser-tested** — same constraint as every phase before it (no chromium-cli/Playwright in
   this Windows dev environment). Only `vite build` + scoped `eslint` were run clean.
 
-## Attendance / Punch-In System (NEW module, 2 Aug 2026 session, commit `42c9797`) — schema NOT yet
-applied, NOT browser-tested
+## Attendance / Punch-In System — BUILT, SCHEMA APPLIED, BROWSER-TESTED & CONFIRMED WORKING
+(2 Aug 2026 session, commits `42c9797` → `190c1ac`)
 
-**User's ask, condensed:** every employee (all 7 roles, web + driver) must punch in before reaching
-the app on every login. Current location captured at punch-in; attendance auto-marked Present
-regardless. Distance from the employee's headquarter lat/long is calculated (haversine); >20m
-deviation shows a message to HR. All employees see their own attendance calendar with Present/Absent
-summaries. For drivers specifically, HR sees a day-by-day activity summary. HR approves attendance.
+**User's ask, condensed (evolved across the session via live testing):** every employee (all 7
+roles, web + driver) must punch in before reaching the app, once per day. Distance from the
+employee's headquarter lat/long is calculated; if it exceeds an approved limit — per-employee, set
+in the employee master — the employee sees an explicit warning and must confirm before the punch is
+accepted. Duty reporting time (also per-employee) drives a late/on-time message shown right after
+punching in. All employees see their own attendance calendar. **Present now requires two separate
+HR/Admin approvals per punch**: Stage 1 approves the punch-in itself, Stage 2 approves that day's
+activity (shown on the same attendance detail page) — Admin can always do either stage regardless of
+who did the other.
 
 **Key design calls made without asking (flag if wrong, easy to change):**
 - **Keyed by `users.id`, not `members.id`.** `member_id` on `users` is only populated for Sales Team
-  + drivers (per `Employees.jsx`'s own form label, "for Sales Team only") — most Admin/HR/Manager/
-  Accounts/Warehouse Manager accounts have no `members` row at all. Gating login on a
-  `members`-keyed table would have locked most of the company out. HQ lat/long was therefore added
-  to `users`, not `members`.
+  + drivers — most Admin/HR/Manager/Accounts/Warehouse Manager accounts have no `members` row at
+  all. HQ lat/long, duty time, and deviation limit therefore all live on `users`.
 - **New `attendance_punches` table**, NOT a fix to the legacy `attendance` table/`db.fetchAttendance`
-  (the pre-existing "queries nonexistent month/year columns" bug noted under Deferred/Known Issues
-  below). Left the old table and its two `db.js` functions (`fetchAttendance`/`upsertAttendance`)
-  completely untouched and now fully unused, rather than risk touching data of unknown state that
-  can't be inspected from this environment.
-- **HR approval is scoped to flagged punches only** (>20m deviation, no HQ location set, or no GPS
-  captured) — normal in-range punches auto-approve with no queue. Inferred from the user's phrasing
-  ("if deviation is more than 20m... HR will approve attendance"). If HR should actually review
-  *every* day for *every* employee instead, flip the `approval_status` default in `db.punchIn`.
+  (pre-existing "queries nonexistent month/year columns" bug, see Deferred/Known Issues). Left the
+  old table and its two `db.js` functions (`fetchAttendance`/`upsertAttendance`) untouched and now
+  fully unused.
+- **Two-stage approval is mandatory for every punch**, not just flagged ones — this replaced the
+  original single-`approval_status`, flagged-only design after a follow-up ask mid-session.
+  `punch_approval_status` and `activity_approval_status` both start `'pending'` on every insert; a
+  day only shows green "Present" once both are `'approved'`. The location-flag notification to HR
+  (`target_roles: ['r4']`) still only fires for actually-flagged punches, to avoid a notification
+  per employee per day.
+- **Stage 2's "activity" is rich only for drivers** (reuses `journeyTimeline.js`'s
+  `buildJourneyEvents` against that driver's allocations for the day). For every other role it's an
+  honest "not available yet" message — a true cross-module activity log (goal approvals, invoice
+  approvals, settings changes, etc.) would mean adding action-logging across most of the app's write
+  paths, and some already-existing member-linked tables (`expenses`, `distributor_visits`) store
+  their date as a locale-formatted string (e.g. `"02 Aug 2026"`) rather than ISO, which would need
+  cleanup before reliable date-range querying. Deliberately not attempted — flagged rather than
+  shipped fragile.
 - **Geolocation denial doesn't block punch-in** (soft-fail, matches every other GPS-capture point in
-  this app, e.g. `AllocationJourneyTile.jsx`'s delivery GPS) but IS treated as a flag needing HR
-  review, same as an actual >20m deviation, rather than silently letting it through unverified.
-- **HQ-location editor** added as two number fields + a "📍 Use my current location" button on the
-  existing `Employees.jsx` user edit form (the real `users` CRUD screen) — NOT a new page, and NOT
-  the full `members`-master screen that's separately deferred above ("Members/driver master has no
-  create/edit UI at all" — that's a different table).
+  this app) but IS treated as a flag needing review, same as an over-limit deviation.
+- **HQ location, deviation limit, and duty time** all added as fields on the existing `Employees.jsx`
+  user edit form (the real `users` CRUD screen) — NOT a new page, and NOT the full `members`-master
+  screen that's separately deferred above.
 - **`Dashboard.jsx`'s `MemberDetailSheet`** (Manager's team-member popup) still reads the OLD legacy
-  `attendance` array — intentionally not rewired this session, out of scope.
+  `attendance` array — intentionally not rewired, out of scope.
 - No leave/holiday calendar exists anywhere in this app — "Absent" simply means "no punch recorded
   for a past calendar day," weekends included.
 
 **Built:**
-1. **`PunchInGate.jsx`** (new) — wraps the routes in `App.jsx`, above both `WebApp` and `TeamApp`, a
-   single choke point covering every role/shell. On mount, checks
-   `db.fetchTodayPunch(currentUser.id)`; if no punch exists today, renders a full-screen "Punch In to
-   Continue" card instead of the app (name, date, Punch In button; falls back to "Punch In Without
-   Location" if the browser denies the geolocation prompt; a Logout link so nobody's fully trapped).
-   Computes distance via existing `geo.js` `haversineMeters` against `currentUser.hq_latitude/
-   hq_longitude`, flags if >20m (or HQ unset, or no GPS), then calls new `db.punchIn(userId, {...})`.
-2. **`db.punchIn()`** inserts into `attendance_punches` with `status='present'` unconditionally;
-   `approval_status` is `'pending'` only when flagged, else auto-`'approved'`; fires a
-   `notifications` row to `['r4']` (HR) when flagged, reusing the existing `createNotification`/
-   `NotificationBell.jsx` pattern.
-3. **`MyAttendanceCalendar.jsx`** (new, shared self-view) — fetches `db.fetchMyAttendance(userId,
-   month, year)`, renders Present/Absent/Flagged/Rate tiles + the existing `AttCal` calendar (now
-   correctly sized to real days-in-month via `new Date(year, month, 0).getDate()`, replacing the old
-   hardcoded 27-day loop). Used in two places:
-   - `Attendance.jsx` (WebApp, menu id `attendance`) — now role-aware: HR/Admin (`r4`/`r1`) get the
-     full HR view (below); every other role gets `<MyAttendanceCalendar />` as their self-view. No
-     new menu id needed.
-   - `TeamApp.jsx` (Sales Team shell) — swapped into both the dashboard's "Attendance" card and the
-     existing `myAttendance` tab, replacing the old `getAtt()`/`att`/`attRate` logic that read the
-     legacy `member_id`-keyed `attendance` array with a hardcoded 26/27-day month and P/A/H codes
-     (`useData()`'s `attendance` destructure removed from `TeamApp.jsx` — no longer used there).
-4. **`Attendance.jsx`'s HR view** — "Pending Location Approvals" queue (`db.
-   fetchPendingAttendanceApprovals()`, Approve button → `db.approveAttendancePunch(id, approvedBy)`)
-   + a full company "Attendance Roster" (all `users`, present/absent calendar per employee via
-   `db.fetchAllAttendanceForMonth()`). Clicking any day-cell (new optional `onDayClick` prop added to
-   the shared `AttCal` component in `ui.jsx`, backward-compatible) opens a detail Sheet: punch time,
-   distance from HQ, flag/approval status, and — **for driver-role (`r7`) employees only** — that
-   day's actual load/journey activity, reusing `journeyTimeline.js`'s `buildJourneyEvents` against
-   `db.fetchDriverAllocations(user.member_id)` filtered to allocations active on that date (exact
-   top-level timestamp match, or falling inside a multi-day journey's start→submitted/return window).
+1. **`PunchInGate.jsx`** — full-screen gate wrapping the routes in `App.jsx`, above both `WebApp` and
+   `TeamApp`. Flow: get location → compute distance from `currentUser.hq_latitude/longitude` → if it
+   exceeds that employee's `allowed_deviation_m` (default 20), show "⚠️ Outside Approved Range — away
+   by Xm, limit Ym" with Confirm & Punch In / Cancel before accepting (flagged either way, employee
+   must explicitly confirm) → on success, compute duty status against `currentUser.duty_start_time`
+   and show a one-time "⏰ Late Duty — Xm late" / "✅ Duty On Time" screen with a Continue button
+   before handing off to the app. Falls back to "Punch In Without Location" if geolocation is denied.
+2. **`db.punchIn()`** inserts with `punch_approval_status` and `activity_approval_status` both
+   `'pending'` unconditionally; `status='present'` is set immediately but no longer means the day
+   counts as Present by itself. Defends the `unique(user_id, date)` constraint: a `23505` (duplicate)
+   error is treated as success and returns the existing row instead of erroring — covers double-taps
+   and duplicate tabs.
+3. **`MyAttendanceCalendar.jsx`** (self-view — `Attendance.jsx` for non-HR/Admin roles, and
+   `TeamApp.jsx`'s dashboard card + `myAttendance` tab, replacing the old broken `member_id`-keyed
+   26/27-day logic) — Present/Pending/Absent/Rate tiles + `AttCal`. Day codes: green `P` (both stages
+   approved), purple `X` (punched, one or both stages still pending — new color added to the shared
+   `AttCal` in `ui.jsx`), red `A` (no punch).
+4. **`Attendance.jsx`'s HR/Admin view** (`role.id` `r4` or `r1`) — three cards: **Stage 1 — Punch-In
+   Approvals** (`db.fetchPendingPunchApprovals()`/`db.approvePunchStage1()`, every pending punch, not
+   just flagged ones — location flag shown inline for triage), **Stage 2 — Activity Approvals**
+   (`db.fetchPendingActivityApprovals()`, only once stage 1 is approved), and the **Attendance
+   Roster** (all `users`, P/X/A calendar per employee, click any day-cell to open the detail Sheet —
+   `onDayClick` prop added to the shared `AttCal`). The detail Sheet shows both stages with their own
+   Approve button plus the activity feed, reachable from a day-cell or directly from either queue.
+5. **`Employees.jsx`** — user edit form gained HQ latitude/longitude + "📍 Use my current location",
+   **Approved Deviation Limit (metres)** (default 20), and **Duty Reporting Time** (`time` input).
 
-**Schema — NOT yet applied, user must run:**
+**Real bugs found via live testing this session, all fixed:**
+- `todayStr()`/`dateOf()` used `toISOString()`'s UTC date instead of local calendar date — for IST
+  (UTC+5:30), any punch between 12:00–5:29am local time landed on the *previous* day's `date` column.
+  Fixed to compute local date parts directly.
+- HR's roster/pending-approval queries embedded `user:users(...)` without naming which of
+  `attendance_punches`' **two** FKs to `users` (`user_id` and `approved_by`) to use — PostgREST
+  rejected it as ambiguous. This is CLAUDE.md's own documented **Recurring Bug Pattern #3**, hit
+  again by this session's own new table. Fixed with explicit
+  `user:users!attendance_punches_user_id_fkey(...)`. This turned out to be the actual cause of "HR
+  shows absent even though the employee punched in" — the punch was saved fine the whole time, only
+  the query to *display* it was silently failing.
+- Roster's client-side `p.user_id === userId` comparison could silently never match if Supabase
+  returns one side as a string (bigint columns) and the other as a number (int4 columns) — switched
+  to `String(a) === String(b)`.
+- `db.punchIn()`'s error was never checked — a failed insert still showed a "success" confirmation
+  and let the user into the app, but nothing was saved, so next login it asked again and HR never saw
+  it either. Now surfaced as a visible error on the punch-in screen.
+- The day-detail Sheet held its own local snapshot of the `punch` row; approving Stage 1 from inside
+  the Sheet didn't refresh it, so Stage 2 kept showing "Complete Stage 1 first" until the Sheet was
+  closed and reopened. Fixed by writing the freshly-approved row (already returned by
+  `approvePunchStage1`/`approveActivityStage2` via `.select().single()`) back into the Sheet's state.
+- Approval-failure error messages were rendered on a state var displayed in the page *behind* the
+  Sheet — invisible while the full-screen modal (`zIndex: 300`) was open, so a failed approve looked
+  like nothing happened. Now shown inline inside the Sheet itself.
+
+**Schema — this is the FINAL shape, confirmed applied across this session's iterations:**
 ```sql
 alter table users
   add column hq_latitude double precision,
-  add column hq_longitude double precision;
+  add column hq_longitude double precision,
+  add column duty_start_time time,
+  add column allowed_deviation_m integer not null default 20;
 
 create table attendance_punches (
   id bigserial primary key,
@@ -574,42 +605,43 @@ create table attendance_punches (
   distance_from_hq_m double precision,
   location_flag boolean not null default false,
   flag_reason text,
-  approval_status text not null default 'approved',
+  duty_status text,
+  minutes_late integer not null default 0,
+  punch_approval_status text not null default 'pending',
+  activity_approval_status text not null default 'pending',
   approved_by bigint references users(id),
   approved_at timestamptz,
+  activity_approved_by bigint references users(id),
+  activity_approved_at timestamptz,
   status text not null default 'present',
   unique(user_id, date)
 );
 
 create index attendance_punches_user_date_idx on attendance_punches(user_id, date);
 ```
+(If setting this up fresh rather than following the session's incremental `alter`s: run this once
+instead of hunting through the conversation for each intermediate step.)
 
-**Still open / not done yet:**
-- **Schema not applied — DO NOT let real users hit this until it is.** Every login now goes through
-  `PunchInGate`, which queries `attendance_punches` on mount. Until the table exists, that query
-  errors and the gate cannot confirm "already punched in today," which will likely block every user
-  from ever reaching the app. Apply the SQL above before this reaches anyone but the dev.
-- **No HQ location set for any employee yet** — until Admin edits each user in `Employees.jsx` and
-  sets lat/long, every punch-in will flag (falls into the "HQ location not set" branch) and land in
-  HR's approval queue. Expected/correct behavior, just needs manual data entry per employee first.
-- **Not browser-tested** — same constraint as every phase before it. Only `vite build` + scoped
-  `eslint` were run clean. This one changes the login gate for every role — test carefully, ideally
-  with a throwaway test account first.
+**Confirmed working live in the browser this session:** punch-in gate, once-per-day enforcement,
+deviation-limit confirm screen, duty late/on-time message, Stage 1 approval, Stage 2 approval,
+roster P/X/A states, HR/Admin day-detail Sheet.
+
+**Still open:**
+- `Dashboard.jsx`'s `MemberDetailSheet` still reads the old legacy `attendance` array (unrelated,
+  out of scope, see design-calls note above).
+- Stage 2 activity content is driver-only for now (see design-calls note above) — every other role's
+  Stage 2 is a manual judgment call by HR/Admin with no auto-populated activity feed.
+- No leave/holiday calendar — Absent is purely "no punch on a past calendar day."
 
 ### To continue in a new chat
-Two pieces landed this session (2 Aug 2026), both pushed as commit `42c9797`, **neither
-browser-tested, neither schema-applied**:
-1. **Journey Phase 4** (vein-diagram timeline header/footer, admin remarks, PDF export, Approved
-   Journeys lists on both admin + driver) — needs `journey_complete_approval_remarks` added to
-   `vehicle_allocations` before Approve will work. Low risk if untested — only affects the Journey
-   Approvals page and driver Journey tab.
-2. **Attendance / Punch-In System** (mandatory GPS punch-in gate on every login, HQ-location
-   deviation flagging, HR approval queue, self-view calendars, driver day-activity detail) — needs
-   BOTH the `users.hq_latitude/hq_longitude` columns AND the new `attendance_punches` table applied
-   **before this branch reaches any real user** — until then the login gate can lock everyone out.
+**Attendance / Punch-In System is fully built, schema-applied, and browser-confirmed working** as of
+this session (commits `42c9797` → `190c1ac`). Nothing further needed to pick it back up.
 
-Say "Read CLAUDE.md, walk me through applying this session's SQL (Journey remarks column + the
-Attendance system) and browser-testing both" to pick up from here. After the SQL is applied: set at
-least one employee's HQ location in Employees.jsx to test the >20m deviation-flagging path end to
-end, and re-verify the still-open POD photo upload item from Phase 3 (unrelated, older, still
-parked).
+Still open from earlier in the same overall session, untouched since — unrelated to Attendance:
+1. **Journey Phase 4** (vein-diagram timeline, admin remarks, PDF export, Approved Journeys lists) —
+   still needs `journey_complete_approval_remarks` added to `vehicle_allocations`, and still not
+   browser-tested.
+2. **POD photo upload** (Phase 3, older, still parked) — needs a new Supabase Storage bucket.
+
+Say "Read CLAUDE.md, walk me through applying Journey Phase 4's SQL and browser-testing it" to pick
+up the one remaining untested piece.
