@@ -170,6 +170,11 @@ customer_id fix is in (per-customer goal progress bars should now move).
   session); left untouched rather than deleted since the underlying table's real state in Supabase
   hasn't been inspected. Safe to delete both functions + the old table once the new system is
   confirmed working.
+- **Products not tagged to a warehouse** — `products` has no warehouse linkage anywhere in the
+  schema today. User confirmed (2 Aug 2026) this will be added in a **later** session as its own
+  piece of work. Relevant to: the upcoming Daily Stock Update feature (see below — built as a single
+  global status per product for now, not per-warehouse), and worth checking against at that time
+  whether anything else assumed single-warehouse stock in the meantime.
 
 ## Delivery/Transit Tracking — Phase 1 BUILT & PUSHED (1 Aug 2026 session), NOT YET BROWSER-TESTED
 
@@ -665,15 +670,17 @@ status fields on two different tables (or a new table), not a reuse of the exist
   a single current-status column on `products` (simpler, but no historical record of past days'
   stock beyond the single "last changed at" timestamp).
 - Does the red/red (Wait vs Unavailable) color collapse above need a third color instead?
-- Single WM per warehouse, or does status need to be per-warehouse (a product available at one
-  warehouse but not another)? `products` today has no warehouse linkage anywhere else in the schema
-  — worth checking whether stock is tracked per-warehouse elsewhere before assuming a single global
-  status per product is correct.
 
-**Likely shape (not yet built, for reference only):** either add `stock_status text`,
-`stock_status_updated_at timestamptz`, `stock_status_updated_by` to `products`, or a small new table
-if per-warehouse/per-day history turns out to be needed. New WM-only page + menu id (mirror into both
-`WebApp.jsx`'s `ALL_MENUS` and `Settings.jsx`'s copy per Recurring Bug Pattern #6). `DistributorOrder.jsx`'s
+**Resolved (2 Aug 2026):** status is **global per product, not per-warehouse** — user confirmed
+products will be tagged to a specific warehouse in a **later** session (separate piece of work, not
+part of this build). Build Daily Stock Update against a single status per product for now; revisit
+once warehouse-tagging exists if per-warehouse stock status turns out to be needed then.
+
+**Likely shape (not yet built, for reference only):** add `stock_status text`, `stock_status_updated_at
+timestamptz`, `stock_status_updated_by` to `products` (single global status per product, per the
+resolved question above — no per-warehouse or per-day history table needed unless the "daily reset"
+question above resolves to needing one). New WM-only page + menu id (mirror into both `WebApp.jsx`'s
+`ALL_MENUS` and `Settings.jsx`'s copy per Recurring Bug Pattern #6). `DistributorOrder.jsx`'s
 item-selection UI needs the color/disable logic added wherever it currently renders the product list.
 
 ### To continue in a new chat
