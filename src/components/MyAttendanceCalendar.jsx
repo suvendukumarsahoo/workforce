@@ -22,15 +22,20 @@ export default function MyAttendanceCalendar({ compact }) {
     })
   }, [currentUser?.id, month, year])
 
-  const present = punches.length
-  const absent = Math.max(0, today - present)
+  // Present now requires BOTH HR approval stages — punch-in review, then activity review.
+  const isFullyApproved = p => p.punch_approval_status === 'approved' && p.activity_approval_status === 'approved'
+  const present = punches.filter(isFullyApproved).length
+  const pendingApproval = punches.length - present
+  const absent = Math.max(0, today - punches.length)
   const rate = today > 0 ? Math.round((present / today) * 100) : 0
   const flagged = punches.filter(p => p.location_flag).length
 
   const days = Array.from({ length: daysInMonth }, (_, i) => {
     const dayNum = i + 1
     if (dayNum > today) return 'W'
-    return punches.some(p => new Date(p.date).getDate() === dayNum) ? 'P' : 'A'
+    const p = punches.find(x => new Date(x.date).getDate() === dayNum)
+    if (!p) return 'A'
+    return isFullyApproved(p) ? 'P' : 'X'
   })
 
   return (
@@ -38,7 +43,7 @@ export default function MyAttendanceCalendar({ compact }) {
       <CH title="My Attendance" sub={now.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })} />
       <div style={{ padding: 14 }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, marginBottom: compact ? 10 : 12 }}>
-          {[['Present', present, '#10b981'], ['Absent', absent, '#ef4444'], ['Flagged', flagged, '#f59e0b'], ['Rate', rate + '%', rate >= 90 ? '#10b981' : rate >= 75 ? '#f59e0b' : '#ef4444']].map(([l, v, c]) => (
+          {[['Present', present, '#10b981'], ['Pending', pendingApproval, '#7c3aed'], ['Absent', absent, '#ef4444'], ['Rate', rate + '%', rate >= 90 ? '#10b981' : rate >= 75 ? '#f59e0b' : '#ef4444']].map(([l, v, c]) => (
             <div key={l} style={{ textAlign: 'center' }}>
               <div style={{ fontSize: 9, color: '#6b7280' }}>{l}</div>
               <div style={{ fontSize: compact ? 14 : 16, fontWeight: 700, color: c }}>{v}</div>

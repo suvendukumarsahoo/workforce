@@ -811,7 +811,12 @@ export async function upsertAttendance(payload) {
 
 // ─── ATTENDANCE PUNCH-IN ────────────────────────────────────────────────────
 
-const todayStr = () => new Date().toISOString().split('T')[0]
+// Local calendar date, NOT toISOString()'s UTC date — for IST (UTC+5:30), any punch between
+// 12:00 AM and 5:29 AM local time would otherwise land on the previous day's date column.
+const todayStr = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 export async function fetchTodayPunch(userId) {
   const { data, error } = await supabase
@@ -823,17 +828,26 @@ export async function fetchTodayPunch(userId) {
   return { data, error }
 }
 
-export async function punchIn(userId, { lat, lng, distanceM, locationFlag, flagReason }) {
+export async function punchIn(userId, { lat, lng, distanceM, locationFlag, flagReason, dutyStatus, minutesLate }) {
   const { data, error } = await supabase
     .from('attendance_punches')
     .insert({
       user_id: userId, date: todayStr(), lat, lng,
       distance_from_hq_m: distanceM, location_flag: locationFlag, flag_reason: flagReason || null,
-      approval_status: locationFlag ? 'pending' : 'approved',
+      duty_status: dutyStatus || null, minutes_late: minutesLate || 0,
+      // Two-stage approval: punching in no longer auto-marks Present. HR must approve the
+      // punch-in itself (stage 1) AND the day's activity (stage 2) before it counts as Present.
+      punch_approval_status: 'pending',
+      activity_approval_status: 'pending',
       status: 'present',
     })
     .select()
     .single()
+
+  // unique(user_id, date) — a double-tap or duplicate tab landed here after someone already
+  // punched in today; treat it as success and hand back the existing row instead of erroring.
+  if (error?.code === '23505') return await fetchTodayPunch(userId)
+
   if (!error && locationFlag) {
     await createNotification({
       target_roles: ['r4'],
@@ -866,26 +880,50 @@ export async function fetchAllAttendanceForMonth(month, year) {
   const to = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
   const { data, error } = await supabase
     .from('attendance_punches')
-    .select('*, user:users(id, name, avatar, color, role_id)')
+    .select('*, user:users!attendance_punches_user_id_fkey(id, name, avatar, color, role_id)')
     .gte('date', from)
     .lte('date', to)
     .order('date')
   return { data, error }
 }
 
-export async function fetchPendingAttendanceApprovals() {
+// Stage 1 — HR reviews and approves the punch-in itself (location/timing) for every employee,
+// not just flagged ones.
+export async function fetchPendingPunchApprovals() {
   const { data, error } = await supabase
     .from('attendance_punches')
-    .select('*, user:users(id, name, avatar, color, role_id)')
-    .eq('approval_status', 'pending')
+    .select('*, user:users!attendance_punches_user_id_fkey(id, name, avatar, color, role_id)')
+    .eq('punch_approval_status', 'pending')
     .order('date', { ascending: false })
   return { data, error }
 }
 
-export async function approveAttendancePunch(id, approvedBy) {
+export async function approvePunchStage1(id, approvedBy) {
   const { data, error } = await supabase
     .from('attendance_punches')
-    .update({ approval_status: 'approved', approved_by: approvedBy, approved_at: new Date().toISOString() })
+    .update({ punch_approval_status: 'approved', approved_by: approvedBy, approved_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single()
+  return { data, error }
+}
+
+// Stage 2 — only actionable once stage 1 is approved: HR reviews the employee's activity for
+// that day and approves it. Only after both stages are approved does the day count as Present.
+export async function fetchPendingActivityApprovals() {
+  const { data, error } = await supabase
+    .from('attendance_punches')
+    .select('*, user:users!attendance_punches_user_id_fkey(id, name, avatar, color, role_id)')
+    .eq('punch_approval_status', 'approved')
+    .eq('activity_approval_status', 'pending')
+    .order('date', { ascending: false })
+  return { data, error }
+}
+
+export async function approveActivityStage2(id, approvedBy) {
+  const { data, error } = await supabase
+    .from('attendance_punches')
+    .update({ activity_approval_status: 'approved', activity_approved_by: approvedBy, activity_approved_at: new Date().toISOString() })
     .eq('id', id)
     .select()
     .single()

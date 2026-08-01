@@ -32,6 +32,8 @@ export default function Employees() {
       avatar: (d.name || '??').slice(0, 2).toUpperCase(), color: d.color || '#6b7280',
       hq_latitude: d.hq_latitude !== '' && d.hq_latitude != null ? Number(d.hq_latitude) : null,
       hq_longitude: d.hq_longitude !== '' && d.hq_longitude != null ? Number(d.hq_longitude) : null,
+      duty_start_time: d.duty_start_time || null,
+      allowed_deviation_m: d.allowed_deviation_m !== '' && d.allowed_deviation_m != null ? Number(d.allowed_deviation_m) : 20,
     }
     if (sheet?.id) {
       const { error } = await db.updateUser(sheet.id, payload)
@@ -98,6 +100,10 @@ function UserForm({ init, roles, onSave, onClose, isEdit }) {
       <Btn sm onClick={useCurrentLocation} disabled={locBusy} style={{ marginBottom: 12 }}>
         {locBusy ? 'Getting location...' : '📍 Use my current location'}
       </Btn>
+
+      <Inp label="Approved Deviation Limit (metres)" value={d.allowed_deviation_m ?? 20} onChange={v => set('allowed_deviation_m', v)} type="number" helper="Distance from HQ allowed before a punch-in is flagged for HR review" />
+
+      <Inp label="Duty Reporting Time" value={d.duty_start_time || ''} onChange={v => set('duty_start_time', v)} type="time" helper="Used to flag punch-ins as late vs on time" />
 
       <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
         <Btn v="pri" full onClick={() => onSave(d)}>Save</Btn>

@@ -218,8 +218,8 @@ export const Confirm = ({ msg, onYes, onNo }) => (
 
 // ─── ATTENDANCE CALENDAR ──────────────────────────────────────────────────────
 export const AttCal = ({ days = [], onDayClick }) => {
-  const BG = { P: '#d1fae5', A: '#fee2e2', H: '#fef3c7', W: '#f9fafb', T: '#dbeafe' }
-  const TC = { P: '#065f46', A: '#991b1b', H: '#92400e', W: '#d1d5db', T: '#1d4ed8' }
+  const BG = { P: '#d1fae5', A: '#fee2e2', H: '#fef3c7', W: '#f9fafb', T: '#dbeafe', X: '#ede9fe' }
+  const TC = { P: '#065f46', A: '#991b1b', H: '#92400e', W: '#d1d5db', T: '#1d4ed8', X: '#6d28d9' }
   return (
     <div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 2, marginBottom: 2 }}>
