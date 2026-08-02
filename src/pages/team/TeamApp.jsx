@@ -4,6 +4,9 @@ import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Av, Btn, Inp, Bar, GBadge, SBadge, Sheet } from '../../components/ui.jsx'
 import MyAttendanceCalendar from '../../components/MyAttendanceCalendar.jsx'
 import { pct } from '../../lib/achievementEngine.js'
+import { formatPeriodLabel, monthElapsedRatio } from '../../lib/period.js'
+import { aggregateForMembers } from '../../lib/goalAggregation.js'
+import { ChartSection, MeterGauge, GoalVsAchievedBreakdown } from '../../components/charts/GoalBarChart.jsx'
 import * as db from '../../lib/db.js'
 import NewCustomerVisit from '../shared/NewCustomerVisit.jsx'
 import { getGoalOverallStatus } from '../../lib/achievementEngine.js'
@@ -28,7 +31,7 @@ const timeAgo = (isoDate) => {
 
 export default function TeamApp() {
   const { currentUser, logout, hasMenu } = useAuth()
-  const { params, goals, setGoals, achievements, expenses, setExpenses, salaries, products, categories, distributors: customers, visits, payments, showToast, loadAll } = useData()
+  const { params, goals, setGoals, achievements, expenses, setExpenses, salaries, products, categories, distributors: customers, visits, payments, showToast, loadAll, currentPeriod } = useData()
   const [tab, setTab]           = useState('dashboard')
   const [showGoalEntry, setShowGoalEntry] = useState(false)
   const [showExpForm, setShowExpForm]     = useState(false)
@@ -63,8 +66,17 @@ const hasNewParam   = (p.enable_value && !g.value_status) ||
   (p.enable_categories && (p.sel_cats || []).some(id => !(g.categories || {})[id])) ||
   (p.enable_customers && (p.sel_custs || []).some(id => !(g.customers || {})[id]))
 const canEnter      = overallStatus === 'draft' || hasRejected || hasNewParam
-  const approvedVal   = g.value_status === 'approved' ? (g.value_goal || 0) : 0
-  const valPct        = approvedVal ? pct(a.value, approvedVal) : 0
+
+  // My Goals — Today (prorated pace) vs Monthly (full current month), reusing the same aggregation
+  // used by the Admin/Manager dashboard's drill-down, just scoped to this one member.
+  const [periodTab, setPeriodTab] = useState('monthly') // 'today' | 'monthly'
+  const myAgg = aggregateForMembers(
+    [mid],
+    [{ goalsMap: goals, paramsMap: params, achievementsMap: achievements, weight: periodTab === 'today' ? monthElapsedRatio(currentPeriod) : 1 }],
+    products, categories, customers,
+  )
+  const myHasMeters = myAgg.value.goal > 0 || myAgg.visits.goal > 0 || myAgg.acq.goal > 0
+  const myHasBreakdown = myAgg.products.length > 0 || myAgg.categories.length > 0 || myAgg.customers.length > 0
 
   const submitGoal = async (memberId, draft) => {
     const existing = (goals || {})[memberId] || {}
@@ -92,7 +104,7 @@ const canEnter      = overallStatus === 'draft' || hasRejected || hasNewParam
       submitted_at: now,
       status:       'pending',
     }
-    const { error } = await db.upsertGoal(memberId, updated)
+    const { error } = await db.upsertGoal(memberId, currentPeriod, updated)
     if (error) { showToast('Error submitting goals'); return }
     setGoals(prev => ({ ...prev, [memberId]: updated }))
     await loadAll()
@@ -164,7 +176,7 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc', paddingBottom: 72, fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }}>
       {showGoalEntry && (
-        <GoalEntrySheet member={currentUser} param={p} goal={g} products={products} categories={categories} customers={customers} onSubmit={submitGoal} onClose={() => setShowGoalEntry(false)} />
+        <GoalEntrySheet member={currentUser} param={p} goal={g} period={currentPeriod} products={products} categories={categories} customers={customers} onSubmit={submitGoal} onClose={() => setShowGoalEntry(false)} />
       )}
 {showFollowupPopup && todayFollowups.length > 0 && (
         <FollowupPopup
@@ -305,15 +317,36 @@ myLeads.forEach(d => {
     }}
   />
 )}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-              {[['My target', approvedVal ? F(approvedVal) : '—', '#2563eb'], ['Achieved', approvedVal ? F(a.value) : '—', '#10b981'], ['Progress', approvedVal ? valPct + '%' : '—', valPct >= 75 ? '#10b981' : valPct >= 50 ? '#f59e0b' : '#ef4444'], ['Goal status', overallStatus.toUpperCase(), '#374151']].map(([l, v, c]) => (
-                <div key={l} style={{ background: '#fff', border: '1px solid #e5e7eb', borderRadius: 12, padding: '12px 14px' }}>
-                  <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 3 }}>{l}</div>
-                  <div style={{ fontSize: 17, fontWeight: 700, color: c }}>{v}</div>
+            <Card>
+              <CH title="My Goals" sub={`Status: ${overallStatus.toUpperCase()}`} />
+              <div style={{ padding: '12px 14px 0', display: 'flex', gap: 8 }}>
+                {[['today', 'Today'], ['monthly', 'Monthly']].map(([key, label]) => (
+                  <button key={key} onClick={() => setPeriodTab(key)} style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: periodTab === key ? '#2563eb' : '#f3f4f6', color: periodTab === key ? '#fff' : '#374151', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>{label}</button>
+                ))}
+              </div>
+              {periodTab === 'today' && <div style={{ padding: '8px 14px 0', fontSize: 11, color: '#6b7280' }}>Pace check: achievement so far vs. a prorated slice of this month's target</div>}
+              {!myHasMeters && !myHasBreakdown && (
+                <div style={{ textAlign: 'center', padding: 24, color: '#9ca3af', fontSize: 13 }}>No approved goals yet for {formatPeriodLabel(currentPeriod)}</div>
+              )}
+            </Card>
+            {myHasMeters && (
+              <ChartSection title="This Period">
+                <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-around', gap: 8 }}>
+                  {myAgg.value.goal > 0 && <MeterGauge label="Sales Value" value={myAgg.value.achieved} goal={myAgg.value.goal} formatValue={F} />}
+                  {myAgg.visits.goal > 0 && <MeterGauge label="Outlet Visits" value={myAgg.visits.achieved} goal={myAgg.visits.goal} />}
+                  {myAgg.acq.goal > 0 && <MeterGauge label="Distributors" value={myAgg.acq.achieved} goal={myAgg.acq.goal} />}
                 </div>
-              ))}
-            </div>
-            {approvedVal > 0 && <><Bar val={valPct} /><div style={{ fontSize: 10, color: '#9ca3af', marginTop: 4, marginBottom: 14, textAlign: 'right' }}>{valPct}% vs approved target</div></>}
+              </ChartSection>
+            )}
+            {myAgg.products.length > 0 && (
+              <ChartSection title="Products"><GoalVsAchievedBreakdown rows={myAgg.products} /></ChartSection>
+            )}
+            {myAgg.categories.length > 0 && (
+              <ChartSection title="Categories"><GoalVsAchievedBreakdown rows={myAgg.categories} /></ChartSection>
+            )}
+            {myAgg.customers.length > 0 && (
+              <ChartSection title="Customers"><GoalVsAchievedBreakdown rows={myAgg.customers} formatValue={F} /></ChartSection>
+            )}
             <MyAttendanceCalendar compact />
           </>
         )}
@@ -525,7 +558,7 @@ myLeads.forEach(d => {
     </div>
   )
 }
-function GoalEntrySheet({ member, param, goal, products, categories, customers, onSubmit, onClose }) {
+function GoalEntrySheet({ member, param, goal, period, products, categories, customers, onSubmit, onClose }) {
   const g = goal || {}
   const canEdit = s => !s || s === 'draft' || s === 'rejected'
   
@@ -563,9 +596,9 @@ function GoalEntrySheet({ member, param, goal, products, categories, customers, 
   }
 
   return (
-    <Sheet title="Set my goals" sub="Enter your goal values for each parameter" onClose={onClose}>
+    <Sheet title="Set my goals" sub={`For ${formatPeriodLabel(period)}`} onClose={onClose}>
       <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '10px 12px', marginBottom: 14, fontSize: 12, color: '#1e40af' }}>
-        Once submitted, goals are locked. If manager rejects specific fields, only those will be unlocked for revision.
+        Once submitted, goals are locked for this month. If manager rejects specific fields, only those will be unlocked for revision.
       </div>
 
       {param.enable_value && (

@@ -2,14 +2,17 @@ import { useState } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Av, Btn, Sheet, Inp } from '../../components/ui.jsx'
+import { formatPeriodLabel } from '../../lib/period.js'
 import * as db from '../../lib/db.js'
 
 export default function Parameters() {
   const { can } = useAuth()
-const { members, params, setParams, products, categories, distributors: customers, showToast } = useData()
+const { members, setMembers, users, params, setParams, products, categories, distributors: customers, showToast, currentPeriod } = useData()
 const [editing, setEditing] = useState(null)
+  const managers = (users || []).filter(u => u.role_id === 'r2')
+
   const save = async (memberId, draft) => {
-    const { data, error } = await db.upsertParameter(memberId, {
+    const { data, error } = await db.upsertParameter(memberId, currentPeriod, {
       enable_value: draft.enableValue, enable_customers: draft.enableCustomers,
       enable_products: draft.enableProducts, enable_categories: draft.enableCategories,
       enable_visits: draft.enableVisits, enable_acq: draft.enableAcq,
@@ -17,9 +20,16 @@ const [editing, setEditing] = useState(null)
       sel_custs: draft.selCusts, sel_prods: draft.selProds, sel_cats: draft.selCats,
     })
     if (error) { showToast('Error saving parameters'); return }
-    setParams(prev => ({ ...prev, [memberId]: { ...draft, member_id: memberId } }))
+    setParams(prev => ({ ...prev, [memberId]: { ...draft, member_id: memberId, period: currentPeriod } }))
     setEditing(null)
     showToast('Parameters saved')
+  }
+
+  const setManager = async (memberId, managerId) => {
+    const { error } = await db.updateMember(memberId, { manager_id: managerId || null })
+    if (error) { showToast('Error assigning manager'); return }
+    setMembers(prev => prev.map(m => m.id === memberId ? { ...m, manager_id: managerId || null } : m))
+    showToast('Manager assigned')
   }
 
   return (
@@ -27,6 +37,7 @@ const [editing, setEditing] = useState(null)
       {editing && <ParamSheet member={editing} param={params[editing.id]} products={products} categories={categories} customers={customers} onSave={save} onClose={() => setEditing(null)} />}
       <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 10, padding: '10px 14px', marginBottom: 14, fontSize: 12, color: '#1e40af' }}>
         ⚙️ Select which fields each member should set goals for. You are defining scope only — not the values.
+        Setting scope for <strong>{formatPeriodLabel(currentPeriod)}</strong> — goals are now monthly, so this repeats each month.
       </div>
       <Card>
         <CH title="Parameters per member" sub="Member enters their own goal values against these" />
@@ -36,10 +47,20 @@ const [editing, setEditing] = useState(null)
           return (
             <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid #f3f4f6' }}>
               <Av av={m.avatar} color={m.color} sz={30} />
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: 13, fontWeight: 600 }}>{m.name}</div>
                 <div style={{ fontSize: 11, color: '#9ca3af' }}>{fields.length ? fields.join(' · ') : 'No parameters set'}</div>
               </div>
+              {can('edit') && (
+                <select
+                  value={m.manager_id || ''}
+                  onChange={e => setManager(m.id, e.target.value ? Number(e.target.value) : null)}
+                  style={{ padding: '5px 7px', borderRadius: 6, border: '1px solid #d1d5db', fontSize: 11, marginRight: 8, maxWidth: 120 }}
+                >
+                  <option value="">No manager</option>
+                  {managers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              )}
               {can('edit') && <Btn sm onClick={() => setEditing(m)}>✏️ Edit</Btn>}
             </div>
           )

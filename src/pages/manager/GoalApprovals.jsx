@@ -4,12 +4,13 @@ import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Av, Btn, GBadge, Sheet } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
 import { getGoalOverallStatus } from '../../lib/achievementEngine.js'
+import { formatPeriodLabel } from '../../lib/period.js'
 
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 
 export default function GoalApprovals() {
   const { can } = useAuth()
-const { goals, setGoals, members, params, products, distributors: customers, categories, showToast, loadAll } = useData()  
+const { goals, setGoals, members, params, products, distributors: customers, categories, showToast, loadAll, currentPeriod } = useData()
 const [reviewing, setReviewing] = useState(null)
 
   const pending = (members || []).filter(m => {
@@ -53,7 +54,7 @@ const [reviewing, setReviewing] = useState(null)
     updated.reviewed_at = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
     updated.status = getGoalOverallStatus(updated)
 
-    const { error } = await db.upsertGoal(memberId, updated)
+    const { error } = await db.upsertGoal(memberId, currentPeriod, updated)
     if (error) { showToast('Error saving review'); return }
     setGoals(prev => ({ ...prev, [memberId]: updated }))
     await loadAll()
@@ -63,12 +64,13 @@ const [reviewing, setReviewing] = useState(null)
   if (pending.length === 0) return (
     <div style={{ textAlign: 'center', padding: 60, color: '#9ca3af' }}>
       <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
-      <div>No goals pending review</div>
+      <div>No goals pending review for {formatPeriodLabel(currentPeriod)}</div>
     </div>
   )
 
   return (
     <div>
+      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>Reviewing goals for <strong>{formatPeriodLabel(currentPeriod)}</strong></div>
       {reviewing && (
         <GoalReviewSheet
           member={reviewing}

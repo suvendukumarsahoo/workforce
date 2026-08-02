@@ -182,10 +182,13 @@ export const Toast = ({ msg }) => (
 )
 
 // ─── BOTTOM SHEET ─────────────────────────────────────────────────────────────
-export const Sheet = ({ title, sub, onClose, children }) => (
+// zIndex defaults to 300 (this app's established Sheet layer) but can be raised for a Sheet
+// opened from inside another already-open Sheet — same z-index + later-in-DOM was silently
+// stacking the outer sheet on top, hiding the nested one entirely (looked like clicks did nothing).
+export const Sheet = ({ title, sub, onClose, children, zIndex = 300 }) => (
   <div
     onClick={e => e.target === e.currentTarget && onClose()}
-    style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex: 300, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+    style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', zIndex, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
   >
     <div
       style={{ background: '#fff', borderRadius: '16px 16px 0 0', width: '100%', maxWidth: 640, maxHeight: '92vh', overflowY: 'auto', padding: '16px 14px 24px' }}

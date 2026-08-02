@@ -7,24 +7,39 @@
 
 /**
  * computeAchievements
- * @param {Array}  invoices  - array of invoice objects with lines
- * @param {Object} goals     - { [memberId]: goalObject }
- * @param {Array}  products  - product master array
- * @returns {Object}         - { [memberId]: { value, customers, products, categories } }
+ * @param {Array}  invoices   - array of invoice objects with lines
+ * @param {Object} goals      - { [memberId]: goalObject }
+ * @param {Array}  products   - product master array
+ * @param {Array}  distributors - distributor master array (for Distributor Appointment count)
+ * @param {Array}  visits     - distributor_visits rows (for Outlet Visits achievement)
+ * @param {Object} [dateRange] - optional { from, to } ISO date strings (inclusive). When given,
+ *                               invoices/visits/distributor-acquisitions outside the range are
+ *                               excluded. Omitted = all-time (unchanged prior behavior).
+ * @returns {Object}          - { [memberId]: { value, custs, prods, cats, acq, visits } }
  */
-export function computeAchievements(invoices = [], goals = {}, products = [], distributors = []) {
+export function computeAchievements(invoices = [], goals = {}, products = [], distributors = [], visits = [], dateRange = null) {
   const result = {}
+  const inRange = iso => {
+    if (!dateRange || !iso) return true
+    const d = String(iso).slice(0, 10)
+    return d >= dateRange.from && d <= dateRange.to
+  }
 
   // Initialise empty achievement for every member that has a goal
   Object.keys(goals).forEach(memberId => {
-    result[memberId] = { value: 0, custs: {}, prods: {}, cats: {}, acq: 0 }
+    result[memberId] = { value: 0, custs: {}, prods: {}, cats: {}, acq: 0, visits: 0 }
   })
 
+  // Gating is per-field (value/products/categories/customers/visits/acq are independently
+  // approvable parameters — see Parameters.jsx's enable_* toggles), NOT by the goal's overall
+  // status. A "partial" goal (some fields approved, some rejected) still tracks achievement for
+  // whichever specific fields ARE approved — matches what every consumer (TeamApp.jsx, Dashboard,
+  // Targets.jsx) already assumes by checking `fg?.status === 'approved'` per field before display.
   invoices.forEach(invoice => {
     const mid  = String(invoice.member_id || invoice.memberId)
     const goal = goals[mid]
-
-    if (!goal || goal.status !== 'approved') return
+    if (!goal) return
+    if (!inRange(invoice.date || invoice.order_date || invoice.created_at)) return
 
     const ach = result[mid]
     if (!ach) return
@@ -36,36 +51,54 @@ export function computeAchievements(invoices = [], goals = {}, products = [], di
       const productId = line.product_id || line.pid
       const qty       = Number(line.qty)  || 0
       const rate      = Number(line.rate) || 0
-      const lineValue = qty * rate
+      invoiceTotal += qty * rate
 
-      invoiceTotal += lineValue
+      // Product qty — only if this specific product's goal field is approved
+      if ((goal.products || {})[productId]?.status === 'approved') {
+        ach.prods[productId] = (ach.prods[productId] || 0) + qty
+      }
 
-      // Product qty
-      ach.prods[productId] = (ach.prods[productId] || 0) + qty
-
-      // Category qty — look up category from product master
+      // Category qty — look up category from product master, gated on that category's own field
       const product = products.find(p => p.id === productId)
       if (product) {
         const catId = product.category_id || product.catId
-        ach.cats[catId] = (ach.cats[catId] || 0) + qty
+        if ((goal.categories || {})[catId]?.status === 'approved') {
+          ach.cats[catId] = (ach.cats[catId] || 0) + qty
+        }
       }
     })
 
-    // Value
-    ach.value += invoiceTotal
+    // Value — independent parameter, gated on value_status
+    if (goal.value_status === 'approved') {
+      ach.value += invoiceTotal
+    }
 
-    // Customer value
+    // Customer value — gated on that specific customer's goal field
     const custId = invoice.distributor_id || invoice.custId
-    ach.custs[custId] = (ach.custs[custId] || 0) + invoiceTotal
+    if ((goal.customers || {})[custId]?.status === 'approved') {
+      ach.custs[custId] = (ach.custs[custId] || 0) + invoiceTotal
+    }
+  })
+
+  // Outlet visits count
+  visits.forEach(v => {
+    const mid = String(v.member_id)
+    const goal = goals[mid]
+    const ach = result[mid]
+    if (!ach || !goal || goal.visits_status !== 'approved') return
+    if (!inRange(v.visit_date)) return
+    ach.visits += 1
   })
 
   // Distributor Appointment count — only counts leads that completed the full appointment pipeline
 distributors.forEach(d => {
   if (d.lead_stage !== 'final_approved') return
+  if (!inRange(d.stage_updated_at)) return
   const ownerIds = d.assignedTo || []
   ownerIds.forEach(mid => {
     const key = String(mid)
-    if (result[key]) result[key].acq += 1
+    const goal = goals[key]
+    if (result[key] && goal?.acq_status === 'approved') result[key].acq += 1
   })
 })
 

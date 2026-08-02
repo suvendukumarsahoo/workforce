@@ -610,42 +610,33 @@ export async function deleteDistributor(id) {
   return { error }
 }
 
-// ─── PARAMETERS ───────────────────────────────────────────────────────────────
+// ─── PARAMETERS (monthly — one row per member per period, e.g. "2026-11") ──────
 
-export async function fetchParameters() {
-  const { data, error } = await supabase.from('parameters').select('*')
+export async function fetchParameters(period) {
+  const { data, error } = await supabase.from('parameters').select('*').eq('period', period)
   return { data, error }
 }
 
-export async function upsertParameter(memberId, payload) {
+export async function upsertParameter(memberId, period, payload) {
   const { data, error } = await supabase
     .from('parameters')
-    .upsert({ member_id: memberId, ...payload }, { onConflict: 'member_id' })
+    .upsert({ member_id: memberId, period, ...payload }, { onConflict: 'member_id,period' })
     .select()
     .single()
   return { data, error }
 }
 
-// ─── GOALS ────────────────────────────────────────────────────────────────────
+// ─── GOALS (monthly — one row per member per period) ───────────────────────────
 
-export async function fetchGoals() {
-  const { data, error } = await supabase.from('goals').select('*')
+export async function fetchGoals(period) {
+  const { data, error } = await supabase.from('goals').select('*').eq('period', period)
   return { data, error }
 }
 
-export async function fetchGoalByMember(memberId) {
+export async function upsertGoal(memberId, period, payload) {
   const { data, error } = await supabase
     .from('goals')
-    .select('*')
-    .eq('member_id', memberId)
-    .single()
-  return { data, error }
-}
-
-export async function upsertGoal(memberId, payload) {
-  const { data, error } = await supabase
-    .from('goals')
-    .upsert({ member_id: memberId, ...payload }, { onConflict: 'member_id' })
+    .upsert({ member_id: memberId, period, ...payload }, { onConflict: 'member_id,period' })
     .select()
     .single()
   return { data, error }

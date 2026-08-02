@@ -38,9 +38,11 @@ commercial launch).
    or it'll be invisible in the permissions screen again.
 
 ## Core Business Modules (stable, working)
-- **Goals/Targets**: Manager sets parameter scope → Sales Team sets goal values → lock on submit → 
-  Manager approves/rejects per-field → all-approved triggers target. Achievement computed exclusively 
-  from `invoices` (approved-status goal + now approved-status invoice, see Invoicing below).
+- **Goals/Targets**: **MONTHLY as of 2 Aug 2026 session** (see "Monthly Goals + Org→Manager→Member
+  Dashboard" below for full detail) — Manager sets parameter scope → Sales Team sets goal values →
+  lock on submit → Manager approves/rejects per-field → per-field-approved triggers achievement
+  tracking for that field, **every calendar month**, not once. Achievement computed exclusively from
+  `invoices`/`distributor_visits`/`distributors`, gated per-field (not by the goal's overall status).
 - **Distributor pipeline**: New Customer Visit → Interested/Not Interested/Final → Manager approval → 
   Registration → Document Submit Wizard (haversine, 30km competitor check) → Payment → Admin verify 
   → `type` flips to 'Distributor', `lead_stage='final_approved'`.
@@ -823,6 +825,532 @@ create index product_issue_resolutions_product_idx on product_issue_resolutions(
   page (Admin + WM only, not HR's menu). Revisit only if HR specifically asks to see resolved
   manpower issues too.
 
+## Monthly Goals + Org→Manager→Member Dashboard — BUILT (2 Aug 2026 session), SCHEMA APPLIED,
+VISUAL REDESIGN + Z-INDEX BUG FIX APPLIED SAME SESSION, NOT YET FULLY BROWSER-CONFIRMED
+
+**User's ask, condensed:** goals must be calculated monthly (the full Manager-sets-scope →
+Sales-Team-submits → Manager-approves cycle repeats every month, not once ever). New dashboard
+showing goal vs. achievement per parameter with **Today / Monthly / Custom-period** tabs, drillable
+**Organization → Manager → Sales Team Member**, each level a real full-screen screen (not a toast),
+using different charts per parameter. Full plan approved via plan-mode before building (see chat for
+the approved plan text) — this was a large change to a module CLAUDE.md previously called "stable."
+
+**Resolved via AskUserQuestion before building:**
+- Monthly = **full re-architecture**, not just achievement re-bucketed — the scope-setting step
+  (which parameters/products/categories/customers a member tracks) also repeats every month, along
+  with goal values and the submit→approve cycle.
+- "Today" tab = **pace check**: month-to-date achievement vs. a *prorated* slice of the monthly
+  target (target × elapsed-days ÷ days-in-month), not just a raw daily number.
+- No charting library existed (only a CSS progress bar in `ui.jsx`) — added **Recharts**.
+- Drill-down = full-screen `Sheet` modals (the pattern already used everywhere in this app), not new
+  routed/deep-linkable pages.
+
+**Two structural gaps fixed as part of this change:**
+1. **No Manager→Sales-Team-member reporting link existed anywhere** — `members` had no `manager_id`.
+   Without it there was no way to group Sales Team members under "their" Manager for the drill-down.
+   Fixed: new `manager_id` column on `members`, assignable via a small dropdown added to
+   `Parameters.jsx`'s existing per-member row (not a full members-master rebuild — that stays
+   deferred per the note under Deferred/Known Issues).
+2. **`computeAchievements` had a real pre-existing bug**, found while wiring this up: it gated *all*
+   achievement tracking on the goal's *overall* status (`goal.status === 'approved'`), but every
+   consumer (`TeamApp.jsx`, the old `Dashboard.jsx`/`Targets.jsx`) already displayed achievement
+   *per field* (`fg?.status === 'approved'`). For a `partial` goal (some fields approved, some
+   rejected), approved fields were silently showing zero achieved. Fixed: gating moved to be
+   per-field internally (value/products/categories/customers/visits/acq each check their own
+   `_status` field) — matches what every UI already assumed. Also fixed a second real gap: **visits
+   achievement was never computed at all** (`visits_goal` existed as a settable goal field but no
+   `ach.visits` was ever produced anywhere) — added.
+
+**Schema — NOT yet applied, user must run:**
+```sql
+alter table members add column manager_id bigint references users(id);
+
+alter table parameters add column period text not null default to_char(now(), 'YYYY-MM');
+alter table parameters drop constraint if exists parameters_member_id_key;
+alter table parameters add constraint parameters_member_period_key unique (member_id, period);
+
+alter table goals add column period text not null default to_char(now(), 'YYYY-MM');
+alter table goals drop constraint if exists goals_member_id_key;
+alter table goals add constraint goals_member_period_key unique (member_id, period);
+```
+The `drop constraint if exists` names are a best guess at Postgres's default single-column
+unique-constraint naming. If the drop is a no-op (name doesn't match), the `add constraint` line
+will fail with a duplicate-constraint error — check the actual name via the Supabase table editor's
+constraints tab if that happens.
+
+**Built:**
+1. **`src/lib/period.js`** (new, pure, no DB) — `getCurrentPeriod()` (local-date `YYYY-MM`, same
+   IST-boundary lesson as `db.js`'s `todayStr()`), `formatPeriodLabel()`, `monthRangeForPeriod()`,
+   `monthElapsedRatio()` (today's fraction through the month — doubles as the "Today" tab's
+   aggregation weight), `resolvePeriodsInRange()` (splits a custom date range into
+   `[{period, weight}]` for prorating goals across months a custom range partially covers),
+   `listRecentPeriods()`.
+2. **`db.js`** — `fetchParameters`/`upsertParameter`/`fetchGoals`/`upsertGoal` all now take a
+   `period` argument (`onConflict: 'member_id,period'`). Removed the unused, now-incompatible
+   `fetchGoalByMember` (assumed one row per member — broken once goals became period-scoped, and had
+   zero call sites). No new function needed for the manager hierarchy — reused the existing generic
+   `updateMember(id, payload)`.
+3. **`useData.jsx`** — added `currentPeriod` (computed once, exposed in context). `loadAll()` now
+   fetches `parameters`/`goals` scoped to `currentPeriod` — every existing consumer
+   (`Parameters.jsx`, `TeamApp.jsx`, `GoalApprovals.jsx`) keeps its same flat `{member_id: row}` map
+   shape and needed minimal changes. The `achievements` memo now scopes to the current month's date
+   range (via `monthRangeForPeriod`) and passes `visits` through — **this changes dashboard numbers
+   from all-time-cumulative to month-to-date**, an intentional behavior change matching "goals must
+   be monthly."
+4. **`achievementEngine.js`** — see the two bug fixes above; `computeAchievements` signature gained
+   `visits` and an optional `dateRange` (`{from, to}`) that filters invoices/visits/distributor
+   acquisitions when provided (omitted = all-time, kept backward-compatible).
+5. **`Parameters.jsx`** — header now shows "Setting scope for: {month label}"; save calls pass
+   `currentPeriod`; new per-row Manager-assignment `<select>` (options = `role_id === 'r2'` users)
+   calling `db.updateMember(id, {manager_id})`.
+6. **`TeamApp.jsx`**'s `GoalEntrySheet` — sheet subtitle shows which month is being set; submit
+   passes `currentPeriod` through to `db.upsertGoal`. No new locking logic needed — `canEnter`'s
+   existing draft/rejected check already naturally re-locks each new month's goal once submitted,
+   since goals are now period-scoped rows.
+7. **`GoalApprovals.jsx`** — pending list is implicitly scoped to `currentPeriod` (since `goals` in
+   context already only holds the current month's rows); added a "Reviewing goals for {month}" label
+   and passed `currentPeriod` through to the approve/reject `upsertGoal` call.
+8. **`src/lib/goalAggregation.js`** (new, pure, no DB) — `aggregateForMembers(memberIds, slices,
+   products, categories, customers)`, the single aggregation function reused at all three drill
+   levels (just called with a different `memberIds` scope). A **slice** = one period's data:
+   `{ goalsMap, paramsMap, achievementsMap, weight }`. Today/Monthly views pass one slice
+   (`weight=1`, or `monthElapsedRatio` for Today). Custom ranges spanning multiple months pass one
+   slice per overlapping month (from `resolvePeriodsInRange`) — achievement values are summed as-is
+   across slices (each already reflects an exact date sub-range), goal target values are summed as
+   `goal × weight` (this is how a goal gets prorated for a partial-month custom range).
+9. **`src/components/charts/GoalBarChart.jsx`** (new) — Recharts-based `GoalVsAchievedBar` (single
+   goal-vs-achieved pair, for Value/Visits/Acquisition) and `GoalVsAchievedBreakdown` (multi-row
+   horizontal bars, one per product/category/customer). Colors reuse this app's own existing
+   semantic convention (`#2563eb` blue = target/goal, `#10b981` green = achieved — the same colors
+   Dashboard's tiles already used), validated CVD-safe via the dataviz skill's
+   `validate_palette.js` (PASS; the one contrast WARN is mitigated with an always-on legend + direct
+   value labels on bars, not color alone). Also exports `ChartSection`, a shared card wrapper.
+10. **`src/components/MemberGoalDetail.jsx`** (new) — the single member-level drill-down
+    implementation, replacing THREE previous divergent ones (`Dashboard.jsx`'s old
+    `MemberDetailSheet`, `Targets.jsx`'s own `DrillSheet`, which had a **live crash bug** — line 14
+    referenced `customers`, never destructured from `useData()`, so opening any member's drill-down
+    on the Targets page threw `ReferenceError`). Takes `slices` (same shape as above) and renders one
+    `ChartSection` per active parameter via `aggregateForMembers([member.id], ...)`.
+11. **`Dashboard.jsx` rework** — existing non-goal tiles (pending approvals, expenses, invoices, New
+    Customer Visits funnel) are untouched. New: Today/Monthly/Custom tab bar; Monthly has a
+    period-picker (`listRecentPeriods(12)`) to view past months (fetches that period's goals/params
+    on demand and caches them in local `historicalCache` state — not pushed into global `useData`,
+    since only the current month is the "live" one everywhere else in the app); Custom has two date
+    inputs. Below the tabs: **Organization-level** charts (`aggregateForMembers` over *all*
+    `members`), then a **Managers** list (grouped via the new `manager_id`, with an "Unassigned"
+    bucket for members nobody's claimed yet) — tapping a manager opens `ManagerLevelSheet` (new,
+    local to this file) showing that team's aggregate charts + a member list — tapping a member opens
+    `MemberGoalDetail`.
+12. **`Targets.jsx`** — fixed the crash bug above by switching to `MemberGoalDetail`; now correctly
+    labeled "This month" since `goals`/`achievements` from context are period-scoped.
+
+**Still open / not done yet (at first build, before the redesign below):**
+- ~~Schema not yet applied~~ — done, user confirmed all 3 `alter table` blocks ran successfully
+  (2 Aug 2026; `members.manager_id` had actually already existed pre-session and was skipped safely).
+- **Historical months have no data yet** — since goals only just became monthly, the Monthly tab's
+  period-picker and any Custom range touching a past month will show "no approved goals" until at
+  least one full monthly cycle has actually run.
+- **Custom-period goal comparison uses each overlapping month's own approved goal**, prorated by day
+  overlap — deliberately NOT a simplified "always use current month's goal" shortcut, since the
+  approved plan specifically called for per-period reconciliation. Verify this reads sensibly once
+  there's real multi-month data.
+- **`recharts` added as a new dependency** (`npm install recharts`, ~90kb gzipped) — first chart
+  library in this app; bundle grew from ~753kB to ~1.16MB gzipped-194kB→312kB. Pre-existing
+  `chunkSizeWarningLimit` warning (present before this session too) is now more prominent; not
+  addressed (code-splitting) since out of scope for this change.
+- **`npm audit` flags a high-severity `react-router`/`react-router-dom` advisory** — unrelated,
+  pre-existing (surfaced by the `npm install`, not introduced by it), not touched — `--force` would
+  be a breaking change to routing, out of scope.
+
+### Post-build fixes: Sheet z-index nesting bug + full visual redesign (same 2 Aug 2026 session)
+
+User feedback after the schema went live: "drill down is not happening," and the charts looked bad
+— repetitive bar charts that duplicated what the top tiles already showed, wanted "a mix of pie
+charts, bar charts, meter and other charts."
+
+**Root cause of "drill down is not happening" — a real bug, not just a UX complaint:** `ui.jsx`'s
+shared `Sheet` component hardcoded `zIndex: 300`. `Dashboard.jsx` mounts `MemberGoalDetail` and
+`ManagerLevelSheet` simultaneously once you drill Manager → Member (clicking a team member inside
+`ManagerLevelSheet` sets `selectedMember` but does NOT clear `selectedManagerId`, by design — closing
+the member sheet should return you to the still-open manager sheet). Both Sheets shared the exact
+same z-index, so the later-mounted-in-DOM one (`ManagerLevelSheet`, since it's declared after
+`MemberGoalDetail` in `Dashboard.jsx`) silently rendered on top and fully covered the newly-opened
+member sheet. Clicking a team member visibly did nothing. **Fixed:** `Sheet` now takes an optional
+`zIndex` prop (default 300, unchanged everywhere else in the app). `MemberGoalDetail` passes it
+through; `Dashboard.jsx` opens it at `zIndex={320}` so it always stacks above a Manager-level sheet
+it might be nested inside.
+
+**Visual redesign — replaced the repetitive bar-chart-everywhere approach with a real mix:**
+1. **`GoalVsAchievedBar` deleted entirely** (was the single Goal-vs-Achieved 2-bar comparison used
+   for every scalar parameter at every level — the main source of visual repetition). Confirmed
+   unused anywhere else before removing.
+2. **New `MeterGauge`** (`GoalBarChart.jsx`) — compact Recharts `RadialBarChart` progress ring per
+   scalar parameter (Sales Value / Outlet Visits / Distributor Creation), showing `{percent}%` in the
+   center. Color reuses this app's existing red/amber/green status convention (`ui.jsx`'s `barColor`
+   thresholds: ≥75% green, ≥50% amber, else red) rather than a new ramp.
+3. **New `ContributionDonut`** (`GoalBarChart.jsx`) — Recharts `PieChart` donut showing "share of
+   achieved value" across a set of people (Managers at Org level, Team Members at Manager level).
+   This is genuinely new information the tiles/meters don't show ("who's actually driving the
+   number"), which is why it was added rather than just restyling the old bar chart. Slice colors
+   reuse each person's own existing avatar `color` field (the same one their `Av` bubble already uses
+   elsewhere in the app) for visual continuity, falling back to a validated categorical palette
+   (`dataviz` skill's `scripts/validate_palette.js` — 8-color fallback set, PASS) when a color isn't set.
+4. **`GoalVsAchievedBreakdown` (multi-row horizontal bars) kept as-is** for Products/Categories/
+   Customers — this is the one place a bar chart is actually the right form (comparing several named
+   items' goal vs. achieved), per the `dataviz` skill's form heuristic.
+5. **Organization level no longer shows a Sales Value chart at all** — it exactly duplicated the
+   existing "Approved targets"/"Achieved" tiles at the top of the page (same numbers, same
+   comparison, just a different shape). Replaced with: Visits/Acquisition meters (parameters with NO
+   existing tile anywhere) + the Manager-contribution donut + Products/Categories breakdown bars.
+6. **Manager level** (`ManagerLevelSheet`, inside `Dashboard.jsx`) — 3 meters (Value/Visits/
+   Acquisition, no tile-duplication concern at this nested level) + Member-contribution donut +
+   Products/Categories bars.
+7. **Member level** (`MemberGoalDetail.jsx`) — 3 meters instead of 3 stacked bar-comparison cards;
+   Products/Categories/Customers breakdown bars kept.
+
+**Still open:**
+- **Not yet browser-confirmed after this redesign** — `vite build` and scoped `eslint` clean (`ui.jsx`
+  has 2 pre-existing `react-refresh/only-export-components` errors, confirmed identical before this
+  session's changes — unrelated). User should re-check the same drill-down path that was broken:
+  Organization → tap a Manager → tap a Team Member, confirm the member sheet now visibly opens on top.
+- **`GoalVsAchievedBar` is gone** — if a future ask wants a direct goal-vs-achieved bar comparison
+  again (as opposed to a meter), it'd need to be re-added; not resurrected speculatively here.
+
+### Bigger picture: role-specific dashboards + Admin rollup — ALL 4 DOMAINS BUILT (2 Aug 2026
+session), NOT YET BROWSER-TESTED
+
+**User's ask, condensed:** every role gets its own dashboard (Sales Team, Warehouse Manager, Driver,
+HR), and Admin's dashboard becomes a single page with one section per domain — each section shows
+that domain's totals and drills down into the same detail its own role would see. Confirmed via
+AskUserQuestion: Admin's page is **one long page with 4 stacked sections** (not separate tabs), and
+Warehouse/Driver "totals" should show **both today's activity AND open/ongoing work** (not just
+today). Build order: **Sales first** (since the Goals/Achievement work above already started it),
+then Warehouse, Driver, HR — not yet begun.
+
+**Existing per-role content inventoried before starting** (so future sessions don't have to
+re-derive this):
+- **Sales Team** — `TeamApp.jsx`'s Home tab (now rebuilt, see below) + the Goals system above.
+- **Warehouse Manager** — `WMDashboard.jsx` already has substantial dashboard content (Orders Ready
+  to Pick, Pending Picking, Picking Complete, Load List, Vehicle Parked, Loading In Progress,
+  category/distributor breakdowns) — likely needs reorganizing into the new pattern rather than
+  building from scratch.
+- **Driver** — no unified dashboard exists; 3 separate tabs (`AssignedLoads.jsx`,
+  `DriverOrderConfirmTile.jsx`, `AllocationJourneyTile.jsx`) with no home/summary view tying them
+  together. Clean slate.
+- **HR** — `Attendance.jsx`'s `AttendanceHR` component is dashboard-like (Stage 1/2 approval queues,
+  roster, Manpower Production Issues card) but tangled together with the approval actions themselves
+  — needs untangling into "dashboard view" vs "approval workflow" if it's going to have a rollup
+  section on Admin's page.
+
+**Sales piece — both halves now built (2 Aug 2026 session):**
+1. **Sales Team's own dashboard** (`TeamApp.jsx` Home tab, "My Goals" card) — replaced the old flat
+   4-tile row (My target/Achieved/Progress/Goal status) + single `Bar` with: a Today/Monthly toggle
+   (reusing `monthElapsedRatio` from `period.js` for the Today pace-check, no Custom-range option at
+   this individual level — that's an Admin-only concept), then the same `MeterGauge`/
+   `GoalVsAchievedBreakdown` components the Admin dashboard uses, scoped to just this one member via
+   `aggregateForMembers([mid], [oneSlice], ...)` — same pure aggregation function, just a
+   single-member, single-slice call. The New Customer Visits funnel and attendance snapshot stay
+   exactly where they were (kept, per user's explicit confirmation that the funnel belongs bundled
+   with Sales content, not split out separately). `approvedVal`/`valPct` (the old tile-row's derived
+   values) were deleted as dead code once nothing referenced them anymore.
+2. **Admin's "Sales" section** — this is functionally already what `Dashboard.jsx` (the shared
+   Admin/Manager dashboard) contains today: Today/Monthly/Custom tabs, Org-level totals, Manager →
+   Member drill-down, New Customer Visits funnel. It hasn't been physically restructured into a
+   "section within a bigger multi-domain page" yet — that restructuring makes more sense to do once
+   Warehouse/Driver/HR sections actually exist to stack alongside it, rather than building an empty
+   4-section shell now. Treat `Dashboard.jsx`'s current content as "the Sales section, pending its
+   siblings."
+
+**Warehouse/Driver/HR sections — built same session, right after Sales, per "let's complete the
+dashboard for all in admin page":**
+
+Rather than re-implementing every nested drill-down each role's own page already has (WMDashboard.jsx
+alone has ~6 tiles each with their own Sheet), each new section is a **condensed summary + drill-one-
+level-down + a "View full X Dashboard" link** (via the existing `onNavigate` prop) that jumps to the
+already-built rich page for deeper interaction. All three are `role?.id === 'r1'` (Admin-only) —
+Manager doesn't see them, matching "Admin's dashboard becomes a rollup," not Manager's.
+
+1. **`WarehouseSection`** (new, local component in `Dashboard.jsx`) — fetches
+   `fetchPickingOrders`/`fetchLoads`/`fetchParkedAllocations`/`fetchInProgressAllocations` on mount
+   (same pattern `WMDashboard.jsx` already uses locally, nothing added to `useData`'s global
+   context). Tiles: Ready to Pick, Pending Picking, Picking Complete, Loads Created Today, Vehicle
+   Parked, Loading In Progress — same six `WMDashboard.jsx` shows. Tap a tile → Sheet listing those
+   orders/allocations (row rendering branches on `!!r.vehicle` since allocations and orders have
+   different shapes). "View full Warehouse Dashboard" → `onNavigate('wmDashboard')`.
+2. **`DriverSection`** (new) — fetches `fetchDriversWithLockStatus`/`fetchAllocations`. Tiles: Active
+   Drivers (locked), Available Drivers, Loads In Transit, Awaiting Journey Approval (taps straight
+   through to `journeyApprovals`, since that's already the exact right screen for that number). Tap
+   Active/Available → Sheet listing each driver with their current allocation's vehicle number +
+   status (cross-referencing `allocations` by `driver_id === member.member_id`) — this is the
+   "drill down to individual" for Driver, since there's no manager-style hierarchy here.
+3. **`HRSection`** (new) — fetches `fetchPendingPunchApprovals`/`fetchPendingActivityApprovals`.
+   Tiles: Total Employees, Fully Approved Today (`total - punch pending - activity pending`),
+   Punch-In Approvals Pending, Activity Approvals Pending, **Expenses Pending** (added in a same-day
+   follow-up, see below). Tap a pending-approvals tile → Sheet listing those employees. "View full
+   Attendance Dashboard" → `onNavigate('attendance')`.
+4. **`SectionHeader`** (new, tiny local component) — `icon` + `title` divider used above each of the
+   sections (💼 Sales, 🏭 Warehouse, 🚚 Driver, 📅 HR, 💰 Accounts) so the single-page-multi-section
+   structure the user confirmed is visually legible without yet doing any real design pass.
+
+**5th section added same session, follow-up ask ("add one accounts dashboard and move expenses to
+both hr and accounts and invoice to accounts"):**
+- **New `AccountsSection`** — Total Invoices, Invoices Pending Approval, Invoices Approved, Expenses
+  Pending. Unlike Warehouse/Driver/HR this needed no new fetches at all — `invoices`/`expenses` were
+  already loaded globally by `useData`, just never surfaced past the old flat top-of-page tiles. "View
+  full Invoices" → `onNavigate('invoices')`, "View Expense Approvals" → `onNavigate('expApprovals')`.
+- **Expenses now shown in BOTH `HRSection` and `AccountsSection`** (user's explicit ask — not a
+  mistake if it looks duplicated) — each computes `pendingExpenses` independently from the same
+  `expenses` prop, since HR and Accounts may both care about the same pending-expense queue for
+  different reasons (HR: employee-relations angle; Accounts: the money angle).
+- **Removed the old generic "Expenses pending" / "Invoices" tiles from the top-of-page row** (the
+  ungrouped row above the Sales section) — that content now lives exclusively inside the HR/Accounts
+  sections instead of also floating at the top redundantly. The top row now only has Approved
+  targets / Achieved / Goals pending (all Sales-goal-related, left alone).
+- **New shared `ApprovalDrillRow`** component — one row renderer reused by both `HRSection`'s and
+  `AccountsSection`'s drill Sheets, since punch/activity rows (`r.user`), expense rows (`r.member`),
+  and invoice rows (no join, detected via `r.lines`/`r.invoice_lines` presence, amount computed from
+  line items same as `Invoices.jsx` does) all carry their "who"/amount under different shapes.
+
+**Still open / not started:**
+- **Not yet browser-tested** — `vite build` and `eslint` clean on `Dashboard.jsx` (zero errors, not
+  even pre-existing ones) across both the initial 4-section build and this Accounts follow-up. Still
+  needs a real check: do the Warehouse/Driver/HR/Accounts tile counts match what
+  `WMDashboard.jsx`/`Attendance.jsx`/`Invoices.jsx` show for the same data, and do the drill Sheets
+  and "View full X" links go to the right place.
+- **Visual design pass is still deferred** — user asked to finalize content/flow first (itself in
+  response to being shown a polished third-party dashboard screenshot as visual inspiration — Jira's
+  marketing "Reports and insights" page: greeting header, stat tiles, a donut card with legend, a
+  workload-style horizontal-bar card). Content/flow for all 4 domains is now built end-to-end; next
+  ask for this area will likely be the design pass. Treat that screenshot as a layout/spacing/polish
+  reference only (card styling, legend placement, typography rhythm) — not a literal Jira clone.
+- **Warehouse/Driver/HR sections are summaries, not full parity with Sales' 3-level drill** — Sales
+  got a real Org→Manager→Member hierarchy because that structure already existed (via the new
+  `manager_id` field). Warehouse/Driver/HR don't have an equivalent natural hierarchy (no
+  per-warehouse WM assignment, no manager-of-drivers concept), so they intentionally drill only one
+  level before handing off to the existing full page. Revisit only if the user specifically wants
+  deeper native drill-down instead of the "View full X" handoff.
+
+### Sales section replaced with a dark "SalesSnapshot" widget (2 Aug 2026 session, same day as the
+5-section build above) — first real design-pass work, BUILT, NOT YET BROWSER-TESTED
+
+**User's ask, condensed:** shown a Geckoboard sales-dashboard screenshot (dark cards: revenue trend
+line, big revenue numbers, a deals leaderboard, a deals feed, pipeline stage bars, stale-deal
+alerts) and asked for something similar, including "orders under process," occupying the top 1/3 of
+the Admin dashboard screen. Confirmed via AskUserQuestion: **replace** the old tabbed Sales section
+entirely (not add alongside it), **dark card theme** matching the reference, and "orders under
+process" as a **simple total count + value** (not a stage-by-stage pipeline breakdown).
+
+**What got removed:** the entire Today/Monthly/Custom tab system (`tab`/`monthlyPeriod`/
+`customFrom`/`customTo`/`historicalCache`/`loadingSlices`/`fetchPeriodBundle`, the big `useEffect`
+that built `slices` from them), the org-level `ChartSection`s (Visits/Acquisition meters, the old
+`ContributionDonut` "Achieved Value by Manager", Products/Categories breakdown bars), the standalone
+"Managers" list `Card`, and the top-of-page "Approved targets"/"Achieved"/generic tile row. `slices`
+is now just a fixed one-item array for the current month (`[{goalsMap: goals, paramsMap: params,
+achievementsMap: achievements, weight: 1}]`) — no more historical period fetching at the Admin
+top-level. Manager/Member drill-down (via `ManagerLevelSheet`/`MemberGoalDetail`, still fully
+intact) is now always "this month," with no picker — a real capability reduction from before,
+flagged here in case that's wanted back later.
+
+**What got built — new `src/components/SalesSnapshot.jsx`:**
+1. **Revenue This Month** — Recharts `LineChart`, cumulative daily revenue trend built by grouping
+   `invoices` (already global via `useData`) by day-of-month and running-summing line totals. Dark
+   axes/tooltip styling.
+2. **Revenue** panel — big number (this month = `totalAch`, reused from Dashboard.jsx) + this
+   week's revenue (invoices in the last 7 days).
+3. **Manager Leaderboard** — this is the OLD `managerContribution` computation (per-manager achieved
+   value, star for #1) rendered as a ranked list instead of a donut chart — same data, new shape.
+   Each row is clickable (`onSelectManager`) and opens the exact same `ManagerLevelSheet` as before
+   (including the synthetic `'unassigned'` id for members with no manager) — drill-down capability
+   fully preserved, just reached from the leaderboard now instead of a separate "Managers" card.
+   `managerContribution` gained an `id` field (`u.id` or `'unassigned'`) for this wiring and is now
+   pre-sorted descending.
+4. **Recent Orders** — last 5 rows from `db.fetchAllOrdersWithItems()` (new local fetch inside
+   `SalesSnapshot`, same self-contained pattern as `WarehouseSection`/etc — nothing added to
+   `useData`'s global context), showing member · distributor — value, relative time.
+5. **Stats panel** — Orders Under Process (count + value: any order whose `allocation?.status !==
+   'completed'`, i.e. hasn't reached final delivery — simple total, not staged, per the confirmed
+   answer), Stale Orders (>3 days old and still under process, red-flagged like the reference's
+   "stale deals"), Target Achievement % (reused `pct(totalAch, totalTarget)`), Avg Order Value,
+   Goals Pending Review.
+6. **React Compiler purity fixes needed during this build** (worth remembering for any future
+   Recharts/date-math component): `Date.now()` can't be called directly during render — capture one
+   `const now = new Date()` / `now.getTime()` up front and derive everything from that single value.
+   Building a running-cumulative array with a mutated `let running` inside `Array.from`'s callback
+   also isn't allowed — rewrote as an immutable `.reduce()` that reads the previous array entry
+   instead of closing over a mutable outer variable.
+
+**Still open / not done yet:**
+- **Not yet browser-tested** — `vite build` and `eslint` clean on `Dashboard.jsx` and the new
+  `SalesSnapshot.jsx`. Needs a real check: does the revenue trend line look sane, does the
+  leaderboard still correctly open `ManagerLevelSheet`/`MemberGoalDetail` on tap (this was the exact
+  z-index bug fixed earlier this session — worth re-confirming it still holds after this rework),
+  and do the Orders Under Process / Stale Orders counts look right against real order data.
+- **Period-picking is gone from the Admin top-level view** — see "What got removed" above. If the
+  user wants to look at a past month's Sales performance again, that capability needs to be
+  reconsidered/rebuilt (it's not simply commented out — the whole tab/fetch system was deleted).
+- **Products/Categories breakdown by organization is no longer shown anywhere at the top level** —
+  still viewable one level down (inside `ManagerLevelSheet`/`MemberGoalDetail`), just not at the
+  Org/SalesSnapshot level anymore. Revisit only if the user wants it back at a glance.
+- ~~Warehouse/Driver/HR/Accounts sections still plain light-card style~~ — done same session, see
+  below.
+
+### Design pass extended to Warehouse/Driver/HR/Accounts (same 2 Aug 2026 session, immediately
+after SalesSnapshot) — BUILT, NOT YET BROWSER-TESTED
+
+User said "continue" right after the SalesSnapshot build — extended the same dark-panel visual
+language to the other four rollup sections so the whole Admin page reads as one system instead of
+one dark widget followed by plain light `Tile`/`Card` sections.
+
+**New shared primitives in `Dashboard.jsx`** (module-level, above `Dashboard()`):
+- `darkContainer` — the `{background:'#0f172a', borderRadius:16, padding:16}` wrapper, same as
+  `SalesSnapshot`'s outer panel.
+- `DarkStat` — replaces `Tile` inside these sections: dark `#1e293b` card, uppercase gray label,
+  big bold number (colored per-stat, same semantic colors as before just lightened for dark-bg
+  contrast — e.g. `#2563eb`→`#60a5fa`, `#f59e0b`→`#fbbf24`, `#10b981`→`#34d399`, `#dc2626`→`#f87171`),
+  optional `sub` line, click-to-drill unchanged.
+- `DarkFooterLinks` — replaces the old light `Card` containing "View full X →" buttons: a row of
+  cyan (`#38bdf8`) links under a subtle top border, inside the same dark container as the stats
+  (previously the link lived in its own separate white `Card` below the tile grid).
+- `DarkLoading` — replaces the light "Loading..." `Card` fallback shown before each section's first
+  fetch resolves.
+
+**What did NOT change:** the drill-down `Sheet`s (`ApprovalDrillRow`, the Warehouse/Driver custom
+row rendering) are still the app's standard light theme — only the dashboard-level summary panels
+went dark, matching how `SalesSnapshot` itself already worked (its own Manager/Member drill-down
+still opens light `Sheet`s). No data-fetching or business logic changed in any of the four sections,
+purely a visual reskin. `Tile` import removed from `Dashboard.jsx` (no longer used anywhere in the
+file); `Card` import kept (still used by the New Customer Visits funnel, `StageLeadListSheet`,
+`LeadDetailSheetAdmin`, `ManagerLevelSheet`).
+
+**Still open (at the time of the design pass above):**
+- ~~Not yet browser-tested~~ / ~~New Customer Visits funnel still light~~ — both addressed in the
+  same-day follow-up below.
+
+### SalesSnapshot follow-up: Today/Month/Year tabs, bar chart fix, Top 10 panels, funnel goes dark
+(2 Aug 2026 session, immediately after the design pass above) — BUILT, NOT YET BROWSER-TESTED
+
+User feedback after seeing the first `SalesSnapshot` build: wanted Today/This Month/This Year tabs
+back (defaulting to This Month) rather than no time control at all; the revenue trend line looked
+like an artificial straight diagonal (sparse invoice data + a smoothly-interpolated `Line` chart —
+see below); wanted the New Customer Visits funnel converted to the same dark design (closing the
+"dark→light→dark" inconsistency flagged in the previous entry); and wanted Top 10 Customers / Top
+10 Products added to the snapshot.
+
+**`src/components/SalesSnapshot.jsx` changes:**
+1. **`TABS = [today, month, year]`**, default `'month'`, rendered as pill buttons at the very top of
+   the widget (cyan `#38bdf8` when active, matching the widget's existing accent color).
+   `rangeForTab(tab, now)` computes the `{from, to}` window. Scoped by the active tab: the revenue
+   trend chart, the "Revenue" big number, and Top 10 Customers/Products. **Deliberately NOT
+   tab-scoped:** the Manager Leaderboard (goals are inherently monthly — see the Monthly Goals
+   architecture — there's no meaningful "today" or "this year" goal-vs-achievement to show, so it
+   always reads "this month" regardless of the tab, labeled accordingly) and the Orders Under
+   Process/Stale/Avg Order Value/Goals Pending stats (live current-state snapshots, not historical
+   ranges).
+2. **Line chart → Bar chart, root-caused, not just re-skinned.** The old chart used Recharts' `Line`
+   with `type="monotone"` over a *cumulative* daily sum — with only a handful of real invoices, a
+   smoothly-interpolated cumulative line inevitably looks like a straight ramp between the few real
+   data points, reading as fake/artificial. Switched to `BarChart`/`Bar` over **non-cumulative**
+   per-bucket revenue (`buildTrend(tab, invoices, now)`): daily bars for Today (last 7 days, since a
+   single day has no sub-daily breakdown in this data) and This Month, monthly bars (Jan..current)
+   for This Year. Bars show real gaps/spikes honestly instead of interpolating a line through them —
+   the right chart-type fix for sparse data, not just a cosmetic change.
+3. **New `topEntities(invoices, range, customers)`** — aggregates invoice value by `distributor_id`
+   (customer name resolved via the `customers` prop, now passed into `SalesSnapshot` from
+   `Dashboard.jsx` — `invoices` has no distributor join from `fetchInvoices()`, so this does the
+   lookup client-side against the already-loaded distributors array) and by `product_id` (name
+   already available via each line's joined `product.name`). Rendered via new shared `RankedList`
+   component (same visual pattern as the Manager Leaderboard — numbered rows, name + value) as **Top
+   10 Customers** and **Top 10 Products** panels, both re-titled with the active tab's label.
+4. **Old "This week" revenue sub-stat removed** — superseded by the Today tab, which covers the same
+   need more precisely (an explicit day rather than a rolling 7-day window that didn't match any of
+   the new tabs' semantics).
+
+**`src/pages/shared/Dashboard.jsx` changes:**
+- `<SalesSnapshot>` now also receives `customers={customers}` (needed for the Top Customers lookup
+  above).
+- **New Customer Visits funnel rebuilt using the same `darkContainer`/`DarkStat` primitives** as the
+  Warehouse/Driver/HR/Accounts sections (previously a light `Card`+`CH`) — same 5 stage counts
+  (Total Visited/Interested/Not Interested/Final/Distributor Created), same click-to-drill into
+  `StageLeadListSheet`, just visually converted. This was the specific fix for the
+  dark→light→dark→dark→dark→dark inconsistency flagged in the previous entry — the whole Admin page
+  is now dark-panel-first top to bottom with no light interruption before the drill-down `Sheet`s
+  (which intentionally stay light throughout, per the established convention).
+
+**Still open:**
+- **Not yet browser-tested** — `vite build` and `eslint` clean, zero errors, across the whole
+  SalesSnapshot rework + funnel conversion.
+- **`invoice.date` is compared as a JS `Date` without the local-calendar-day care taken elsewhere in
+  this codebase** (e.g. `db.js`'s `todayStr()`, `period.js`'s `getCurrentPeriod()` both explicitly
+  avoid `toISOString()` for this exact reason) — if `invoices.date` turns out to store a bare
+  date string, parsing it can land on the wrong side of a day/month boundary near midnight IST.
+  Not fixed proactively since it mirrors existing sparse-data uncertainty in this new component;
+  flag if Today-tab numbers look off by one day when tested with real timestamps.
+
+### Immediate correction: back to a Line chart + colorized dark theme (same 2 Aug 2026 session,
+right after the Bar-chart follow-up above) — BUILT, NOT YET BROWSER-TESTED
+
+User pushed back on two specifics right after seeing the Bar-chart version: wanted a **line** graph
+back (not bars), explicitly "date vs value"; and said the dark panels looked "dull because of all
+white" and asked for color matching the theme.
+
+1. **`BarChart`/`Bar` → `LineChart`/`Line`, but keeping the non-cumulative per-bucket `buildTrend`
+   data from the previous entry** (day-by-day or month-by-month real figures, not a running total).
+   This is the actual fix for the original "looks like a straight line" complaint from two entries
+   ago — the problem was never line-vs-bar, it was *cumulative* data making any chart type look like
+   a ramp. A line over real per-period values reads as a proper "date vs value" trend with real ups
+   and downs. Added visible dots (`dot={{r:3}}`, `activeDot={{r:5}}`) so individual date points read
+   clearly, matching "date vs value" literally.
+2. **Colorized every primary value in `SalesSnapshot.jsx`** that was hardcoded `#fff` (the muted
+   gray labels like `#94a3b8`/`#64748b` were left alone — those are intentional secondary-text
+   hierarchy, not the "dull" complaint): Revenue big number → cyan `#38bdf8` (matches the chart
+   line), Manager Leaderboard values → amber `#fbbf24` (matches the leaderboard's own ★ color),
+   Recent Orders value → green `#34d399` (split out of what used to be one plain-gray compound
+   line), Top 10 Customers values → purple `#a78bfa`, Top 10 Products values → blue `#60a5fa`
+   (`RankedList` gained a `valueColor` prop for this), Stats panel → one accent color per stat
+   (Orders Under Process=blue, Stale=red *[unchanged conditional]*, Target Achievement=green, Avg
+   Order Value=amber, Goals Pending=purple). All colors reuse the same accent palette already
+   established for `DarkStat` across the Warehouse/Driver/HR/Accounts sections — no new colors
+   invented, just applied more consistently here too.
+
+**Still open:**
+- **Not yet browser-tested** — `vite build`/`eslint` clean, zero errors.
+
+### Top 10 lists gain a share bar + percentage (same 2 Aug 2026 session, right after the line-chart
+correction) — BUILT, NOT YET BROWSER-TESTED
+
+**User's ask:** each Top 10 Customers/Products row should show a small colored bar for that row's
+value against the total, plus the percentage share in brackets.
+
+`RankedList` (`SalesSnapshot.jsx`) gained a `totalValue` prop — the denominator is the whole period's
+`rangeRevenue` (all revenue in the active tab's range), **not** the sum of just the 10 rows shown, so
+"42%" reads as "42% of all revenue this period," the more meaningful number. The value text gained a
+`(NN%)` suffix in muted gray. Both `<RankedList>` call sites pass `totalValue={rangeRevenue}`.
+
+**Immediate follow-up in the same breath — bar moved inline + made dual-colored:** user clarified the
+bar should sit beside the name in the same row (not on its own line below), and be dual-colored —
+"this row's value" vs "the rest of the total." Row layout is now one flex line: rank → name
+(truncates) → a flexible-width bar → value `(NN%)`. The bar itself is two-tone: a translucent tint of
+the list's `valueColor` (`color + '33'`, ~20% alpha) as the full-width track representing the total,
+with a solid `valueColor` fill inside it at `width: {share}%` representing this row's slice — same
+hue for both tones so it reads as one coherent bar, not two clashing colors.
+
+**Still open:**
+- **Not yet browser-tested** — `vite build`/`eslint` clean, zero errors. Sanity check once real data
+  is in: do the bar widths/percentages look right, does the inline layout hold up with long
+  customer/product names (relies on `flexShrink`/`text-overflow: ellipsis` truncating the name before
+  it pushes the bar+value off), and does `rangeRevenue` ever come out `0` in a way that makes every
+  bar 0% (e.g. a tab with orders but no invoices yet) — expected behavior, not a bug, but worth
+  confirming it reads sensibly rather than looking broken.
+
+**One more same-breath follow-up — bar recolored independent of the value font:** user wanted the
+bar's colors distinct from the value text color, and the "remaining" segment to read as a real color
+rather than a near-blank gap (it had been a 20%-alpha tint of the same hue, which read as too
+subtle). Introduced fixed `BAR_ACHIEVED` (`#34d399` green) / `BAR_REMAINING` (`#475569` slate)
+constants, used for every `RankedList` row's bar regardless of list — so the bar is now a consistent
+achieved/remaining language across both Top Customers and Top Products, while the value font keeps
+its own per-list identity color (purple/blue) as before. Three visually distinct colors per row now:
+name (light gray), bar (green/slate), value (purple or blue).
+
 ### To continue in a new chat
 **Attendance / Punch-In System is fully built, schema-applied, and browser-confirmed working** as of
 the 2 Aug 2026 session (commits `42c9797` → `190c1ac`). Nothing further needed to pick it back up.
@@ -842,8 +1370,51 @@ browser-test:
    show up with a resolved-at timestamp on the Production Issues page's new "Resolved" tab. Also
    confirm manually unticking a checkbox (without changing status) logs a resolution the same way.
 
-Also still open from earlier in the same overall session, untouched since — unrelated to Attendance
-or Stock Update:
+**Monthly Goals + Org→Manager→Member Dashboard — schema is applied, manager-assignment walkthrough
+done.** Note: the Org-level Today/Monthly/Custom tabs + meters/donut/breakdown-bars display
+described earlier in this file's history no longer exists at the top level — it was superseded by
+`SalesSnapshot` (see "Bigger picture" and the entries after it). Manager/Member drill-down
+(`ManagerLevelSheet`/`MemberGoalDetail`, with their own meters/donut/breakdown-bars) is still fully
+intact and reached via the Sales snapshot's Manager Leaderboard instead of a separate Managers list.
+Browser-test in order:
+1. Confirm managers are assigned (Parameters.jsx dropdown) for at least one Sales Team member, and
+   that member has at least one approved goal field for the current month (needed for any chart to
+   show real data — otherwise every section reads "No approved goals for this period").
+2. In `SalesSnapshot`'s Manager Leaderboard, tap a manager → confirm `ManagerLevelSheet` opens with 3
+   meters + the Member-contribution donut + team member list.
+3. **The specific thing that was broken once already:** tap a Team Member from inside that Manager
+   sheet → confirm `MemberGoalDetail` visibly opens on top (was previously hidden behind the Manager
+   sheet due to a z-index bug, fixed via `Sheet`'s `zIndex` prop, Dashboard passes 320 for the member
+   level) — re-confirm this still holds after all the later `SalesSnapshot` rework.
+4. Confirm `Targets.jsx`'s per-member drill-down no longer crashes (the old bug) and matches
+   Dashboard's Member-level numbers for the same person/period.
+5. `TeamApp.jsx`'s Home tab — confirm a Sales Team member's own "My Goals" card shows the
+   Today/Monthly toggle + meters/breakdown bars correctly for their own approved goals, and that the
+   New Customer Visits funnel + attendance calendar below it still work as before.
+6. **Log in as Admin specifically:** scroll down past the Sales section on
+   `Dashboard.jsx` and confirm the Warehouse/Driver/HR/Accounts sections appear (Manager should NOT
+   see these), tile counts look right, tapping a tile opens the right drill Sheet, and each "View
+   full X" link actually navigates there. Specifically check Expenses Pending shows the same count
+   in both HR and Accounts sections, and that the top-of-page row no longer shows the old standalone
+   Expenses/Invoices tiles (intentionally removed, moved into the sections). See "Bigger picture:
+   role-specific dashboards + Admin rollup" above for exactly what each section fetches and shows.
+
+**The visual design pass is done for the whole Admin dashboard** — Sales/Warehouse/Driver/HR/
+Accounts sections plus the New Customer Visits funnel all now use the dark-panel treatment,
+colorized (not all-white) per the last entry, and `SalesSnapshot` has Today/This Month/This Year
+tabs, a **line** revenue trend (date vs. value, non-cumulative), and Top 10 Customers/Products
+panels, each row with a dual-toned share bar + percentage. Read the 5 entries above in order ("Sales
+section replaced...", "Design pass extended...", "SalesSnapshot follow-up...", "Immediate
+correction...", "Top 10 lists gain a share bar...") for the full history — NONE of it has been
+browser-tested yet, this whole dashboard rework happened across one long chat without
+a single real render check. Full read-through needed first: switch between all 3 tabs and confirm
+the revenue line/Top 10 panels update and the line shows real per-period values (not a flat ramp);
+confirm the Sales leaderboard still opens Manager/Member drill-down correctly (the z-index concern
+from earlier in the session); confirm the New Customer Visits funnel's click-to-drill still works;
+confirm all four Warehouse/Driver/HR/Accounts dark panels still render/drill correctly; general
+visual gut-check that the colorization reads as "colorful," not garish.
+
+Also still open from earlier in the same overall session, untouched since — unrelated to the above:
 1. **Journey Phase 4** (vein-diagram timeline, admin remarks, PDF export, Approved Journeys lists) —
    still needs `journey_complete_approval_remarks` added to `vehicle_allocations`, and still not
    browser-tested.

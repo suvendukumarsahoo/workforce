@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useMemo } from 'react'
 import { useAuth } from './useAuth'
 import * as db from '../lib/db'
 import { computeAchievements, getGoalOverallStatus } from '../lib/achievementEngine'
+import { getCurrentPeriod, monthRangeForPeriod } from '../lib/period'
 
 const DataContext = createContext(null)
 
@@ -25,6 +26,7 @@ export function DataProvider({ children }) {
   const [visits, setVisits] = useState([])
   const [registrations, setRegistrations] = useState([])
   const [payments, setPayments] = useState([])
+  const [currentPeriod] = useState(getCurrentPeriod())
 
   useEffect(() => {
     if (!currentUser) return
@@ -39,7 +41,7 @@ export function DataProvider({ children }) {
   { data: sal }, { data: att }, { data: vis }, { data: reg }, { data: pay },
 ] = await Promise.all([
   db.fetchRoles(), db.fetchUsers(), db.fetchMembers(), db.fetchCategories(),
-  db.fetchProducts(), db.fetchDistributors(), db.fetchParameters(), db.fetchGoals(),
+  db.fetchProducts(), db.fetchDistributors(), db.fetchParameters(currentPeriod), db.fetchGoals(currentPeriod),
   db.fetchInvoices(), db.fetchExpenses(), db.fetchSalaries(),
   db.fetchAttendance(new Date().getMonth()+1, new Date().getFullYear()),
   db.fetchVisits(), db.fetchRegistrations(), db.fetchPayments(),
@@ -70,8 +72,8 @@ export function DataProvider({ children }) {
   }
 
   const achievements = useMemo(
-  () => computeAchievements(invoices, goals, products, distributors),
-  [invoices, goals, products, distributors]
+  () => computeAchievements(invoices, goals, products, distributors, visits, monthRangeForPeriod(currentPeriod)),
+  [invoices, goals, products, distributors, visits, currentPeriod]
 )
 
   function showToast(msg, duration = 2800) {
@@ -90,6 +92,7 @@ export function DataProvider({ children }) {
       visits, setVisits,
       registrations, setRegistrations,
       loading, loadAll, toast, showToast,payments, setPayments,
+      currentPeriod,
     }}>
       {children}
     </DataContext.Provider>
