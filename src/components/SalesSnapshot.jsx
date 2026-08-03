@@ -247,13 +247,16 @@ export default function SalesSnapshot({ totalTarget, totalAch, pendingGoals, lea
         <RankedList title={`Top 10 Products — ${tabLabel}`} rows={topProducts} formatValue={F} valueColor="#60a5fa" totalValue={rangeRevenue} />
 
         <div style={{ ...panelBase, flex: '1.4 1 260px', display: 'flex', flexWrap: 'wrap', gap: 10, alignContent: 'flex-start' }}>
-          {stats.map(([label, value, sub, color]) => (
-            <div key={label} style={{ flex: '1 1 45%', minWidth: 100 }}>
-              <div style={{ fontSize: 18, fontWeight: 800, color: label.startsWith('Stale') && staleOrders.length > 0 ? '#f87171' : color }}>{value}</div>
-              <div style={{ fontSize: 10, color: '#94a3b8' }}>{label}</div>
-              {sub && <div style={{ fontSize: 9, color: '#64748b' }}>{sub}</div>}
-            </div>
-          ))}
+          {stats.map(([label, value, sub, color]) => {
+            const emphasize = label === 'Orders Under Process'
+            return (
+              <div key={label} style={{ flex: '1 1 45%', minWidth: 100 }}>
+                <div style={{ fontSize: emphasize ? 22 : 18, fontWeight: 800, color: label.startsWith('Stale') && staleOrders.length > 0 ? '#f87171' : color }}>{value}</div>
+                <div style={{ fontSize: 10, color: '#94a3b8' }}>{label}</div>
+                {sub && <div style={{ fontSize: emphasize ? 12 : 9, color: '#64748b' }}>{sub}</div>}
+              </div>
+            )
+          })}
         </div>
       </div>
     </div>
