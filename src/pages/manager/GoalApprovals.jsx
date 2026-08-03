@@ -1,15 +1,15 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Av, Btn, GBadge, Sheet } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
 import { getGoalOverallStatus } from '../../lib/achievementEngine.js'
-import { formatPeriodLabel } from '../../lib/period.js'
+import { formatPeriodLabel, listRecentPeriods } from '../../lib/period.js'
 
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 
 export default function GoalApprovals() {
-  const { can } = useAuth()
+  const { can, role } = useAuth()
 const { goals, setGoals, members, params, products, distributors: customers, categories, showToast, loadAll, currentPeriod } = useData()
 const [reviewing, setReviewing] = useState(null)
 
@@ -61,13 +61,6 @@ const [reviewing, setReviewing] = useState(null)
     showToast('Review saved — member notified')
   }
 
-  if (pending.length === 0) return (
-    <div style={{ textAlign: 'center', padding: 60, color: '#9ca3af' }}>
-      <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
-      <div>No goals pending review for {formatPeriodLabel(currentPeriod)}</div>
-    </div>
-  )
-
   return (
     <div>
       <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>Reviewing goals for <strong>{formatPeriodLabel(currentPeriod)}</strong></div>
@@ -80,6 +73,12 @@ const [reviewing, setReviewing] = useState(null)
           onAction={handleAction}
           onClose={() => setReviewing(null)}
         />
+      )}
+      {pending.length === 0 && (
+        <div style={{ textAlign: 'center', padding: 60, color: '#9ca3af' }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>✅</div>
+          <div>No goals pending review for {formatPeriodLabel(currentPeriod)}</div>
+        </div>
       )}
       {pending.map(m => {
         const g = (goals || {})[m.id]
@@ -100,6 +99,76 @@ const [reviewing, setReviewing] = useState(null)
           </Card>
         )
       })}
+      {role?.id === 'r1' && <AdminGoalReset members={members} currentPeriod={currentPeriod} setGoals={setGoals} showToast={showToast} />}
+    </div>
+  )
+}
+
+// Admin-only: browse any member's goal for any month and reset it back to a fresh draft — separate
+// from the approve/reject workflow above, which only ever lists the *current* period's
+// pending/partial goals.
+function AdminGoalReset({ members, currentPeriod, setGoals, showToast }) {
+  const periods = listRecentPeriods(12)
+  const [period, setPeriod] = useState(currentPeriod)
+  const [periodGoals, setPeriodGoals] = useState(null)
+  const [confirming, setConfirming] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    db.fetchGoals(period).then(({ data }) => {
+      if (cancelled) return
+      setPeriodGoals(Object.fromEntries((data || []).map(g => [String(g.member_id), g])))
+    })
+    return () => { cancelled = true }
+  }, [period])
+
+  const doReset = async (memberId) => {
+    const { error } = await db.resetGoal(memberId, period)
+    if (error) { showToast('Error resetting goal'); return }
+    setPeriodGoals(prev => ({ ...prev, [String(memberId)]: { member_id: memberId, period, status: 'draft' } }))
+    if (period === currentPeriod) {
+      setGoals(prev => ({ ...prev, [memberId]: { status: 'draft' } }))
+    }
+    setConfirming(null)
+    showToast('Goal reset — member must set goals again for this month')
+  }
+
+  return (
+    <div style={{ marginTop: 24 }}>
+      <CH title="Reset Goals" sub="Admin only — wipe a member's goal for any month back to a fresh draft" />
+      <div style={{ padding: '10px 14px' }}>
+        <select value={period} onChange={e => setPeriod(e.target.value)} style={{ padding: '8px 10px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 13, fontFamily: 'inherit' }}>
+          {periods.map(p => <option key={p} value={p}>{formatPeriodLabel(p)}</option>)}
+        </select>
+      </div>
+      {periodGoals === null && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>Loading...</div>}
+      {periodGoals !== null && (members || []).map(m => {
+        const g = periodGoals[String(m.id)]
+        const status = g?.status || 'draft'
+        if (status === 'draft') return null
+        return (
+          <Card key={m.id}>
+            <div style={{ padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+              <Av av={m.avatar} color={m.color} sz={28} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{m.name}</div>
+                <GBadge status={status} />
+              </div>
+              {confirming === m.id ? (
+                <>
+                  <Btn sm v="bad" onClick={() => doReset(m.id)}>Confirm Reset</Btn>
+                  <Btn sm onClick={() => setConfirming(null)}>Cancel</Btn>
+                </>
+              ) : (
+                <Btn sm v="bad" onClick={() => setConfirming(m.id)}>Reset</Btn>
+              )}
+            </div>
+          </Card>
+        )
+      })}
+      {periodGoals !== null && (members || []).every(m => (periodGoals[String(m.id)]?.status || 'draft') === 'draft') && (
+        <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No submitted goals for {formatPeriodLabel(period)}</div>
+      )}
     </div>
   )
 }
@@ -155,8 +224,18 @@ function GoalReviewSheet({ member, param, goal, products, customers, categories,
       {param.enable_customers && (param.sel_custs || []).map(id => {
         const c = (customers || []).find(x => x.id === id); if (!c) return null
         const fg = (g.customers || {})[id]
-        return <FieldRow key={id} fKey={`c_${id}`} label={`Customer: ${c.name}`} fg={fg} unit="value" dec={dec} setDec={setDec} notes={notes} setNotes={setNotes} />
+        return <FieldRow key={id} fKey={`c_${id}`} label={`Distributor: ${c.name}`} fg={fg} unit="value" dec={dec} setDec={setDec} notes={notes} setNotes={setNotes} />
       })}
+      {param.enable_value && g.customers?.__other__ && (
+        <div style={{ background: '#f9fafb', borderRadius: 10, padding: 12, marginBottom: 10 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>Other Distributors</span>
+            <GBadge status={g.value_status || 'draft'} />
+          </div>
+          <div style={{ fontSize: 13, color: '#374151', marginTop: 4 }}>Goal: <strong>{F(g.customers.__other__.goal || 0)}</strong></div>
+          <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>Auto-derived (Sales value minus named distributors) — inherits Sales value's approval, no separate action needed.</div>
+        </div>
+      )}
       {param.enable_products && (param.sel_prods || []).map(id => {
         const p = (products || []).find(x => x.id === id); if (!p) return null
         const fg = (g.products || {})[id]

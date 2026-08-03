@@ -43,7 +43,7 @@ const [editing, setEditing] = useState(null)
         <CH title="Parameters per member" sub="Member enters their own goal values against these" />
         {(members || []).map(m => {
           const p = params[m.id] || {}
-          const fields = [p.enable_value && 'Value', p.enable_customers && 'Customers', p.enable_products && 'Products', p.enable_categories && 'Categories', p.enable_visits && 'Visits', p.enable_acq && 'Acq'].filter(Boolean)
+          const fields = [p.enable_value && 'Value', p.enable_customers && 'Distributors', p.enable_products && 'Products', p.enable_categories && 'Categories', p.enable_visits && 'Visits', p.enable_acq && 'Acq'].filter(Boolean)
           return (
             <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid #f3f4f6' }}>
               <Av av={m.avatar} color={m.color} sz={30} />
@@ -131,7 +131,7 @@ function ParamSheet({ member, param, products, categories, customers, onSave, on
         Tick which fields this member should set goals for. For products/categories/customers, select specific items from the dropdown.
       </div>
       <Toggle label="Sales value (overall)" enableKey="enableValue" />
-      <Toggle label="Customer-wise value" enableKey="enableCustomers">
+      <Toggle label="Distributor-wise value" enableKey="enableCustomers">
         <Chips listKey="selCusts" allItems={myCusts} labelFn={x => x.name} enableKey="enableCustomers" />
       </Toggle>
       <Toggle label="Product-wise quantity" enableKey="enableProducts">

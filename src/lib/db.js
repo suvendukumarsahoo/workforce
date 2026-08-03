@@ -642,6 +642,24 @@ export async function upsertGoal(memberId, period, payload) {
   return { data, error }
 }
 
+// Admin-only: wipes a member's goal for a given period back to a fresh draft (every value/status
+// zeroed, not deleted) so they must set and resubmit goals for that month again.
+export async function resetGoal(memberId, period) {
+  const { data, error } = await supabase
+    .from('goals')
+    .upsert({
+      member_id: memberId, period,
+      value_goal: 0, value_status: null, value_note: null,
+      customers: {}, products: {}, categories: {},
+      visits_goal: 0, visits_status: null, visits_note: null,
+      acq_goal: 0, acq_status: null, acq_note: null,
+      status: 'draft', submitted_at: null, reviewed_at: null,
+    }, { onConflict: 'member_id,period' })
+    .select()
+    .single()
+  return { data, error }
+}
+
 // ─── INVOICES ─────────────────────────────────────────────────────────────────
 
 export async function fetchInvoices() {

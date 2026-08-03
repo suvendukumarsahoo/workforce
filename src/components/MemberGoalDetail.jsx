@@ -46,7 +46,7 @@ export default function MemberGoalDetail({ member, slices, products, categories,
         </ChartSection>
       )}
       {agg.customers.length > 0 && (
-        <ChartSection title="Customers">
+        <ChartSection title="Distributors">
           <GoalVsAchievedBreakdown rows={agg.customers} formatValue={F} />
         </ChartSection>
       )}

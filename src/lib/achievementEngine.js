@@ -73,10 +73,16 @@ export function computeAchievements(invoices = [], goals = {}, products = [], di
       ach.value += invoiceTotal
     }
 
-    // Customer value — gated on that specific customer's goal field
+    // Customer (distributor) value — gated on that specific distributor's goal field
     const custId = invoice.distributor_id || invoice.custId
-    if ((goal.customers || {})[custId]?.status === 'approved') {
+    const namedCust = (goal.customers || {})[custId]
+    if (namedCust?.status === 'approved') {
       ach.custs[custId] = (ach.custs[custId] || 0) + invoiceTotal
+    } else if (!namedCust && goal.customers?.__other__ && goal.value_status === 'approved') {
+      // "Other Distributors" — auto-derived (Sales Value goal minus named distributor targets), so
+      // it inherits value_status rather than having its own approval, and rolls up every invoice
+      // from a distributor NOT individually named in this member's goal.
+      ach.custs.__other__ = (ach.custs.__other__ || 0) + invoiceTotal
     }
   })
 
@@ -90,15 +96,18 @@ export function computeAchievements(invoices = [], goals = {}, products = [], di
     ach.visits += 1
   })
 
-  // Distributor Appointment count — only counts leads that completed the full appointment pipeline
+  // Distributor Appointment count — only counts leads that completed the full appointment pipeline.
+  // NOT gated on acq_status: this is the same real-world event as the "Distributor Created" pipeline
+  // stage shown elsewhere (TeamSnapshot.jsx), so it must always reflect the true count — only the
+  // acq goal's *target* number stays gated on approval (see goalAggregation.js), matching how the
+  // pipeline tile has no goal-approval concept at all.
 distributors.forEach(d => {
   if (d.lead_stage !== 'final_approved') return
   if (!inRange(d.stage_updated_at)) return
   const ownerIds = d.assignedTo || []
   ownerIds.forEach(mid => {
     const key = String(mid)
-    const goal = goals[key]
-    if (result[key] && goal?.acq_status === 'approved') result[key].acq += 1
+    if (result[key]) result[key].acq += 1
   })
 })
 
@@ -155,7 +164,6 @@ export function getGoalOverallStatus(goal, param = null) {
 
   if (!statuses.length) return 'draft'
 
-  const hasApproved = statuses.some(s => s === 'approved')
   const hasPending  = statuses.some(s => s === 'pending')
   const hasRejected = statuses.some(s => s === 'rejected')
   const allApproved = statuses.every(s => s === 'approved')
@@ -163,7 +171,12 @@ export function getGoalOverallStatus(goal, param = null) {
 
   if (allApproved) return 'approved'
   if (allRejected) return 'rejected'
-  if (hasApproved && hasRejected) return 'partial'
+  // Any rejection at all means the member has something to revise — even if every other field is
+  // still sitting in 'pending' (manager hasn't gotten to them yet), not necessarily 'approved'. The
+  // old `hasApproved && hasRejected` check missed exactly that "one rejected, rest still pending"
+  // case, silently falling through to 'pending' below — which hid the rejection from TeamApp.jsx's
+  // `hasRejected`/`canEnter` checks, so the member never saw a way to revise it.
+  if (hasRejected) return 'partial'
   if (hasPending) return 'pending'
   return 'draft'
 }

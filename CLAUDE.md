@@ -1548,4 +1548,157 @@ Also still open from earlier in the same overall session, untouched since — un
 1. **Journey Phase 4** (vein-diagram timeline, admin remarks, PDF export, Approved Journeys lists) —
    `journey_complete_approval_remarks` was added to `vehicle_allocations` in the 3 Aug 2026 session
    (see the schema entry above this one); still not browser-tested.
+
+## Browser-test round — dashboard rework CONFIRMED WORKING via headless Playwright (3 Aug 2026
+session, separate from the build session). No project skill existed for running this app; installed
+Playwright into the scratchpad (not the repo — reverted an accidental `npm install -D playwright`
+that had dirtied `package.json`/`package-lock.json` first) and drove real logins against the live
+Supabase instance as `arjun@co.com` (Sales Team) and `admin@co.com` (Admin).
+
+**All 5 outstanding checklist items from the previous session's handoff — confirmed:**
+1. Sales Team Home tab (`TeamSnapshot.jsx`): Today/This Month/This Year tabs verified to actually
+   change Won/Win Rate/Open Leads/Avg Open Lead Age/My Pipeline donut — Today showed all zeros, This
+   Month showed partial data, This Year showed real distinct numbers (Won=3, Win Rate=50%, Open
+   Leads=2, Avg Open Lead Age=13d, 6 total visited). Confirms the earlier tab-scoping fix holds.
+2. Admin `SalesSnapshot` + New Customer Visits funnel: confirmed both move together per tab (Today →
+   both show zeroed/"(TODAY)"-labeled data; This Year → both show matching real numbers, e.g. funnel's
+   6 total visited/1 Interested/1 Not Interested/1 Final/3 Distributor Created matches Arjun's own
+   This-Year pipeline numbers exactly, since he's the only rep with data).
+3. Goal-entry validation (`GoalEntrySheet`): confirmed blocking. Arjun's real August data already had
+   customer-wise goals summing to ₹4,70,000 against an approved ₹3,00,000 Sales Value goal (pre-dates
+   this validation), so clicking "Submit for approval" on the Revise sheet with no edits immediately
+   surfaced "Sales value goal (₹3,00,000) cannot be less than the sum of customer-wise goals
+   (₹4,70,000)." and did not submit — re-verified via Goal Approvals' "View details" that the rejected
+   fields (Tech Mahindra Svc-NGH, Lubricants, Brake Fluids) were still sitting at `Rejected`, not
+   bumped to pending.
+4. "Won Deals & Revenue — Last 12 Months" line chart: renders sensibly — real per-month values with
+   an actual peak (Jul 2026) and nothing else, not an artificial ramp.
+5. Set Parameters + Goal Approvals: both correctly scoped to "August 2026" with no trace of the old
+   July-migrated legacy rows bleeding through (confirms the `period='2026-07'` backfill fix from the
+   previous session took).
+6. Manager → Member drill-down (the z-index regression fixed earlier): re-confirmed live — clicking
+   "Meera Iyer" in the Manager Leaderboard opens `ManagerLevelSheet`, and clicking "Arjun Nair" inside
+   it opens `MemberGoalDetail` correctly on top (visibly, not hidden behind).
+
+**New, previously-undocumented bug found while testing (not one of the 5 checklist items, surfaced
+via a stray `HTTP 400` caught in the browser console):** the `notifications` table's `target_roles`
+column **does not actually exist** in this Supabase instance — confirmed via a direct REST query
+(`column notifications.target_roles does not exist`, code `42703`). This means `db.fetchNotifications`
+has been 400ing on every 30s poll for every logged-in user since `NotificationBell.jsx` was built (1
+Aug 2026 session) — the bell has never actually been able to show a notification, including the
+loading-complete alert to Admin/Accounts, HR's location-flag alerts, and the journey-submitted alert
+to Admin. The `.contains()` JSON-encoding fix documented in the "Monthly Goals schema" entry above
+*is* correctly in place in the code (`JSON.stringify([roleId])` produces valid `cs.["r1"]` syntax) —
+this is a separate, deeper problem: the column itself was apparently never applied to this database,
+despite being documented as built. **Needs:** re-run (or verify) the `create table notifications (...
+target_roles jsonb ...)` migration from the 1 Aug 2026 session — table exists (0 rows) but is missing
+at least this column.
+
+**Confirmed still-present, not a regression:** the legacy `attendance` table query
+(`db.fetchAttendance`, called unconditionally from `useData.jsx`'s `loadAll()` on every single page
+load regardless of role) still 400s (`column attendance.month does not exist`) — this is the exact
+issue already flagged under Deferred/Known Issues as safe to delete once the new
+`attendance_punches` system is confirmed working, which it now is. Worth actually deleting
+`fetchAttendance`/`upsertAttendance` + the dead `useData.jsx` call next time this area is touched,
+since it fires needlessly on literally every page load for every user.
+
+**Not touched by this pass:** Journey Phase 4 (vein-diagram/PDF/remarks) — still not browser-tested,
+unrelated to the dashboard work above.
 2. **POD photo upload** (Phase 3, older, still parked) — needs a new Supabase Storage bucket.
+
+## Distributor terminology, ungated Distributors achievement, auto "Other Distributors" target,
+## Admin goal reset, and two real bugs found via live testing (4 Aug 2026 session)
+
+**Terminology rename (display-only, no field/column renames):** this app's goal-setting feature was
+built around "Customer" (`enable_customers`, `sel_custs`, `goal.customers`, `ach.custs` — all
+unchanged in code) but the business vocabulary is "Distributor" (Distributors master,
+`distributor_visits`, the "Distributor Created" pipeline stage). Renamed every user-facing label:
+`Parameters.jsx`'s "Customer-wise value" toggle → "Distributor-wise value" (and its member-row
+summary tag), `GoalApprovals.jsx`'s `"Customer: {name}"` field label → `"Distributor: {name}"`,
+`TeamSnapshot.jsx`/`SalesSnapshot.jsx`'s "My/Top 10 Customers" ranked lists → "...Distributors",
+`TeamSnapshot.jsx`/`MemberGoalDetail.jsx`'s "Customers" breakdown panel title → "Distributors".
+
+**"Distributors" achievement now matches "Distributor Created" everywhere:** the Goal Progress
+"Distributors" meter (`acq`) previously only counted an achievement once the manager approved that
+specific field (`achievementEngine.js`/`goalAggregation.js` both gated on `goal.acq_status ===
+'approved'`), while the pipeline's "Distributor Created" tile/donut counts the real event
+unconditionally — same real-world event (`lead_stage === 'final_approved'`), two different numbers
+on the same screen. Fixed: the **achieved** count is now ungated (target/goal number still requires
+approval, unchanged for every other field) — applies everywhere `aggregateForMembers` is used
+(Team dashboard, `MemberGoalDetail`, `ManagerLevelSheet`, org level), so it's one shared fix.
+**Second layer of the same bug, found via live testing:** even ungated, the meter could still
+disagree with the pipeline tile because Goal Progress is always calendar-month (goals only exist
+per month) while the pipeline's Today/Month/Year tab can be set to something else — so
+`TeamSnapshot.jsx`'s Distributors meter now computes its achieved value directly from `myLeads`
+fixed to the **current calendar month regardless of the active tab**, guaranteeing exact parity with
+the pipeline whenever that tab is on "This Month" (the natural comparison), rather than trusting
+`myAgg.acq.achieved` (which could be scoped differently depending on what the top tab happened to be
+set to). Live-tested: confirmed showing `0/5` was correct in one case (no distributor actually
+created in August yet, only in earlier months) — not a residual bug.
+
+**Auto "Other Distributors" target:** distributor-wise targets are only set for specific named
+distributors (`param.sel_custs`); the overall Sales Value goal covers *all* distributors for that
+member. `GoalEntrySheet.handleSubmit` (`TeamApp.jsx`) now auto-computes `Other Distributors target =
+Sales Value goal − sum(named distributor targets)` on every submit (never typed by hand) and stores
+it as `goal.customers.__other__` — deliberately with **no independent approval status**, it inherits
+`value_status` instead (checked directly wherever needed, e.g. `achievementEngine.js`'s customer-value
+loop rolls up every invoice from a distributor *not* individually named into this bucket once
+`value_status === 'approved'`; `goalAggregation.js` adds the `'__other__'` row to the customer
+breakdown the same way, display-named "Other Distributors" via a `toRows()` special-case).
+Read-only in both the Goals tab and `GoalApprovals.jsx`'s review sheet (informational line, no
+separate Approve/Reject control — "inherits Sales value's approval, no separate action needed").
+**Relaxed same-session, follow-up ask:** originally only applied when `param.enable_customers` was
+also on; changed so it's independent of that toggle — if a member has no named distributors at all,
+`Other Distributors` becomes the **entire** Sales Value goal (nothing is named, so everything rolls
+up), rather than the panel not appearing at all. This is what makes the breakdown panel
+(`myAgg.customers.length > 0`) show up universally whenever a Sales Value goal exists.
+
+**Admin goal reset:** `GoalApprovals.jsx` gained an Admin-only (`role?.id === 'r1'`) `AdminGoalReset`
+section below the existing pending-review list — a period picker (`listRecentPeriods()` from
+`lib/period.js`) + every member with a non-draft goal for that period + a **Reset** button (confirm
+step) that calls new `db.resetGoal(memberId, period)` (upserts a fully-zeroed row: all goal
+values/statuses null/0, `status: 'draft'`, `submitted_at`/`reviewed_at` cleared — the row stays
+present with real zeros, not deleted). If resetting the *live* current period, also pushes the
+zeroed goal into the shared `useData` context immediately so the rest of the app reflects it without
+a reload.
+
+**Two real bugs found via live testing, both fixed:**
+1. **`GoalEntrySheet`'s value-tracking object wasn't actually a ref, despite its own comment
+   claiming so** (`TeamApp.jsx`) — `const vals = {}` was a plain object literal recreated on every
+   render. Submitting a goal that failed the Sales-Value-vs-distributor-targets validation called
+   `setError(...)`, a state update that re-renders the component and silently reset `vals` back to
+   `{}` — but the uncontrolled `<input defaultValue=...>` DOM elements kept showing whatever was
+   typed, since their `defaultValue` prop hadn't changed. If the member then clicked Submit again
+   without retyping every field (reasonably assuming the visibly-typed numbers would be used), those
+   fields silently reverted to their old stored value (0, for a fresh goal) instead of what was on
+   screen — this is exactly what surfaced as "Manager's review shows ₹0 for distributors I definitely
+   typed values into." Fixed by switching to a real `useRef({})` that survives re-renders.
+2. **`getGoalOverallStatus`'s status-precedence logic hid rejections** (`achievementEngine.js`) — it
+   only returned `'partial'` when there was a mix of `approved` **and** `rejected` fields
+   (`hasApproved && hasRejected`). A manager reviewing goals field-by-field commonly rejects one
+   field before getting to the rest, leaving them at `'pending'` (not yet `'approved'`) — in that
+   case `hasApproved` was false, so the check fell through to `if (hasPending) return 'pending'`,
+   masking the rejection entirely. Since `TeamApp.jsx`'s `canEnter`/`hasRejected` (which gate whether
+   the "Revise & resubmit" button even renders) only check for `'partial'`/`'rejected'`, the member
+   had **no way to even open the revision screen** for a field that was, underneath, already marked
+   `rejected` and individually editable. Fixed: any rejection now yields `'partial'` regardless of
+   whether other fields are still pending or approved. Added a regression test in the (pre-existing,
+   previously undiscovered until this session) `src/lib/achievementEngine.test.js` — run via
+   `node --test src/lib/achievementEngine.test.js`, 3/3 passing.
+
+**Still open / not yet browser-tested (this is the very next thing to check in a new session):**
+1. Submit a goal with named distributor targets smaller than the Sales Value goal → confirm "Other
+   Distributors" appears correctly (Goals tab, Goal Approvals review, dashboard breakdown chart) in
+   both cases: distributor-wise tracking enabled with some named distributors, AND disabled entirely
+   (should show the full Sales Value as "Other Distributors" in the latter case).
+2. Confirm the Distributors meter's achieved count now matches "Distributor Created" when the top
+   tab is on "This Month" specifically (already spot-checked once live, showing correctly).
+3. Try Admin's new Reset on an approved goal for the current or a past month → confirm the member
+   sees a fresh "Set my goals" prompt for that month afterward.
+4. **Reject one field while leaving the rest pending** (not approving anything else) → confirm the
+   member now sees "Revise & resubmit" and can edit that specific field — this was completely broken
+   before the `getGoalOverallStatus` fix (silently invisible to the member).
+5. Trigger the Sales-Value-vs-distributor-targets validation error, do NOT retype every field, just
+   lower one number and resubmit → confirm the other, untouched fields submit with their
+   visibly-typed values, not stale zeros (the `useRef` fix).
+6. Spot-check the "Customer" → "Distributor" label renames read naturally everywhere they appear.

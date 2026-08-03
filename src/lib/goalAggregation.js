@@ -41,8 +41,11 @@ export function aggregateForMembers(memberIds, slices, products = [], categories
         visits.goal += (Number(goal.visits_goal) || 0) * weight
         visits.achieved += ach.visits || 0
       }
-      if (param.enable_acq && goal.acq_status === 'approved') {
-        acq.goal += (Number(goal.acq_goal) || 0) * weight
+      if (param.enable_acq) {
+        // Target stays gated on approval (same as every other field); achieved does NOT — it's the
+        // same real "Distributor Created" event tracked unconditionally elsewhere in the app, so it
+        // must always show the true count (see achievementEngine.js's matching comment).
+        if (goal.acq_status === 'approved') acq.goal += (Number(goal.acq_goal) || 0) * weight
         acq.achieved += ach.acq || 0
       }
       if (param.enable_products) {
@@ -72,11 +75,23 @@ export function aggregateForMembers(memberIds, slices, products = [], categories
           t.achieved += (ach.custs || {})[cid] || 0
         })
       }
+      // "Other Distributors" — auto-derived remainder (Sales Value goal minus named distributor
+      // targets, or the full Sales Value goal if distributor-wise tracking isn't even enabled for
+      // this member), inherits value_status rather than its own approval (see
+      // achievementEngine.js). Independent of enable_customers — every remaining distributor
+      // whose goal was never individually set still rolls up here.
+      const other = goal.customers?.__other__
+      if (other && goal.value_status === 'approved') {
+        const t = bump(custTotals, '__other__')
+        t.goal += (Number(other.goal) || 0) * weight
+        t.achieved += (ach.custs || {}).__other__ || 0
+      }
     })
   })
 
   const toRows = (totals, master, unitFn) => Object.entries(totals)
     .map(([id, t]) => {
+      if (id === '__other__') return { id, name: 'Other Distributors', unit: undefined, goal: t.goal, achieved: t.achieved }
       const item = (master || []).find(x => x.id === id)
       return { id, name: item?.name || id, unit: unitFn ? unitFn(item) : undefined, goal: t.goal, achieved: t.achieved }
     })

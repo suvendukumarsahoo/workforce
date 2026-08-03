@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Av, Btn, Inp, GBadge, SBadge, Sheet } from '../../components/ui.jsx'
@@ -96,7 +96,13 @@ const canEnter      = overallStatus === 'draft' || hasRejected || hasNewParam
       ...existing,
       value_goal:   Number(draft.value?.goal) || existing.value_goal,
       value_status: Number(draft.value?.goal) !== Number(existing.value_goal) ? 'pending' : (existing.value_status || 'pending'),
-      customers:    { ...(existing.customers || {}), ...Object.fromEntries(Object.entries(draft.custs || {}).map(([id, v]) => [id, mergeFieldStatus(v.goal, existing.value_goal, (existing.customers || {})[id])])) },
+      // "Other Distributors" (`__other__`) is auto-derived and never goes through the normal
+      // pending/approved/rejected per-field cycle — it has no `.status` of its own, everywhere that
+      // reads its approval checks `value_status` instead (see achievementEngine.js/
+      // goalAggregation.js). Every other named distributor still goes through mergeFieldStatus as
+      // before.
+      customers:    { ...(existing.customers || {}), ...Object.fromEntries(Object.entries(draft.custs || {}).filter(([id]) => id !== '__other__').map(([id, v]) => [id, mergeFieldStatus(v.goal, existing.value_goal, (existing.customers || {})[id])])),
+                      ...(draft.custs?.__other__ ? { __other__: { goal: Number(draft.custs.__other__.goal) || 0 } } : {}) },
       products:     { ...(existing.products || {}),  ...Object.fromEntries(Object.entries(draft.prods || {}).map(([id, v]) => [id, mergeFieldStatus(v.goal, existing.value_goal, (existing.products || {})[id])])) },
       categories:   { ...(existing.categories || {}), ...Object.fromEntries(Object.entries(draft.cats || {}).map(([id, v]) => [id, mergeFieldStatus(v.goal, existing.value_goal, (existing.categories || {})[id])])) },
       visits_goal:  Number(draft.visits?.goal) || existing.visits_goal,
@@ -366,7 +372,7 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
               )
             })}
 
-            {/* Customer goals */}
+            {/* Distributor-wise goals */}
             {p.enable_customers && (p.sel_custs || []).map(cid => {
               const cust = (customers || []).find(x => x.id === cid); if (!cust) return null
               const fg   = (g.customers || {})[cid]
@@ -383,6 +389,19 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
                 </Card>
               )
             })}
+            {/* Other Distributors — auto-derived remainder (Sales Value goal minus the named
+                distributors above), read-only, inherits Sales Value's own approval status */}
+            {p.enable_value && g.customers?.__other__ && (
+              <Card>
+                <div style={{ padding: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>Other Distributors</span>
+                    <GBadge status={g.value_status || 'draft'} />
+                  </div>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>Goal: {F(g.customers.__other__.goal)}</div>
+                </div>
+              </Card>
+            )}
             {/* New Distributor Appointment goal */}
             {p.enable_acq && g.acq_goal > 0 && (
               <Card>
@@ -512,11 +531,15 @@ function GoalEntrySheet({ member, param, goal, period, products, categories, cus
   const g = goal || {}
   const canEdit = s => !s || s === 'draft' || s === 'rejected'
   const [error, setError] = useState('')
-  
-  // Use refs to collect values - prevents re-render on every keystroke
-  const vals = {}
-  const set = (key, val) => { vals[key] = val }
-  const get = (key, fallback) => vals[key] !== undefined ? vals[key] : fallback
+
+  // A real ref (not a plain object literal) — must survive re-renders. Any state update in this
+  // component (e.g. setError below) re-runs the function body; a plain `const vals = {}` would be
+  // silently recreated empty on that re-render, discarding anything typed before the error without
+  // the uncontrolled <input> DOM elements' visibly-typed values ever changing — a real bug found
+  // via live testing (validation error → re-render → resubmit without retyping → stale/zero values).
+  const valsRef = useRef({})
+  const set = (key, val) => { valsRef.current[key] = val }
+  const get = (key, fallback) => valsRef.current[key] !== undefined ? valsRef.current[key] : fallback
 
   const StableInp = ({ label, fieldKey, defaultVal, fg }) => {
     if (!canEdit(fg?.status)) return null
@@ -543,13 +566,17 @@ function GoalEntrySheet({ member, param, goal, period, products, categories, cus
       visits: { goal: get('visits', g.visits_goal) },
       acq:    { goal: get('acq',    g.acq_goal)    },
     }
-    if (param.enable_value && param.enable_customers) {
+    if (param.enable_value) {
       const valueGoal = Number(draft.value.goal) || 0
       const custTotal = Object.values(draft.custs).reduce((s, c) => s + (Number(c.goal) || 0), 0)
-      if (custTotal > valueGoal) {
-        setError(`Sales value goal (₹${valueGoal.toLocaleString('en-IN')}) cannot be less than the sum of customer-wise goals (₹${custTotal.toLocaleString('en-IN')}).`)
+      if (param.enable_customers && custTotal > valueGoal) {
+        setError(`Sales value goal (₹${valueGoal.toLocaleString('en-IN')}) cannot be less than the sum of distributor-wise goals (₹${custTotal.toLocaleString('en-IN')}).`)
         return
       }
+      // "Other Distributors" — auto-derived remainder, covers every distributor not individually
+      // named above (all of them, if distributor-wise tracking isn't even enabled for this
+      // member). Recomputed on every submit, never entered by hand.
+      draft.custs.__other__ = { goal: valueGoal - custTotal }
     }
     setError('')
     await onSubmit(member?.member_id, draft)

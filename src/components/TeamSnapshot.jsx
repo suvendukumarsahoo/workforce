@@ -146,6 +146,20 @@ export default function TeamSnapshot({ mid, invoices, customers, myAgg, periodTa
     { name: 'Distributor Created', value: stageCounts.distributor, color: '#10b981' },
   ]
 
+  // Goal Progress's Distributors meter must show the exact same "Distributor Created" count as the
+  // pipeline above — but goals are always calendar-month (unlike the pipeline's Today/Month/Year
+  // tab), so this is computed directly from myLeads scoped to the CURRENT calendar month, always,
+  // regardless of which tab is active. Using myAgg.acq.achieved here would silently diverge from
+  // the pipeline's number whenever the active tab isn't 'month' (e.g. viewing "This Year" would show
+  // more distributors there than a fixed-monthly meter below it, on the same screen).
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1)
+  const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59)
+  const distributorsThisMonth = allWonLeads.filter(d => {
+    if (!d.stage_updated_at) return false
+    const d2 = new Date(d.stage_updated_at)
+    return d2 >= monthStart && d2 <= monthEnd
+  }).length
+
   const myHasMeters = myAgg.value.goal > 0 || myAgg.visits.goal > 0 || myAgg.acq.goal > 0
 
   return (
@@ -178,7 +192,7 @@ export default function TeamSnapshot({ mid, invoices, customers, myAgg, periodTa
           </div>
         </div>
 
-        <RankedList title={`My Top Customers — ${tabLabel}`} rows={topCustomers} formatValue={F} valueColor="#7c3aed" totalValue={rangeRevenue} />
+        <RankedList title={`My Top Distributors — ${tabLabel}`} rows={topCustomers} formatValue={F} valueColor="#7c3aed" totalValue={rangeRevenue} />
 
         <div style={{ ...cardBase, flex: '1 1 100%' }}>
           <div style={labelStyle}>Won Deals & Revenue — Last 12 Months</div>
@@ -211,7 +225,7 @@ export default function TeamSnapshot({ mid, invoices, customers, myAgg, periodTa
             <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-around' }}>
               {myAgg.value.goal > 0 && <MeterGauge label="Sales Value" value={myAgg.value.achieved} goal={myAgg.value.goal} formatValue={F} />}
               {myAgg.visits.goal > 0 && <MeterGauge label="Outlet Visits" value={myAgg.visits.achieved} goal={myAgg.visits.goal} />}
-              {myAgg.acq.goal > 0 && <MeterGauge label="Distributors" value={myAgg.acq.achieved} goal={myAgg.acq.goal} />}
+              {myAgg.acq.goal > 0 && <MeterGauge label="Distributors" value={distributorsThisMonth} goal={myAgg.acq.goal} />}
             </div>
           )}
         </div>
@@ -230,7 +244,7 @@ export default function TeamSnapshot({ mid, invoices, customers, myAgg, periodTa
         )}
         {myAgg.customers.length > 0 && (
           <div style={{ ...cardBase, flex: '1 1 100%' }}>
-            <div style={labelStyle}>Customers — {formatPeriodLabel(currentPeriod)}</div>
+            <div style={labelStyle}>Distributors — {formatPeriodLabel(currentPeriod)}</div>
             <GoalVsAchievedBreakdown rows={myAgg.customers} formatValue={F} />
           </div>
         )}

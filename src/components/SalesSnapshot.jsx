@@ -239,7 +239,7 @@ export default function SalesSnapshot({ totalTarget, totalAch, pendingGoals, lea
           ))}
         </div>
 
-        <RankedList title={`Top 10 Customers — ${tabLabel}`} rows={topCustomers} formatValue={F} valueColor="#a78bfa" totalValue={rangeRevenue} />
+        <RankedList title={`Top 10 Distributors — ${tabLabel}`} rows={topCustomers} formatValue={F} valueColor="#a78bfa" totalValue={rangeRevenue} />
         <RankedList title={`Top 10 Products — ${tabLabel}`} rows={topProducts} formatValue={F} valueColor="#60a5fa" totalValue={rangeRevenue} />
 
         <div style={{ ...panelBase, flex: '1.4 1 260px', display: 'flex', flexWrap: 'wrap', gap: 10, alignContent: 'flex-start' }}>
