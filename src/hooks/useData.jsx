@@ -24,6 +24,7 @@ export function DataProvider({ children }) {
   const [loading,      setLoading]      = useState(true)
   const [toast,        setToast]        = useState(null)
   const [visits, setVisits] = useState([])
+  const [retailVisits, setRetailVisits] = useState([])
   const [registrations, setRegistrations] = useState([])
   const [payments, setPayments] = useState([])
   const [currentPeriod] = useState(getCurrentPeriod())
@@ -39,12 +40,14 @@ export function DataProvider({ children }) {
   { data: r }, { data: u }, { data: m }, { data: c }, { data: p },
   { data: dist }, { data: pa }, { data: g }, { data: inv }, { data: exp },
   { data: sal }, { data: att }, { data: vis }, { data: reg }, { data: pay },
+  { data: rvis },
 ] = await Promise.all([
   db.fetchRoles(), db.fetchUsers(), db.fetchMembers(), db.fetchCategories(),
   db.fetchProducts(), db.fetchDistributors(), db.fetchParameters(currentPeriod), db.fetchGoals(currentPeriod),
   db.fetchInvoices(), db.fetchExpenses(), db.fetchSalaries(),
   db.fetchAttendance(new Date().getMonth()+1, new Date().getFullYear()),
   db.fetchVisits(), db.fetchRegistrations(), db.fetchPayments(),
+  db.fetchRetailVisits(),
 ])
 
     if (r)    setRoles(r)
@@ -57,6 +60,7 @@ export function DataProvider({ children }) {
       if (vis) setVisits(vis)
         if (reg) setRegistrations(reg)
           if (pay) setPayments(pay)
+          if (rvis) setRetailVisits(rvis)
     if (g)   {
       const goalMap = {}
       g.forEach(goal => {
@@ -72,8 +76,8 @@ export function DataProvider({ children }) {
   }
 
   const achievements = useMemo(
-  () => computeAchievements(invoices, goals, products, distributors, visits, monthRangeForPeriod(currentPeriod)),
-  [invoices, goals, products, distributors, visits, currentPeriod]
+  () => computeAchievements(invoices, goals, products, distributors, visits, retailVisits, monthRangeForPeriod(currentPeriod)),
+  [invoices, goals, products, distributors, visits, retailVisits, currentPeriod]
 )
 
   function showToast(msg, duration = 2800) {
@@ -90,6 +94,7 @@ export function DataProvider({ children }) {
       expenses, setExpenses, salaries, setSalaries,
       attendance, setAttendance, achievements,
       visits, setVisits,
+      retailVisits, setRetailVisits,
       registrations, setRegistrations,
       loading, loadAll, toast, showToast,payments, setPayments,
       currentPeriod,

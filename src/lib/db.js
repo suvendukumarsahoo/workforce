@@ -1326,3 +1326,104 @@ export async function fetchOrderLoadingStage(orderId) {
    const { data, error } = await supabase.from('distributor_orders').select('loading_stage').eq('id', orderId).single()
   return { data, error }
 }
+
+// ─── DISTRIBUTOR SECONDARY (Beats / Retail Outlets / secondary order-taking) ──
+
+export async function createBeat(distributorId, name, coverageDays, createdBy) {
+  const { count } = await supabase.from('beats').select('id', { count: 'exact', head: true })
+  const seq = String((count || 0) + 1).padStart(4, '0')
+  const id = `BT-${seq}`
+  const { data, error } = await supabase
+    .from('beats')
+    .insert({ id, distributor_id: distributorId, name, coverage_days: coverageDays, created_by: createdBy })
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function fetchMyBeats(memberId) {
+  const { data, error } = await supabase
+    .from('beats')
+    .select('*, distributor:distributors(id, name)')
+    .eq('created_by', memberId)
+    .order('created_at', { ascending: false })
+  return { data, error }
+}
+
+export async function createRetailOutlet(beatId, name, number, lat, lng, createdBy) {
+  const { count } = await supabase.from('retail_outlets').select('id', { count: 'exact', head: true })
+  const seq = String((count || 0) + 1).padStart(4, '0')
+  const id = `RO-${seq}`
+  const { data, error } = await supabase
+    .from('retail_outlets')
+    .insert({ id, beat_id: beatId, name, number, lat, lng, created_by: createdBy })
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function fetchOutletsForBeat(beatId) {
+  const { data, error } = await supabase
+    .from('retail_outlets')
+    .select('*')
+    .eq('beat_id', beatId)
+    .order('created_at', { ascending: true })
+  return { data, error }
+}
+
+export async function createSecondaryOrder(header, items) {
+  const today = new Date()
+  const dateStr = `${String(today.getDate()).padStart(2, '0')}${String(today.getMonth() + 1).padStart(2, '0')}${today.getFullYear()}`
+  const { count } = await supabase
+    .from('secondary_orders')
+    .select('id', { count: 'exact', head: true })
+    .like('id', `SO-${dateStr}-%`)
+  const seq = String((count || 0) + 1).padStart(2, '0')
+  const id = `SO-${dateStr}-${seq}`
+  const { data: order, error } = await supabase
+    .from('secondary_orders')
+    .insert({ id, ...header, order_date: today.toISOString().slice(0, 10) })
+    .select()
+    .single()
+  if (error) return { data: null, error }
+  const itemRows = items.map(it => ({
+    order_id: order.id, product_id: it.product_id, category_id: it.category_id,
+    qty: it.qty, rate: it.rate,
+  }))
+  const { error: itemError } = await supabase.from('secondary_order_items').insert(itemRows)
+  return { data: order, error: itemError }
+}
+
+export async function createRetailVisit(payload) {
+  const { data, error } = await supabase.from('retail_visits').insert(payload).select().single()
+  return { data, error }
+}
+
+export async function fetchRetailVisitsForDate(memberId, date) {
+  const { data, error } = await supabase
+    .from('retail_visits')
+    .select('*, outlet:retail_outlets(id, name, number)')
+    .eq('member_id', memberId)
+    .eq('visit_date', date)
+    .order('created_at', { ascending: true })
+  return { data, error }
+}
+
+export async function fetchSecondaryOrdersForDate(memberId, date) {
+  const { data, error } = await supabase
+    .from('secondary_orders')
+    .select('*, outlet:retail_outlets(id, name, number), items:secondary_order_items(*, product:products(id, name, unit))')
+    .eq('member_id', memberId)
+    .eq('order_date', date)
+    .order('created_at', { ascending: true })
+  return { data, error }
+}
+
+// dateRange: { from, to } ISO date strings — feeds the Outlet Visits achievement alongside the
+// existing distributor_visits source (see achievementEngine.js).
+export async function fetchRetailVisits(dateRange = null) {
+  let query = supabase.from('retail_visits').select('*')
+  if (dateRange) query = query.gte('visit_date', dateRange.from).lte('visit_date', dateRange.to)
+  const { data, error } = await query
+  return { data, error }
+}

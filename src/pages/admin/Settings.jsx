@@ -25,6 +25,7 @@ const ALL_MENUS = [
   { id:'newCustomerVisit',     label:'New Customer Visit'      },
   { id:'distributorApproval',  label:'New Distributor Approval'},
   { id:'distributorOrder',     label:'Distributor Order'       },
+  { id:'distributorSecondary', label:'Distributor Secondary'   },
   { id:'orderApproval',        label:'Order Approval'          },
   { id:'wmDashboard',          label:'Warehouse Dashboard'     },
   { id:'stockUpdate',          label:'Daily Stock Update'      },

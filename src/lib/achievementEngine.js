@@ -12,12 +12,14 @@
  * @param {Array}  products   - product master array
  * @param {Array}  distributors - distributor master array (for Distributor Appointment count)
  * @param {Array}  visits     - distributor_visits rows (for Outlet Visits achievement)
+ * @param {Array}  retailVisits - retail_visits rows (Distributor Secondary beat-outlet visits) —
+ *                               additive with `visits` toward the same Outlet Visits achievement
  * @param {Object} [dateRange] - optional { from, to } ISO date strings (inclusive). When given,
  *                               invoices/visits/distributor-acquisitions outside the range are
  *                               excluded. Omitted = all-time (unchanged prior behavior).
  * @returns {Object}          - { [memberId]: { value, custs, prods, cats, acq, visits } }
  */
-export function computeAchievements(invoices = [], goals = {}, products = [], distributors = [], visits = [], dateRange = null) {
+export function computeAchievements(invoices = [], goals = {}, products = [], distributors = [], visits = [], retailVisits = [], dateRange = null) {
   const result = {}
   const inRange = iso => {
     if (!dateRange || !iso) return true
@@ -88,6 +90,18 @@ export function computeAchievements(invoices = [], goals = {}, products = [], di
 
   // Outlet visits count
   visits.forEach(v => {
+    const mid = String(v.member_id)
+    const goal = goals[mid]
+    const ach = result[mid]
+    if (!ach || !goal || goal.visits_status !== 'approved') return
+    if (!inRange(v.visit_date)) return
+    ach.visits += 1
+  })
+
+  // Outlet visits count — Distributor Secondary beat-outlet visits, additive with the above. Every
+  // retail_visits row counts (order or no_order outcome) — the achievement is "the rep visited this
+  // outlet," not "the visit resulted in an order."
+  retailVisits.forEach(v => {
     const mid = String(v.member_id)
     const goal = goals[mid]
     const ach = result[mid]

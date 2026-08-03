@@ -1702,3 +1702,140 @@ a reload.
    lower one number and resubmit → confirm the other, untouched fields submit with their
    visibly-typed values, not stale zeros (the `useRef` fix).
 6. Spot-check the "Customer" → "Distributor" label renames read naturally everywhere they appear.
+
+## Distributor Secondary — Beats, Retail Outlets, secondary order-taking (4 Aug 2026 session) — BUILT,
+## SCHEMA NOT YET APPLIED, NOT YET BROWSER-TESTED
+
+Brand-new feature, not discussed in any prior session (confirmed by searching CLAUDE.md and the
+codebase before starting). New Sales Team menu (More → **Distributor Secondary**): a rep creates
+**Beats** under a Distributor, then walks a beat's **Retail Outlets** during a field run taking
+orders (or logging "no order" with a reason) through a cart-style item picker, ending in a day-end
+summary with individual order PDFs and a batch ZIP download.
+
+**Resolved via AskUserQuestion before building:**
+- **Counts toward the existing "Outlet Visits" goal** — every retail-outlet visit (order or
+  no-order outcome) feeds the same `ach.visits` achievement bucket the Monthly Goals system already
+  tracks, additive with the existing New-Customer-Visit source (`distributor_visits`). Not otherwise
+  integrated with invoicing or stock — a self-contained log beyond that one hook.
+- **Coverage Days is descriptive only** — no day-of-week enforcement on starting a visit.
+- **Batch download = real individual PDF files in a ZIP**, not one combined multi-page print
+  document — a first for this codebase (every prior export, `printInvoice.js`/`printJourney.js`,
+  uses `window.print()`, zero libraries). Added `jspdf` (PDF generation) + `jszip` (bundling) —
+  flagged the same way Recharts was when it became this app's first charting dependency.
+  **Bundle-size note:** `jspdf` pulls in `html2canvas` (~199kB) as a transitive dependency even
+  though the PDFs here are built from pure text/line drawing calls, not HTML rendering — main chunk
+  grew from ~322kB to ~486kB gzipped.
+- **Sequence with jump** — checkout/no-order auto-advances to the next un-visited outlet in the
+  beat's list (creation order); closing the cart sheet manually instead returns to the outlet list,
+  which is always reachable to jump to any other outlet out of sequence.
+
+**Built:**
+1. **Schema** (5 new tables — see "Schema" below) — `beats`, `retail_outlets`, `secondary_orders`,
+   `secondary_order_items`, `retail_visits` (the last one is the achievement source: one row per
+   outlet-visit attempt regardless of order/no-order outcome).
+2. **`db.js`** — `createBeat`/`fetchMyBeats` (Beat ID `BT-NNNN`, sequential, same
+   count-then-pad-then-prefix pattern as `createLoad`'s `LD-DDMMYYYY-NN`), `createRetailOutlet`/
+   `fetchOutletsForBeat` (Outlet ID `RO-NNNN`, same pattern, globally unique per the ask),
+   `createSecondaryOrder` (Order ID `SO-DDMMYYYY-NN`, exact `createLoad`/`createDistributorOrder`
+   two-step header-then-items insert pattern), `createRetailVisit`,
+   `fetchRetailVisitsForDate`/`fetchSecondaryOrdersForDate` (day-end summary), `fetchRetailVisits`
+   (global, dateRange-filterable — feeds the achievement hook).
+3. **Achievement hook** — `achievementEngine.js`'s `computeAchievements` gained a `retailVisits`
+   param (inserted before `dateRange` in the positional signature — only one call site,
+   `useData.jsx`, updated alongside it) with its own loop incrementing `ach.visits` the same way the
+   existing `distributor_visits` loop does (gated on `goal.visits_status === 'approved'`, filtered
+   by `inRange`). `useData.jsx` fetches `retail_visits` globally (same lightweight pattern as the
+   existing `visits` fetch) and exposes `retailVisits`/`setRetailVisits` in context.
+4. **`src/pages/shared/DistributorSecondary.jsx`** (new) — Beats tab (list + Create Beat sheet:
+   distributor select from `myDistributors`, name, Mon–Sun coverage-day toggles) → Start Retail
+   Visit (outlet list per beat with today's status badge, Add Outlet sheet with the same
+   promise-wrapped soft-fail `getLocation()` pattern already in `NewCustomerVisit.jsx`) → Item Order
+   cart (**new UI pattern for this app** — existing `DistributorOrder.jsx` only has a dropdown+Add
+   picker, not a browsable cart: category pills filtering a scrollable product list, qty steppers,
+   live cart total, respects `stock_status` same as `DistributorOrder.jsx`'s dropdown does) → Day
+   Summary tab (outlet-wise + product-wise rollup for today, per-order PDF download, batch ZIP
+   button).
+5. **`src/lib/printSecondaryOrder.js`** (new) — `buildSecondaryOrderPdf()` draws a jsPDF document
+   directly via text/line calls (header/meta block + line-items table + total, same layout spirit as
+   `printInvoice.js`'s HTML version) — deliberately not using jsPDF's `.html()` + `html2canvas` path,
+   to keep rendering fast even though the dependency itself still gets bundled either way.
+   `downloadSecondaryOrderPdf()` single-file save; `downloadSecondaryOrdersBatch()` builds every
+   order's PDF as a blob, bundles via `JSZip`, triggers one ZIP download.
+6. **Menu wiring** — new menu id `distributorSecondary` added to `TeamApp.jsx`'s `MORE_ITEMS` and
+   mirrored into `Settings.jsx`'s separate `ALL_MENUS` copy per Recurring Bug Pattern #6.
+   **Deliberately NOT added to `WebApp.jsx`'s own `ALL_MENUS`/`PAGE_MAP`** — unlike its closest
+   sibling `distributorOrder` (which IS registered in both shells, giving Manager/Admin access via
+   WebApp.jsx's sidebar too), this pass is Sales-Team-only per the ask ("new menu option in sales
+   team apps"). Revisit only if Manager/Admin need their own visibility into beats/outlets/secondary
+   orders later — the pattern to mirror is already sitting right there in `distributorOrder`.
+
+**Schema — NOT yet applied, user must run:**
+```sql
+create table beats (
+  id text primary key,
+  distributor_id text not null references distributors(id),
+  name text not null,
+  coverage_days jsonb not null default '[]',
+  created_by bigint references users(id),
+  created_at timestamptz not null default now()
+);
+
+create table retail_outlets (
+  id text primary key,
+  beat_id text not null references beats(id),
+  name text not null,
+  number text,
+  lat double precision,
+  lng double precision,
+  created_by bigint references users(id),
+  created_at timestamptz not null default now()
+);
+
+create table secondary_orders (
+  id text primary key,
+  outlet_id text not null references retail_outlets(id),
+  beat_id text not null references beats(id),
+  distributor_id text not null references distributors(id),
+  member_id bigint not null references users(id),
+  order_date date not null default current_date,
+  created_at timestamptz not null default now()
+);
+
+create table secondary_order_items (
+  id bigserial primary key,
+  order_id text not null references secondary_orders(id),
+  product_id text not null references products(id),
+  category_id text references categories(id),
+  qty numeric not null,
+  rate numeric not null
+);
+
+create table retail_visits (
+  id bigserial primary key,
+  beat_id text not null references beats(id),
+  outlet_id text not null references retail_outlets(id),
+  member_id bigint not null references users(id),
+  visit_date date not null default current_date,
+  outcome text not null,
+  no_order_reason text,
+  order_id text references secondary_orders(id),
+  created_at timestamptz not null default now()
+);
+create index retail_visits_member_date_idx on retail_visits(member_id, visit_date);
+```
+
+**Still open / not done yet:**
+- **Schema not yet applied** — nothing in this feature works until the 5 tables above exist.
+- **Admin's `distributorSecondary` menu box not yet checked** for the Sales Team role in Settings.
+- **Not browser-tested** — same constraint as every other feature built this session (no
+  chromium-cli/Playwright in this Windows dev environment). `vite build` + scoped `eslint` clean
+  (zero new errors on the 2 new files; pre-existing error counts on touched files — `useData.jsx`'s
+  1 pre-existing `react-refresh/only-export-components`, `Settings.jsx`'s 1 pre-existing unused
+  `Inp` import, `TeamApp.jsx`'s 10 pre-existing errors — all confirmed identical before/after via
+  `git stash` diff, nothing new introduced). Full flow to verify once schema is live: create a beat →
+  add/select an outlet → build a cart order → checkout → confirm it appears in today's Day Summary
+  (outlet-wise and product-wise) → try "No Order" with a reason on another outlet → download one
+  order's PDF and the batch ZIP → confirm the Outlet Visits achievement number moves for both
+  outlets visited (order and no-order) once that goal field is approved for the member.
+- **No Admin/Manager visibility screen** — deliberate scope cut for this pass, see menu-wiring note
+  above.

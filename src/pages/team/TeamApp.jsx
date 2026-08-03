@@ -12,6 +12,7 @@ import { getGoalOverallStatus } from '../../lib/achievementEngine.js'
 import DocumentSubmitWizard from '../shared/DocumentSubmitWizard.jsx'
 import PaymentEntryForm from '../shared/PaymentEntryForm.jsx'
 import DistributorOrder from '../shared/DistributorOrder.jsx'
+import DistributorSecondary from '../shared/DistributorSecondary.jsx'
 import OrderStatus from '../shared/OrderStatus.jsx'
 
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
@@ -171,6 +172,7 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
   hasMenu('newCustomerVisit') && { id: 'pendingVisits',    icon: '📌', label: `Pending Visits${pendingVisits.length ? ` (${pendingVisits.length})` : ''}` },
   hasMenu('orderStatus') && { id: 'orderStatus', icon: '📊', label: 'Order Status' },
   hasMenu('distributorOrder') && { id: 'distributorOrder', icon: '🛒', label: 'Distributor Order' },
+  hasMenu('distributorSecondary') && { id: 'distributorSecondary', icon: '🏪', label: 'Distributor Secondary' },
 ].filter(Boolean)
   const TABS = [
     hasMenu('dashboard')    && { id: 'dashboard',    icon: '🏠', label: 'Home'     },
@@ -487,6 +489,7 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
         )}
         {tab === 'newCustomerVisit' && <NewCustomerVisit />}
         {tab === 'distributorOrder' && <DistributorOrder />}
+        {tab === 'distributorSecondary' && <DistributorSecondary />}
         {tab === 'orderStatus' && <OrderStatus />}
         {tab === 'pendingVisits' && (
           <Card>
