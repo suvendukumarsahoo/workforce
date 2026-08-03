@@ -69,6 +69,16 @@ export function resolvePeriodsInRange(fromDate, toDate) {
   return periods
 }
 
+// {from, to} JS Date bounds for the Today/This Month/This Year snapshot tabs used by
+// SalesSnapshot.jsx, TeamSnapshot.jsx, and Dashboard.jsx's New Customer Visits funnel — kept here
+// (rather than duplicated per-component) so all three panels resolve "This Month" etc. identically.
+export function rangeForTab(tab, now) {
+  const y = now.getFullYear(), m = now.getMonth(), d = now.getDate()
+  if (tab === 'today') return { from: new Date(y, m, d), to: new Date(y, m, d, 23, 59, 59) }
+  if (tab === 'year') return { from: new Date(y, 0, 1), to: new Date(y, 11, 31, 23, 59, 59) }
+  return { from: new Date(y, m, 1), to: new Date(y, m + 1, 0, 23, 59, 59) }
+}
+
 // Last n periods (most recent first), for a period-picker dropdown.
 export function listRecentPeriods(n = 12) {
   const out = []

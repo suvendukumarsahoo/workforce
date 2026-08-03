@@ -1351,6 +1351,134 @@ achieved/remaining language across both Top Customers and Top Products, while th
 its own per-list identity color (purple/blue) as before. Three visually distinct colors per row now:
 name (light gray), bar (green/slate), value (purple or blue).
 
+## Monthly Goals schema — CONFIRMED FULLY APPLIED, migration bugs found & fixed (3 Aug 2026 session)
+
+**Ran the outstanding SQL from the previous session's handoff.** Verified via direct
+`information_schema`/`pg_constraint` queries (not just "ran it, assume it worked") that everything
+was already in place: `members.manager_id` pre-existed, `parameters`/`goals` `.period` columns +
+their `unique(member_id, period)` constraints were both already applied and correctly named
+(`parameters_member_period_key`, `goals_member_period_key`), Daily Stock Update's `stock_status*`
+columns, Production Issues' 6 boolean columns + `product_issue_resolutions` table were all already
+live from the prior session. Only `vehicle_allocations.journey_complete_approval_remarks` (Journey
+Phase 4) was actually missing — user ran that one `alter table` this session.
+
+**Real migration bug found via live testing:** `alter table parameters/goals add column period ...
+default to_char(now(), 'YYYY-MM')` back-filled **every pre-existing row** (the old single-row,
+pre-monthly scope/goal data) with the month the migration happened to run in — August 2026, which is
+also the live current month. So opening Set Parameters showed old legacy scope/goal selections as if
+they were freshly set for August, and Sales Team members whose old goal had been approved under the
+old system couldn't re-enter goals for August (the system saw an already-approved row). Fixed by
+`update parameters/goals set period = '2026-07' where period = '2026-08'` — moves all pre-existing
+rows to July, leaving August genuinely empty for the first real monthly cycle. **Not a code bug** —
+purely a one-time `DEFAULT`-backfill side effect; flag this same risk if `period`-style columns are
+ever added to another table via a dated default in the future.
+
+**Two real code bugs found via live testing, fixed:**
+1. `Parameters.jsx`'s `save()` sent `exp_budget: draft.expBudget` straight through — if the field
+   was left untouched, `draft.expBudget` was still the string `''` from its `useState` initializer
+   (`p.exp_budget || ''`), and Postgres rejected `''` into a `numeric` column
+   (`22P02 invalid input syntax for type numeric`). The toast only ever showed a generic "Error
+   saving parameters" with the real Postgres error swallowed — fixed by logging `console.error`
+   inline for future debugging, then fixed the actual bug: `exp_budget` is now coerced to `null` or
+   `Number(...)` at the save boundary.
+2. `db.fetchNotifications`'s `.contains('target_roles', [roleId])` — `target_roles` is `jsonb`, but
+   supabase-js's `.contains()` serializes a plain JS array using **Postgres array-literal** syntax
+   (`cs.{r1}`), which isn't valid JSON and 400'd against a jsonb column every 30s poll. Fixed by
+   passing `JSON.stringify([roleId])` instead — a string argument makes supabase-js insert it as-is,
+   producing valid JSON (`cs.["r1"]`). Same underlying gotcha as CLAUDE.md's documented **Recurring
+   Bug Pattern #3** (ambiguous-FK class of "the ORM's convenience method doesn't match this exact
+   column's Postgres type") — worth checking any other `.contains()`/`.overlaps()` call against a
+   `jsonb` (not native array) column if this resurfaces elsewhere.
+
+## Sales Team member dashboard — rebuilt twice this session, light "CRM dashboard" style is final
+
+**First build (dark, Geckoboard-style):** `TeamApp.jsx`'s Home tab (previously a light "My New
+Customer Visits" tile row + a light "My Goals" card/meters/breakdown-bars) was replaced with a new
+`src/components/TeamSnapshot.jsx`, matching `SalesSnapshot.jsx`'s dark navy theme — Today/Month/Year
+tabs, revenue trend, 3 goal meters, Top Customers, New Customer Visits tiles, Products/Categories/
+Customers breakdown. `GoalBarChart.jsx`'s `MeterGauge`/`GoalVsAchievedBreakdown` gained an optional
+`dark` prop for this (default `false`, zero effect on Admin's existing light drill-down Sheets). The
+separate "Goals" tab (`tab==='myGoals'`) was stripped down to **entry status only** — goal value +
+`GBadge` status + rejection note + Set/Revise button, no achieved amounts or progress bars (those all
+moved to the new Home dashboard) — this part of the change is unchanged by the rebuild below and
+still stands.
+
+**Second build, same session, immediately after — full re-theme to light (Coupler.io/Power BI "CRM
+dashboard" reference), Team-dashboard-only:** user showed a second reference image and asked for a
+white-background, colorful-stat-tile, donut-chart style instead. `TeamSnapshot.jsx` was rewritten
+(not incrementally patched) to:
+- **5 stat tiles** (solid color blocks): Total Sales (tab-scoped), Won, Win Rate, Open Leads, Avg
+  Open Lead Age. Reference panels with no real data equivalent were deliberately omitted rather than
+  approximated: Avg Days to Close, Pipeline/Weighted Value (leads have no assigned value before
+  conversion), Deal Loss Reasons (only free-text visit notes exist, no structured reason field),
+  Deals Projection (no forecasting data), and the multi-owner filter sidebar (Deal Owner/Stage/
+  Pipeline/Label — not applicable to a single member's own already-scoped view; the existing
+  Today/Month/Year tabs serve as the date control instead).
+- **My Pipeline donut** (`ContributionDonut`, already existed in `GoalBarChart.jsx`) + **My Top
+  Customers** ranked list side by side — the Top Customers panel fills the visual slot where "Deal
+  Loss Reasons" would have gone, rather than leaving it blank.
+- **Won Deals & Revenue — Last 12 Months**: new `last12MonthsTrend()` helper, a fixed trailing
+  12-month window **independent of** the Today/Month/Year tabs (dual-axis line chart: monthly
+  revenue + monthly won-lead count).
+- Goal Progress meters + Products/Categories/Customers breakdown kept, just re-themed light (dropped
+  the `dark` prop — meaning **`GoalBarChart.jsx`'s `dark` prop is currently unused by anything**;
+  harmless dead code, left in case a future dark-themed page wants it rather than re-adding it).
+- Admin's `SalesSnapshot.jsx` and the dark Warehouse/Driver/HR/Accounts sections were explicitly
+  **not** touched by this rework — confirmed via AskUserQuestion before building.
+
+**Three follow-up bugs found via live testing, all fixed:**
+1. The "Revise & resubmit" / "Goals submitted — waiting for review" banners in `TeamApp.jsx` rendered
+   unconditionally (outside any `tab===` check), so they showed above the new Home dashboard too.
+   Gated both to `tab === 'myGoals'` only.
+2. Goals tab had no period heading — added a plain `formatPeriodLabel(currentPeriod)` heading at the
+   top of the `myGoals` tab content.
+3. **No validation existed** preventing a Sales Value goal smaller than the sum of its own
+   customer-wise goals. `GoalEntrySheet`'s `handleSubmit` now blocks submission with an inline error
+   (new local `error` state, rendered in the Sheet) if `custTotal > valueGoal` when both
+   `enable_value` and `enable_customers` are on.
+
+**Real design bug found via live testing — "pipeline figures aren't changing with Today/Month/Year",
+same problem on both dashboards, all fixed:**
+- `TeamSnapshot.jsx`'s Won/Win Rate/Open Leads/Avg Open Lead Age tiles and My Pipeline donut were
+  receiving **pre-aggregated all-time counts** from `TeamApp.jsx` (`stageCounts`/`visitedLeadCount`/
+  `openLeads`/`wonLeads`) — these never changed regardless of the active tab. Fixed by passing the
+  **raw** `myVisits`/`myLeads` records down instead, and computing stage counts/visited-count/
+  open-leads/avg-age *inside* `TeamSnapshot` scoped to the active tab's date range — a visit counts
+  for a period by its own `visit_date`, a lead's current stage counts by `stage_updated_at` (already
+  stamped on every stage change by `db.updateDistributorLeadStage`). The stage-drill `LeadListSheet`
+  (opened by tapping a tile) deliberately stays all-time, unaffected — same convention as every other
+  drill-down Sheet in this app.
+- **Same bug on Admin's dashboard, two spots:** `SalesSnapshot.jsx`'s Orders Under Process/Stale
+  Orders/Avg Order Value stats were computed from the full `orders` array, not scoped to the active
+  tab — now filtered by `order_date` into the range first (Target Achievement/Goals Pending stay
+  monthly-only, matching how goals have no daily/yearly granularity; Recent Orders stays an
+  intentional all-time "latest activity" feed).
+- **The "New Customer Visits" funnel on `Dashboard.jsx`** (Admin) is a *separate* component from
+  `SalesSnapshot` with no tab control of its own — it always showed all-time totals no matter what
+  tab `SalesSnapshot` was on. Fixed by **lifting the tab state up to `Dashboard.jsx`** (`SalesSnapshot`
+  is now a controlled component, accepting `tab`/`setTab` as props instead of owning internal state)
+  so both panels always show the same period, and scoping the funnel's visit/stage counts the same
+  way as the fixes above.
+- `rangeForTab()` existed as a private copy in both `SalesSnapshot.jsx` and `TeamSnapshot.jsx` —
+  deduped into a single `export function rangeForTab(tab, now)` in `src/lib/period.js` (this also
+  avoided a `react-refresh/only-export-components` lint error that exporting it directly from
+  `SalesSnapshot.jsx` alongside its default component export would have caused).
+
+**Still open / not yet re-verified in browser after the tab-scoping fix (this is the very next thing
+to check in a new session):**
+1. On the Sales Team member's Home tab, switch Today → This Month → This Year and confirm Won/Win
+   Rate/Open Leads/Avg Open Lead Age/My Pipeline donut actually change numbers (they visibly didn't
+   before this fix — screenshot showed identical figures across a manual page reload).
+2. On Admin's Dashboard, same check: switch tabs on `SalesSnapshot` and confirm both its own stats
+   AND the New Customer Visits funnel tiles below it move together.
+3. Try submitting a goal where a customer-wise value exceeds the Sales Value goal — confirm the new
+   inline error blocks it instead of silently accepting.
+4. Confirm the Won Deals & Revenue (Last 12 Months) chart still renders sensibly (it's intentionally
+   NOT tab-scoped, always trailing 12 months) — was never re-checked after being built.
+5. Re-confirm Set Parameters / a fresh monthly goal cycle works cleanly now that legacy rows were
+   moved off of the `2026-08` period (per the migration-bug fix above) — this was mid-verification
+   when the dashboard-rebuild detour started and hasn't been explicitly closed out.
+
 ### To continue in a new chat
 **Attendance / Punch-In System is fully built, schema-applied, and browser-confirmed working** as of
 the 2 Aug 2026 session (commits `42c9797` → `190c1ac`). Nothing further needed to pick it back up.
@@ -1388,9 +1516,11 @@ Browser-test in order:
    level) — re-confirm this still holds after all the later `SalesSnapshot` rework.
 4. Confirm `Targets.jsx`'s per-member drill-down no longer crashes (the old bug) and matches
    Dashboard's Member-level numbers for the same person/period.
-5. `TeamApp.jsx`'s Home tab — confirm a Sales Team member's own "My Goals" card shows the
-   Today/Monthly toggle + meters/breakdown bars correctly for their own approved goals, and that the
-   New Customer Visits funnel + attendance calendar below it still work as before.
+5. `TeamApp.jsx`'s Home tab is now the light "CRM dashboard"-style `TeamSnapshot.jsx` (see the
+   session entry above this one for the full rebuild + tab-scoping fix history) — this superseded
+   the old "My Goals" card described earlier in this file's history. Confirm the Goal Progress
+   meters + Products/Categories/Customers breakdown still show correctly for approved goals, and
+   that the attendance calendar below the snapshot still works as before.
 6. **Log in as Admin specifically:** scroll down past the Sales section on
    `Dashboard.jsx` and confirm the Warehouse/Driver/HR/Accounts sections appear (Manager should NOT
    see these), tile counts look right, tapping a tile opens the right drill Sheet, and each "View
@@ -1416,6 +1546,6 @@ visual gut-check that the colorization reads as "colorful," not garish.
 
 Also still open from earlier in the same overall session, untouched since — unrelated to the above:
 1. **Journey Phase 4** (vein-diagram timeline, admin remarks, PDF export, Approved Journeys lists) —
-   still needs `journey_complete_approval_remarks` added to `vehicle_allocations`, and still not
-   browser-tested.
+   `journey_complete_approval_remarks` was added to `vehicle_allocations` in the 3 Aug 2026 session
+   (see the schema entry above this one); still not browser-tested.
 2. **POD photo upload** (Phase 3, older, still parked) — needs a new Supabase Storage bucket.

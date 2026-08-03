@@ -747,7 +747,7 @@ export async function fetchNotifications(roleId) {
   const { data, error } = await supabase
     .from('notifications')
     .select('*')
-    .contains('target_roles', [roleId])
+    .contains('target_roles', JSON.stringify([roleId]))
     .order('created_at', { ascending: false })
     .limit(30)
   return { data, error }

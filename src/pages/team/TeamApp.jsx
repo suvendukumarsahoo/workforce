@@ -1,12 +1,11 @@
 import { useState } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
-import { Card, CH, Av, Btn, Inp, Bar, GBadge, SBadge, Sheet } from '../../components/ui.jsx'
+import { Card, CH, Av, Btn, Inp, GBadge, SBadge, Sheet } from '../../components/ui.jsx'
 import MyAttendanceCalendar from '../../components/MyAttendanceCalendar.jsx'
-import { pct } from '../../lib/achievementEngine.js'
 import { formatPeriodLabel, monthElapsedRatio } from '../../lib/period.js'
 import { aggregateForMembers } from '../../lib/goalAggregation.js'
-import { ChartSection, MeterGauge, GoalVsAchievedBreakdown } from '../../components/charts/GoalBarChart.jsx'
+import TeamSnapshot from '../../components/TeamSnapshot.jsx'
 import * as db from '../../lib/db.js'
 import NewCustomerVisit from '../shared/NewCustomerVisit.jsx'
 import { getGoalOverallStatus } from '../../lib/achievementEngine.js'
@@ -31,7 +30,7 @@ const timeAgo = (isoDate) => {
 
 export default function TeamApp() {
   const { currentUser, logout, hasMenu } = useAuth()
-  const { params, goals, setGoals, achievements, expenses, setExpenses, salaries, products, categories, distributors: customers, visits, payments, showToast, loadAll, currentPeriod } = useData()
+  const { params, goals, setGoals, achievements, expenses, setExpenses, salaries, products, categories, distributors: customers, visits, payments, invoices, showToast, loadAll, currentPeriod } = useData()
   const [tab, setTab]           = useState('dashboard')
   const [showGoalEntry, setShowGoalEntry] = useState(false)
   const [showExpForm, setShowExpForm]     = useState(false)
@@ -53,7 +52,6 @@ const [paymentLead, setPaymentLead] = useState(null)
   const pendingVisits = (customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.contact_today)
   const p    = (params || {})[mid] || {}
   const g    = (goals  || {})[mid] || { status: 'draft' }
-  const a    = (achievements || {})[mid] || { value: 0, custs: {}, prods: {}, cats: {} }
   const sal  = (salaries || []).find(s => s.member_id === mid)
   const myExp = (expenses || []).filter(e => e.member_id === mid)
   const spent = myExp.filter(e => e.status === 'approved').reduce((s, e) => s + e.amount, 0)
@@ -75,8 +73,12 @@ const canEnter      = overallStatus === 'draft' || hasRejected || hasNewParam
     [{ goalsMap: goals, paramsMap: params, achievementsMap: achievements, weight: periodTab === 'today' ? monthElapsedRatio(currentPeriod) : 1 }],
     products, categories, customers,
   )
-  const myHasMeters = myAgg.value.goal > 0 || myAgg.visits.goal > 0 || myAgg.acq.goal > 0
-  const myHasBreakdown = myAgg.products.length > 0 || myAgg.categories.length > 0 || myAgg.customers.length > 0
+  // New Customer Visits raw records — passed to TeamSnapshot as-is so it can scope pipeline
+  // stats (Won/Win Rate/Open Leads/Avg Open Lead Age/My Pipeline) by the active Today/Month/Year
+  // tab; the stage-drill Sheet (rendered inline below) filters `customers`/`visits` independently
+  // and stays all-time regardless of the tab.
+  const myVisits = (visits || []).filter(v => v.member_id === mid)
+  const myLeads = (customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.lead_stage)
 
   const submitGoal = async (memberId, draft) => {
     const existing = (goals || {})[memberId] || {}
@@ -205,8 +207,8 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
 
       <div style={{ padding: 14 }}>
 
-        {/* Goal status banner */}
-        {canEnter && (
+        {/* Goal status banner — only on the Goals tab, not Home (Home is the achievement dashboard) */}
+        {tab === 'myGoals' && canEnter && (
           <Card style={{ background: hasRejected ? '#fef2f2' : '#eff6ff', border: `1px solid ${hasRejected ? '#fecaca' : '#bfdbfe'}` }}>
             <div style={{ padding: 14 }}>
               {hasRejected && <div style={{ fontSize: 12, color: '#991b1b', marginBottom: 8 }}>Some goals were rejected by your manager — please revise and resubmit.</div>}
@@ -215,7 +217,7 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
             </div>
           </Card>
         )}
-        {overallStatus === 'pending' && (
+        {tab === 'myGoals' && overallStatus === 'pending' && (
           <Card style={{ background: '#fffbeb', border: '1px solid #fde68a' }}>
             <div style={{ padding: 12, fontSize: 13, color: '#92400e' }}>⏳ Goals submitted — waiting for manager review.</div>
           </Card>
@@ -224,34 +226,18 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
         {/* DASHBOARD */}
         {tab === 'dashboard' && (
           <>
-        {(() => {
-              const myVisits = (visits || []).filter(v => v.member_id === mid)
-              const myLeads = (customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.lead_stage)
-              const stageCounts = { interested: 0, not_interested: 0, final: 0, distributor: 0 }
-              const IN_PROGRESS_STAGES = ['final_pending', 'registration_pending', 'documents_submitted', 'documentation_verification', 'payment_pending', 'payment_verification']
-myLeads.forEach(d => {
-  if (d.lead_stage === 'interested') stageCounts.interested++
-  else if (d.lead_stage === 'not_interested') stageCounts.not_interested++
-  else if (d.lead_stage === 'final_approved') stageCounts.distributor++
-  else if (IN_PROGRESS_STAGES.includes(d.lead_stage)) stageCounts.final++
-})
-              const visitedLeadCount = new Set(myVisits.map(v => v.distributor_id)).size
-              return (
-                <Card style={{ marginBottom: 12 }}>
-                  <CH title="My New Customer Visits" sub="Tap a stage to view leads" />
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 8, padding: 14 }}>
-                    {[['visited', 'Total Visited', visitedLeadCount, '#6366f1'], ['interested', 'Interested', stageCounts.interested, '#2563eb'], ['not_interested', 'Not Interested', stageCounts.not_interested, '#ef4444'], ['final', 'Final', stageCounts.final, '#f59e0b'], ['distributor', 'Distributor Created', stageCounts.distributor, '#10b981']].map(([key, l, v, c]) => (
-                      <div key={key} onClick={() => setSelectedStage(key)} style={{ textAlign: 'center', cursor: 'pointer', padding: '6px 4px', borderRadius: 8 }}
-                        onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
-                        onMouseLeave={e => e.currentTarget.style.background = ''}>
-                        <div style={{ fontSize: 9, color: '#6b7280' }}>{l}</div>
-                        <div style={{ fontSize: 16, fontWeight: 700, color: c }}>{v}</div>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-              )
-            })()}
+            <TeamSnapshot
+              mid={mid}
+              invoices={invoices}
+              customers={customers}
+              myAgg={myAgg}
+              periodTab={periodTab}
+              setPeriodTab={setPeriodTab}
+              currentPeriod={currentPeriod}
+              myVisits={myVisits}
+              myLeads={myLeads}
+              onSelectStage={setSelectedStage}
+            />
 {selectedStage && (
               <LeadListSheet
                 stage={selectedStage}
@@ -317,36 +303,6 @@ myLeads.forEach(d => {
     }}
   />
 )}
-            <Card>
-              <CH title="My Goals" sub={`Status: ${overallStatus.toUpperCase()}`} />
-              <div style={{ padding: '12px 14px 0', display: 'flex', gap: 8 }}>
-                {[['today', 'Today'], ['monthly', 'Monthly']].map(([key, label]) => (
-                  <button key={key} onClick={() => setPeriodTab(key)} style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: periodTab === key ? '#2563eb' : '#f3f4f6', color: periodTab === key ? '#fff' : '#374151', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>{label}</button>
-                ))}
-              </div>
-              {periodTab === 'today' && <div style={{ padding: '8px 14px 0', fontSize: 11, color: '#6b7280' }}>Pace check: achievement so far vs. a prorated slice of this month's target</div>}
-              {!myHasMeters && !myHasBreakdown && (
-                <div style={{ textAlign: 'center', padding: 24, color: '#9ca3af', fontSize: 13 }}>No approved goals yet for {formatPeriodLabel(currentPeriod)}</div>
-              )}
-            </Card>
-            {myHasMeters && (
-              <ChartSection title="This Period">
-                <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-around', gap: 8 }}>
-                  {myAgg.value.goal > 0 && <MeterGauge label="Sales Value" value={myAgg.value.achieved} goal={myAgg.value.goal} formatValue={F} />}
-                  {myAgg.visits.goal > 0 && <MeterGauge label="Outlet Visits" value={myAgg.visits.achieved} goal={myAgg.visits.goal} />}
-                  {myAgg.acq.goal > 0 && <MeterGauge label="Distributors" value={myAgg.acq.achieved} goal={myAgg.acq.goal} />}
-                </div>
-              </ChartSection>
-            )}
-            {myAgg.products.length > 0 && (
-              <ChartSection title="Products"><GoalVsAchievedBreakdown rows={myAgg.products} /></ChartSection>
-            )}
-            {myAgg.categories.length > 0 && (
-              <ChartSection title="Categories"><GoalVsAchievedBreakdown rows={myAgg.categories} /></ChartSection>
-            )}
-            {myAgg.customers.length > 0 && (
-              <ChartSection title="Customers"><GoalVsAchievedBreakdown rows={myAgg.customers} formatValue={F} /></ChartSection>
-            )}
             <MyAttendanceCalendar compact />
           </>
         )}
@@ -354,6 +310,7 @@ myLeads.forEach(d => {
         {/* MY GOALS */}
         {tab === 'myGoals' && (
           <>
+            <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>{formatPeriodLabel(currentPeriod)}</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
               <GBadge status={overallStatus} />
               {canEnter && <Btn v="pri" sm onClick={() => setShowGoalEntry(true)}>{hasRejected ? 'Revise' : 'Set goals'}</Btn>}
@@ -367,9 +324,8 @@ myLeads.forEach(d => {
                     <span style={{ fontSize: 13, fontWeight: 600 }}>Sales value</span>
                     <GBadge status={g.value_status || 'draft'} />
                   </div>
-                  <div style={{ fontSize: 12, color: '#6b7280', marginBottom: g.value_status === 'approved' ? 6 : 0 }}>Goal: {F(g.value_goal)} {g.value_status === 'approved' && `· Achieved: ${F(a.value)}`}</div>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>Goal: {F(g.value_goal)}</div>
                   {g.value_status === 'rejected' && <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>❌ {g.value_note}</div>}
-                  {g.value_status === 'approved' && <Bar val={pct(a.value, g.value_goal)} />}
                 </div>
               </Card>
             )}
@@ -378,7 +334,6 @@ myLeads.forEach(d => {
             {p.enable_products && (p.sel_prods || []).map(pid => {
               const prod = (products || []).find(x => x.id === pid); if (!prod) return null
               const fg   = (g.products || {})[pid]
-              const done = (a.prods || {})[pid] || 0
               return (
                 <Card key={pid}>
                   <div style={{ padding: 12 }}>
@@ -386,9 +341,8 @@ myLeads.forEach(d => {
                       <span style={{ fontSize: 13, fontWeight: 600 }}>{prod.name}</span>
                       <GBadge status={fg?.status || 'draft'} />
                     </div>
-                    <div style={{ fontSize: 12, color: '#6b7280', marginBottom: fg?.status === 'approved' ? 6 : 0 }}>Goal: {fg?.goal || '—'} {prod.unit} {fg?.status === 'approved' && `· Done: ${done}`}</div>
+                    <div style={{ fontSize: 12, color: '#6b7280' }}>Goal: {fg?.goal || '—'} {prod.unit}</div>
                     {fg?.status === 'rejected' && <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>❌ {fg.note}</div>}
-                    {fg?.status === 'approved' && <Bar val={pct(done, fg.goal)} />}
                   </div>
                 </Card>
               )
@@ -398,7 +352,6 @@ myLeads.forEach(d => {
             {p.enable_categories && (p.sel_cats || []).map(cid => {
               const cat  = (categories || []).find(x => x.id === cid); if (!cat) return null
               const fg   = (g.categories || {})[cid]
-              const done = (a.cats || {})[cid] || 0
               return (
                 <Card key={cid}>
                   <div style={{ padding: 12 }}>
@@ -406,9 +359,8 @@ myLeads.forEach(d => {
                       <span style={{ fontSize: 13, fontWeight: 600 }}>{cat.name}</span>
                       <GBadge status={fg?.status || 'draft'} />
                     </div>
-                    <div style={{ fontSize: 12, color: '#6b7280', marginBottom: fg?.status === 'approved' ? 6 : 0 }}>Goal: {fg?.goal || '—'} {cat.unit} {fg?.status === 'approved' && `· Done: ${done}`}</div>
+                    <div style={{ fontSize: 12, color: '#6b7280' }}>Goal: {fg?.goal || '—'} {cat.unit}</div>
                     {fg?.status === 'rejected' && <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>❌ {fg.note}</div>}
-                    {fg?.status === 'approved' && <Bar val={pct(done, fg.goal)} />}
                   </div>
                 </Card>
               )
@@ -418,7 +370,6 @@ myLeads.forEach(d => {
             {p.enable_customers && (p.sel_custs || []).map(cid => {
               const cust = (customers || []).find(x => x.id === cid); if (!cust) return null
               const fg   = (g.customers || {})[cid]
-              const done = (a.custs || {})[cid] || 0
               return (
                 <Card key={cid}>
                   <div style={{ padding: 12 }}>
@@ -426,7 +377,7 @@ myLeads.forEach(d => {
                       <span style={{ fontSize: 13, fontWeight: 600 }}>{cust.name}</span>
                       <GBadge status={fg?.status || 'draft'} />
                     </div>
-                    <div style={{ fontSize: 12, color: '#6b7280' }}>Goal: {fg ? F(fg.goal) : '—'} {fg?.status === 'approved' && `· Done: ${F(done)}`}</div>
+                    <div style={{ fontSize: 12, color: '#6b7280' }}>Goal: {fg ? F(fg.goal) : '—'}</div>
                     {fg?.status === 'rejected' && <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>❌ {fg.note}</div>}
                   </div>
                 </Card>
@@ -440,9 +391,8 @@ myLeads.forEach(d => {
 <span style={{ fontSize: 13, fontWeight: 600 }}>Distributor Created</span>
                     <GBadge status={g.acq_status || 'draft'} />
                   </div>
-                  <div style={{ fontSize: 12, color: '#6b7280', marginBottom: g.acq_status === 'approved' ? 6 : 0 }}>Goal: {g.acq_goal} {g.acq_status === 'approved' && `· Achieved: ${a.acq || 0}`}</div>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>Goal: {g.acq_goal}</div>
                   {g.acq_status === 'rejected' && <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>❌ {g.acq_note}</div>}
-                  {g.acq_status === 'approved' && <Bar val={pct(a.acq || 0, g.acq_goal)} />}
                 </div>
               </Card>
             )}
@@ -561,6 +511,7 @@ myLeads.forEach(d => {
 function GoalEntrySheet({ member, param, goal, period, products, categories, customers, onSubmit, onClose }) {
   const g = goal || {}
   const canEdit = s => !s || s === 'draft' || s === 'rejected'
+  const [error, setError] = useState('')
   
   // Use refs to collect values - prevents re-render on every keystroke
   const vals = {}
@@ -592,6 +543,15 @@ function GoalEntrySheet({ member, param, goal, period, products, categories, cus
       visits: { goal: get('visits', g.visits_goal) },
       acq:    { goal: get('acq',    g.acq_goal)    },
     }
+    if (param.enable_value && param.enable_customers) {
+      const valueGoal = Number(draft.value.goal) || 0
+      const custTotal = Object.values(draft.custs).reduce((s, c) => s + (Number(c.goal) || 0), 0)
+      if (custTotal > valueGoal) {
+        setError(`Sales value goal (₹${valueGoal.toLocaleString('en-IN')}) cannot be less than the sum of customer-wise goals (₹${custTotal.toLocaleString('en-IN')}).`)
+        return
+      }
+    }
+    setError('')
     await onSubmit(member?.member_id, draft)
   }
 
@@ -631,6 +591,7 @@ function GoalEntrySheet({ member, param, goal, period, products, categories, cus
 <StableInp label="Distributor Creation goal" fieldKey="acq" defaultVal={g.acq_goal} fg={{ status: g.acq_status, note: g.acq_note }} />
 )}
 
+      {error && <div style={{ fontSize: 12, color: '#991b1b', marginBottom: 10, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 10 }}>{error}</div>}
       <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
         <Btn v="pri" full onClick={async () => { await handleSubmit() }}>Submit for approval</Btn>
         <Btn full onClick={onClose}>Cancel</Btn>

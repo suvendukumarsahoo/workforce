@@ -23,7 +23,7 @@ const AXIS_STYLE = { fontSize: 11, fill: '#9ca3af' }
 // this app's existing red/amber/green status-color convention (see ui.jsx's `barColor`) rather than
 // inventing a new ramp, so a meter's color always means the same thing it already does everywhere
 // else in the app (progress bars, GBadge, etc).
-export function MeterGauge({ label, value, goal, formatValue }) {
+export function MeterGauge({ label, value, goal, formatValue, dark }) {
   const fmt = formatValue || (n => Math.round(n).toLocaleString('en-IN'))
   const percent = goal > 0 ? Math.round((value / goal) * 100) : 0
   const displayPercent = Math.min(100, Math.max(0, percent))
@@ -33,14 +33,14 @@ export function MeterGauge({ label, value, goal, formatValue }) {
     <div style={{ textAlign: 'center', padding: '4px 0' }}>
       <div style={{ width: 108, height: 108, margin: '0 auto', position: 'relative' }}>
         <RadialBarChart width={108} height={108} cx="50%" cy="50%" innerRadius="72%" outerRadius="100%" barSize={9} data={data} startAngle={90} endAngle={-270}>
-          <RadialBar background={{ fill: '#f3f4f6' }} dataKey="value" cornerRadius={5} />
+          <RadialBar background={{ fill: dark ? '#334155' : '#f3f4f6' }} dataKey="value" cornerRadius={5} />
         </RadialBarChart>
         <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <span style={{ fontSize: 19, fontWeight: 700, color }}>{percent}%</span>
         </div>
       </div>
-      <div style={{ fontSize: 12, fontWeight: 600, color: '#374151', marginTop: 4 }}>{label}</div>
-      <div style={{ fontSize: 11, color: '#9ca3af' }}>{fmt(value)} / {fmt(goal)}</div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: dark ? '#e2e8f0' : '#374151', marginTop: 4 }}>{label}</div>
+      <div style={{ fontSize: 11, color: dark ? '#94a3b8' : '#9ca3af' }}>{fmt(value)} / {fmt(goal)}</div>
     </div>
   )
 }
@@ -74,22 +74,23 @@ export function ContributionDonut({ rows, formatValue, emptyLabel = 'No achievem
 }
 
 // Multi-row horizontal bar chart — one row per item (product/category/customer breakdown).
-export function GoalVsAchievedBreakdown({ rows, formatValue, emptyLabel = 'No items in scope' }) {
+export function GoalVsAchievedBreakdown({ rows, formatValue, emptyLabel = 'No items in scope', dark }) {
   const fmt = formatValue || (n => Math.round(n).toLocaleString('en-IN'))
   if (!rows || rows.length === 0) {
-    return <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 12 }}>{emptyLabel}</div>
+    return <div style={{ textAlign: 'center', padding: 20, color: dark ? '#64748b' : '#9ca3af', fontSize: 12 }}>{emptyLabel}</div>
   }
   const data = rows.map(r => ({ name: r.unit ? `${r.name} (${r.unit})` : r.name, Goal: r.goal, Achieved: r.achieved }))
   const height = Math.max(120, rows.length * 44)
+  const axisStyle = dark ? { fontSize: 11, fill: '#94a3b8' } : AXIS_STYLE
   return (
     <div style={{ width: '100%', height }}>
       <ResponsiveContainer>
         <BarChart data={data} layout="vertical" margin={{ top: 4, right: 40, left: 4, bottom: 4 }} barGap={2}>
-          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
-          <XAxis type="number" tick={AXIS_STYLE} axisLine={{ stroke: '#e5e7eb' }} tickLine={false} tickFormatter={fmt} />
-          <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: '#374151' }} axisLine={false} tickLine={false} width={130} />
-          <Tooltip formatter={fmt} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
-          <Legend wrapperStyle={{ fontSize: 11 }} />
+          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke={dark ? '#334155' : '#f3f4f6'} />
+          <XAxis type="number" tick={axisStyle} axisLine={{ stroke: dark ? '#334155' : '#e5e7eb' }} tickLine={false} tickFormatter={fmt} />
+          <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: dark ? '#e2e8f0' : '#374151' }} axisLine={false} tickLine={false} width={130} />
+          <Tooltip formatter={fmt} contentStyle={dark ? { background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 } : { fontSize: 12, borderRadius: 8 }} labelStyle={dark ? { color: '#e2e8f0' } : undefined} />
+          <Legend wrapperStyle={{ fontSize: 11, color: dark ? '#94a3b8' : undefined }} />
           <Bar dataKey="Goal" fill={GOAL_COLOR} radius={[0, 4, 4, 0]} barSize={14} />
           <Bar dataKey="Achieved" fill={ACHIEVED_COLOR} radius={[0, 4, 4, 0]} barSize={14} />
         </BarChart>

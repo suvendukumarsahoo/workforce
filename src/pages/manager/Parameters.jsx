@@ -16,10 +16,10 @@ const [editing, setEditing] = useState(null)
       enable_value: draft.enableValue, enable_customers: draft.enableCustomers,
       enable_products: draft.enableProducts, enable_categories: draft.enableCategories,
       enable_visits: draft.enableVisits, enable_acq: draft.enableAcq,
-      exp_budget: draft.expBudget,
+      exp_budget: draft.expBudget === '' || draft.expBudget == null ? null : Number(draft.expBudget),
       sel_custs: draft.selCusts, sel_prods: draft.selProds, sel_cats: draft.selCats,
     })
-    if (error) { showToast('Error saving parameters'); return }
+    if (error) { console.error('upsertParameter failed:', error); showToast('Error saving parameters'); return }
     setParams(prev => ({ ...prev, [memberId]: { ...draft, member_id: memberId, period: currentPeriod } }))
     setEditing(null)
     showToast('Parameters saved')

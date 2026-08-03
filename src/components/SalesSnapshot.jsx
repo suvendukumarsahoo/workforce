@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import * as db from '../lib/db.js'
 import { pct } from '../lib/achievementEngine.js'
+import { rangeForTab } from '../lib/period.js'
 
 /**
  * Dedicated Sales snapshot — a dense, dark "executive glance" widget occupying the top of the
@@ -43,13 +44,6 @@ const timeAgo = iso => {
 const orderValue = o => (o.items || []).filter(it => !it.cancelled)
   .reduce((s, it) => s + (it.rate || 0) * (it.final_qty ?? it.approved_qty ?? it.order_qty ?? 0), 0)
 const lineTotal = inv => (inv.lines || inv.invoice_lines || []).reduce((s, l) => s + (Number(l.qty) || 0) * (Number(l.rate) || 0), 0)
-
-function rangeForTab(tab, now) {
-  const y = now.getFullYear(), m = now.getMonth(), d = now.getDate()
-  if (tab === 'today') return { from: new Date(y, m, d), to: new Date(y, m, d, 23, 59, 59) }
-  if (tab === 'year') return { from: new Date(y, 0, 1), to: new Date(y, 11, 31, 23, 59, 59) }
-  return { from: new Date(y, m, 1), to: new Date(y, m + 1, 0, 23, 59, 59) }
-}
 
 // Per-bucket (NOT cumulative) revenue, date vs value — plotting a running total made the line look
 // like an artificial straight ramp with sparse invoice data; real per-day/per-month figures give an
@@ -154,9 +148,8 @@ function RankedList({ title, rows, formatValue, valueColor, totalValue }) {
   )
 }
 
-export default function SalesSnapshot({ totalTarget, totalAch, pendingGoals, leaderboard, invoices, customers, onSelectManager }) {
+export default function SalesSnapshot({ totalTarget, totalAch, pendingGoals, leaderboard, invoices, customers, onSelectManager, tab, setTab }) {
   const [orders, setOrders] = useState(null)
-  const [tab, setTab] = useState('month')
 
   useEffect(() => {
     let cancelled = false
@@ -171,21 +164,24 @@ export default function SalesSnapshot({ totalTarget, totalAch, pendingGoals, lea
   const trend = buildTrend(tab, invoices || [], now)
   const { topCustomers, topProducts } = topEntities(invoices || [], range, customers)
 
-  const underProcess = (orders || []).filter(o => (o.allocation?.status || '') !== 'completed')
+  // Orders-related stats scoped to the active Today/Month/Year tab (by order_date) — Recent Orders
+  // stays all-time on purpose (a live "latest activity" feed, not a period comparison).
+  const rangeOrders = (orders || []).filter(o => { const d = new Date(o.order_date); return d >= range.from && d <= range.to })
+  const underProcess = rangeOrders.filter(o => (o.allocation?.status || '') !== 'completed')
   const underProcessValue = underProcess.reduce((s, o) => s + orderValue(o), 0)
   const staleOrders = underProcess.filter(o => new Date(o.order_date) < staleThreshold)
-  const avgOrderValue = (orders || []).length ? (orders.reduce((s, o) => s + orderValue(o), 0) / orders.length) : 0
+  const avgOrderValue = rangeOrders.length ? (rangeOrders.reduce((s, o) => s + orderValue(o), 0) / rangeOrders.length) : 0
   const recentOrders = [...(orders || [])].sort((a, b) => new Date(b.order_date) - new Date(a.order_date)).slice(0, 5)
 
+  const tabLabel = TABS.find(([k]) => k === tab)[1]
+
   const stats = [
-    ['Orders Under Process', orders === null ? '—' : underProcess.length, F(underProcessValue), '#60a5fa'],
+    [`Orders Under Process — ${tabLabel}`, orders === null ? '—' : underProcess.length, F(underProcessValue), '#60a5fa'],
     ['Stale Orders (>3d)', orders === null ? '—' : staleOrders.length, staleOrders.length > 0 ? '⚠ needs attention' : 'all moving', '#f87171'],
     ['Target Achievement', `${pct(totalAch, totalTarget)}%`, 'This month', '#34d399'],
-    ['Avg Order Value', orders === null ? '—' : F(avgOrderValue), '', '#fbbf24'],
+    [`Avg Order Value — ${tabLabel}`, orders === null ? '—' : F(avgOrderValue), '', '#fbbf24'],
     ['Goals Pending Review', pendingGoals, '', '#a78bfa'],
   ]
-
-  const tabLabel = TABS.find(([k]) => k === tab)[1]
 
   return (
     <div style={{ background: '#0f172a', borderRadius: 16, padding: 16, marginBottom: 20 }}>
@@ -248,7 +244,7 @@ export default function SalesSnapshot({ totalTarget, totalAch, pendingGoals, lea
 
         <div style={{ ...panelBase, flex: '1.4 1 260px', display: 'flex', flexWrap: 'wrap', gap: 10, alignContent: 'flex-start' }}>
           {stats.map(([label, value, sub, color]) => {
-            const emphasize = label === 'Orders Under Process'
+            const emphasize = label.startsWith('Orders Under Process')
             return (
               <div key={label} style={{ flex: '1 1 45%', minWidth: 100 }}>
                 <div style={{ fontSize: emphasize ? 22 : 18, fontWeight: 800, color: label.startsWith('Stale') && staleOrders.length > 0 ? '#f87171' : color }}>{value}</div>

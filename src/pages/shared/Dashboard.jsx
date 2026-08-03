@@ -6,6 +6,7 @@ import { aggregateForMembers } from '../../lib/goalAggregation.js'
 import { ChartSection, MeterGauge, ContributionDonut, GoalVsAchievedBreakdown } from '../../components/charts/GoalBarChart.jsx'
 import MemberGoalDetail from '../../components/MemberGoalDetail.jsx'
 import SalesSnapshot from '../../components/SalesSnapshot.jsx'
+import { rangeForTab } from '../../lib/period.js'
 import * as db from '../../lib/db.js'
 
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
@@ -47,6 +48,10 @@ export default function Dashboard({ onNavigate }) {
     goals, expenses, invoices, members, users, achievements, params, products, categories,
     distributors: customers, visits, payments,
   } = useData()
+  // Shared reporting-period tab, lifted here so SalesSnapshot and the New Customer Visits funnel
+  // below it always show the same period instead of drifting independently (the funnel has no tab
+  // control of its own).
+  const [tab, setTab] = useState('month')
   const [selectedStage, setSelectedStage] = useState(null)
   const [selectedLead, setSelectedLead] = useState(null)
   const [selectedManagerId, setSelectedManagerId] = useState(null)
@@ -109,14 +114,25 @@ export default function Dashboard({ onNavigate }) {
         totalTarget={totalTarget} totalAch={totalAch} pendingGoals={pendingGoals}
         leaderboard={managerContribution} invoices={invoices} customers={customers}
         onSelectManager={id => setSelectedManagerId(id)}
+        tab={tab} setTab={setTab}
       />
 
       {(() => {
-const visitedIds = new Set((visits || []).map(v => v.distributor_id))
-const newLeads = (customers || []).filter(d => visitedIds.has(d.id))
-const stageCounts = { interested: 0, not_interested: 0, final: 0, distributor: 0 }
+        // Scoped to the same `tab` SalesSnapshot uses — a visit "counts" for a period based on its
+        // own visit_date, a lead's current stage "counts" based on when that stage was last set
+        // (stage_updated_at, stamped by db.updateDistributorLeadStage), same convention as the
+        // Sales Team member's own dashboard (TeamSnapshot.jsx).
+        const range = rangeForTab(tab, new Date())
+        const visitedIds = new Set((visits || []).filter(v => { const d = new Date(v.visit_date); return d >= range.from && d <= range.to }).map(v => v.distributor_id))
+        const newLeads = (customers || []).filter(d => visitedIds.has(d.id))
         const IN_PROGRESS_STAGES = ['final_pending', 'registration_pending', 'documents_submitted', 'documentation_verification', 'payment_pending', 'payment_verification']
-        newLeads.forEach(d => {
+        const rangeLeads = (customers || []).filter(d => {
+          if (!d.lead_stage || !d.stage_updated_at) return false
+          const d2 = new Date(d.stage_updated_at)
+          return d2 >= range.from && d2 <= range.to
+        })
+        const stageCounts = { interested: 0, not_interested: 0, final: 0, distributor: 0 }
+        rangeLeads.forEach(d => {
           if (d.lead_stage === 'interested') stageCounts.interested++
           else if (d.lead_stage === 'not_interested') stageCounts.not_interested++
           else if (d.lead_stage === 'final_approved') stageCounts.distributor++
@@ -125,7 +141,7 @@ const stageCounts = { interested: 0, not_interested: 0, final: 0, distributor: 0
         return (
           <div style={darkContainer}>
             <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.3 }}>
-              New Customer Visits — {newLeads.length} total leads
+              New Customer Visits — {newLeads.length} leads ({{ today: 'Today', month: 'This Month', year: 'This Year' }[tab]})
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
               {[['visited', 'Total Visited', newLeads.length, '#a5b4fc'], ['interested', 'Interested', stageCounts.interested, '#60a5fa'], ['not_interested', 'Not Interested', stageCounts.not_interested, '#f87171'], ['final', 'Final', stageCounts.final, '#fbbf24'], ['distributor', 'Distributor Created', stageCounts.distributor, '#34d399']].map(([key, l, v, c]) => (
