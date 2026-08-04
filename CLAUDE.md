@@ -1860,3 +1860,28 @@ create index retail_visits_member_date_idx on retail_visits(member_id, visit_dat
   outlets visited (order and no-order) once that goal field is approved for the member.
 - **No Admin/Manager visibility screen** — deliberate scope cut for this pass, see menu-wiring note
   above.
+
+## Browser-test round 2 — everything from the 4 Aug 2026 session CONFIRMED WORKING (same-day
+## follow-up, user tested live and reported back "all complete and ok")
+
+All outstanding items from this session's earlier handoff are now confirmed working end to end:
+- **Distributor Secondary** — schema applied, `distributorSecondary` menu enabled for Sales Team,
+  full flow confirmed: create beat → add/select outlet → cart order → checkout → Day Summary
+  (outlet-wise + product-wise) → No Order with reason → individual PDF + batch ZIP download →
+  Outlet Visits achievement moves correctly.
+- **Distributor terminology / ungated Distributors achievement / auto Other Distributors / Admin
+  goal reset / two goal-workflow bug fixes** (commit `4963e57`) — all 6 checklist items confirmed:
+  Other Distributors appears correctly (with and without distributor-wise tracking enabled), the
+  Distributors meter matches "Distributor Created" on "This Month," Admin's Reset Goal action works,
+  rejecting one field while others stay pending now correctly shows "Revise & resubmit," resubmitting
+  after a validation error no longer loses untouched field values, and the Customer→Distributor
+  label renames read naturally throughout.
+- **Daily Stock Update / Production Issues (3M)** — menu boxes checked, full flow confirmed (status
+  dropdown affects the Distributor Order product picker, 3M issue ticking/auto-resolve, Resolved tab).
+- **Journey Phase 4** (vein-diagram timeline, admin remarks, PDF export, Approved Journeys lists) —
+  confirmed working.
+- **`notifications` table** — `target_roles` column issue resolved, notification bell working.
+
+**Nothing outstanding from this session remains open.** Only pre-existing, explicitly-deferred items
+carry forward unchanged: Journey Phase 2's live GPS ping (needs a real moving vehicle to test,
+user's call to defer), and POD photo upload (needs a new Supabase Storage bucket, not started).
