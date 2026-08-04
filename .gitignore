@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# run-workforce skill: throwaway Playwright screenshots, not build artifacts
+.claude/skills/run-workforce/shots/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
