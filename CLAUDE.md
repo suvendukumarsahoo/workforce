@@ -162,6 +162,27 @@ customer_id fix is in (per-customer goal progress bars should now move).
 - `createUser()` in db.js needs `service_role` key (client-side `auth.admin.createUser()` fails 
   "User not allowed" for ALL new employees). Workaround: manual Supabase Dashboard Auth + SQL insert. 
   Fix = Edge Function, explicitly parked until after full testing.
+
+  **Manual workaround, step by step (documented 4 Aug 2026 session):**
+  1. Supabase Dashboard → Authentication → Users → **Add user** → email + password → check "Auto
+     Confirm User" → copy the generated **User UID**.
+  2. If the new user is Sales Team (`r5`) or Driver (`r7`), first create their `members` row (Table
+     Editor → `members` → insert `name`/`avatar`/`color`; `manager_id` can be left blank and set
+     later via Set Parameters) — every other role skips this, `member_id` stays `NULL` for them.
+  3. Insert the `users` row:
+     ```sql
+     insert into users (name, email, role_id, member_id, avatar, color, auth_id)
+     values (
+       'Full Name', 'email@example.com',  -- must match the Auth email from step 1
+       'r5',                               -- r1 Admin, r2 Manager, r3 Accounts, r4 HR,
+                                            -- r5 Sales Team, r6 Warehouse Manager, r7 Driver
+       123,                                 -- members.id from step 2, or NULL if not sales/driver
+       'AN', '#3b82f6', 'paste-the-auth-uid-here'
+     );
+     ```
+     Optional (Attendance system, defaults are fine if skipped): `hq_latitude`, `hq_longitude`,
+     `duty_start_time`, `allowed_deviation_m` (defaults to 20).
+  They can log in immediately with the step-1 email/password once this row exists.
 - Orphaned file `src/components/PickingPendingTile.jsx` — confirmed fully unused, tile inside 
   commented out as stopgap, safe to delete.
 - Performance/polling issue (see Recurring Bug Patterns #5) — flagged, not fixed.
