@@ -4,6 +4,7 @@ import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Btn, Inp, Sheet, F } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
 import { downloadSecondaryOrderPdf, downloadSecondaryOrdersBatch } from '../../lib/printSecondaryOrder.js'
+import { availableUnitsForProduct, toBaseQty } from '../../lib/unitConversion.js'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -260,24 +261,32 @@ function AddOutletSheet({ onSave, onClose }) {
 
 function ItemOrderSheet({ outlet, beat, mid, products, categories, showToast, onClose, onDone }) {
   const [catFilter, setCatFilter] = useState('all')
-  const [cart, setCart] = useState({}) // { product_id: qty }
+  const [cart, setCart] = useState({}) // { product_id: { qty, unit } }
   const [showNoOrder, setShowNoOrder] = useState(false)
   const [noOrderReason, setNoOrderReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   const visibleProducts = (products || []).filter(p => catFilter === 'all' || p.category_id === catFilter)
+  // Entries are kept (not deleted) at qty 0 so a unit picked before any + tap survives —
+  // cartLines below filters qty>0 so a 0-qty entry never reaches the total/checkout.
   const setQty = (pid, qty) => setCart(prev => {
     const q = Math.max(0, Number(qty) || 0)
-    const next = { ...prev }
-    if (q === 0) delete next[pid]
-    else next[pid] = q
-    return next
+    return { ...prev, [pid]: { unit: prev[pid]?.unit || 'base', qty: q } }
   })
+  const setUnit = (pid, unit) => setCart(prev => (
+    { ...prev, [pid]: { qty: prev[pid]?.qty || 0, unit } }
+  ))
 
-  const cartLines = Object.entries(cart).map(([pid, qty]) => {
-    const p = (products || []).find(x => x.id === pid)
-    return { product_id: pid, qty, rate: Number(p?.price) || 0, category_id: p?.category_id }
-  })
+  const cartLines = Object.entries(cart)
+    .filter(([, entry]) => entry.qty > 0)
+    .map(([pid, entry]) => {
+      const p = (products || []).find(x => x.id === pid)
+      const baseQty = toBaseQty(p, entry.unit, entry.qty)
+      return {
+        product_id: pid, qty: baseQty, rate: Number(p?.price) || 0, category_id: p?.category_id,
+        entered_unit: entry.unit, entered_qty: entry.qty,
+      }
+    })
   const cartTotal = cartLines.reduce((s, l) => s + l.qty * l.rate, 0)
 
   const checkout = async () => {
@@ -333,13 +342,22 @@ function ItemOrderSheet({ outlet, beat, mid, products, categories, showToast, on
           <div>
             {visibleProducts.map(p => {
               const unavailable = (p.stock_status || 'Available') === 'Unavailable'
-              const qty = cart[p.id] || 0
+              const entry = cart[p.id]
+              const qty = entry?.qty || 0
+              const unit = entry?.unit || 'base'
+              const unitOpts = availableUnitsForProduct(p)
               return (
                 <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 4px', borderBottom: '1px solid #f3f4f6', background: stockColor(p.stock_status), opacity: unavailable ? 0.55 : 1 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 600 }}>{p.name}{unavailable ? ' (Unavailable)' : ''}</div>
                     <div style={{ fontSize: 11, color: '#9ca3af' }}>{F(p.price)} / {p.unit}</div>
                   </div>
+                  {unitOpts.length > 1 && (
+                    <select disabled={unavailable} value={unit} onChange={e => setUnit(p.id, e.target.value)}
+                      style={{ fontSize: 12, padding: '4px 6px', borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff' }}>
+                      {unitOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                  )}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     <button disabled={unavailable} onClick={() => setQty(p.id, qty - 1)} style={{ width: 28, height: 28, borderRadius: 6, border: '1px solid #e5e7eb', background: '#fff', cursor: 'pointer' }}>−</button>
                     <span style={{ width: 24, textAlign: 'center', fontSize: 13, fontWeight: 600 }}>{qty}</span>

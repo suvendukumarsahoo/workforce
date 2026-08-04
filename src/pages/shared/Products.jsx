@@ -14,13 +14,26 @@ export default function Products() {
   const cols = [
     { key: 'name', label: 'Product', render: r => <span style={{ fontWeight: 600 }}>{r.name}</span> },
     { key: 'category_id', label: 'Category', render: r => { const c = (categories || []).find(x => x.id === (r.category_id || r.catId)); return <span style={{ fontSize: 12 }}>{c?.name || '—'}</span> } },
-    { key: 'unit', label: 'Unit' },
+    { key: 'unit', label: 'Base Unit' },
     { key: 'price', label: 'Price', render: r => <span style={{ fontWeight: 600 }}>{F(r.price)}</span> },
     { key: 'weight', label: 'Weight', render: r => <span style={{ fontSize: 12 }}>{r.weight ? `${r.weight} kg` : '—'}</span> },
 { key: 'volume', label: 'Volume', render: r => <span style={{ fontSize: 12 }}>{r.volume ? `${Number(r.volume).toFixed(3)} cu.ft` : '—'}</span> },
   ]
 
   const save = async (d) => {
+    const lowestFactor = d.lowest_unit_factor ? Number(d.lowest_unit_factor) : null
+    const altFactor = d.alt_unit_factor ? Number(d.alt_unit_factor) : null
+    if ((d.lowest_unit && !lowestFactor) || (!d.lowest_unit && lowestFactor)) {
+      showToast('Lowest Unit name and factor must both be set, or both left blank'); return
+    }
+    if ((d.alt_unit && !altFactor) || (!d.alt_unit && altFactor)) {
+      showToast('Alternate Unit name and factor must both be set, or both left blank'); return
+    }
+    if (lowestFactor !== null && lowestFactor <= 1) { showToast('Lowest Unit factor must be greater than 1'); return }
+    if (altFactor !== null && altFactor <= 1) { showToast('Alternate Unit factor must be greater than 1'); return }
+    if (lowestFactor !== null && altFactor !== null && lowestFactor <= altFactor) {
+      showToast('Lowest Unit factor must be greater than Alternate Unit factor'); return
+    }
     const payload = {
       name: d.name, category_id: d.category_id, unit: d.unit || 'Units', price: Number(d.price),
       weight: Number(d.weight) || null,
@@ -28,6 +41,10 @@ export default function Products() {
       breadth: Number(d.breadth) || null,
       height: Number(d.height) || null,
       dimension_unit: d.dimension_unit || 'feet',
+      lowest_unit: d.lowest_unit || null,
+      lowest_unit_factor: lowestFactor,
+      alt_unit: d.alt_unit || null,
+      alt_unit_factor: altFactor,
     }
     if (sheet?.id) {
       const { error } = await db.updateProduct(sheet.id, payload)
@@ -51,7 +68,11 @@ export default function Products() {
           fields={[
             { key: 'name', label: 'Product name', req: true },
             { key: 'category_id', label: 'Category', opts: [{ value: '', label: 'Select...' }, ...(categories || []).map(c => ({ value: c.id, label: c.name }))] },
-            { key: 'unit', label: 'Unit', opts: ['Litres', 'Pieces', 'Kgs', 'Units'] },
+            { key: 'unit', label: 'Base Unit', opts: ['Litres', 'Pieces', 'Kgs', 'Units'] },
+            { key: 'lowest_unit', label: 'Lowest Unit (e.g. Piece)' },
+            { key: 'lowest_unit_factor', label: '1 Base Unit = ? Lowest Units', type: 'number' },
+            { key: 'alt_unit', label: 'Alternate Unit (e.g. Pack)' },
+            { key: 'alt_unit_factor', label: '1 Base Unit = ? Alternate Units', type: 'number' },
             { key: 'price', label: 'Price (₹)', type: 'number', req: true },
             { key: 'weight', label: 'Weight (kg)', type: 'number' },
             { key: 'length', label: 'Length', type: 'number' },

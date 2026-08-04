@@ -1389,6 +1389,7 @@ export async function createSecondaryOrder(header, items) {
   const itemRows = items.map(it => ({
     order_id: order.id, product_id: it.product_id, category_id: it.category_id,
     qty: it.qty, rate: it.rate,
+    entered_unit: it.entered_unit || 'base', entered_qty: it.entered_qty ?? it.qty,
   }))
   const { error: itemError } = await supabase.from('secondary_order_items').insert(itemRows)
   return { data: order, error: itemError }

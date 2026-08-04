@@ -1885,3 +1885,109 @@ All outstanding items from this session's earlier handoff are now confirmed work
 **Nothing outstanding from this session remains open.** Only pre-existing, explicitly-deferred items
 carry forward unchanged: Journey Phase 2's live GPS ping (needs a real moving vehicle to test,
 user's call to defer), and POD photo upload (needs a new Supabase Storage bucket, not started).
+
+## Products: Lowest Unit + Alternate Unit with conversion factors (4 Aug 2026 session) — BUILT,
+## SCHEMA NOT YET APPLIED, NOT YET BROWSER-TESTED
+
+Brand-new concept, not discussed in any prior session. Products previously had exactly one `unit`
+field with no conversion concept anywhere. Added a **Lowest Unit** (smallest sellable/trackable
+unit, e.g. "Piece") and an **Alternate Unit** (e.g. "Pack"), each with a conversion factor relative
+to the existing `unit` column (now displayed as **"Base Unit"** in the UI — label-only rename, no
+column rename, matching this app's usual menu-label convention).
+
+**Resolved via AskUserQuestion before building:**
+- **Conversion model**: two factors relative to Base — "1 Base Unit = X Lowest Units" and "1 Base
+  Unit = Y Alternate Units."
+- **Validation**: any factor present must be `> 1`; if both present, `lowest_unit_factor >
+  alt_unit_factor` — enforces Base as the largest unit, Alternate the middle, Lowest the smallest.
+  A unit name and its factor must be supplied together (both or neither).
+- **Scope — narrowed by a follow-up answer mid-session**: the unit picker is
+  **`DistributorSecondary.jsx`'s cart only**. The primary `DistributorOrder.jsx` (Team's main order
+  screen) is explicitly **untouched** — stays Base Unit only, no picker, no schema changes there.
+  Picking (`OrderPickingDetail.jsx`/`PickingEditSheet.jsx`) and invoicing
+  (`AwaitingInvoiceTile.jsx`/`printInvoice.js`) are also **untouched** — unit is picked once, at
+  secondary-order creation, and never surfaces again downstream. Rate stays per Base Unit
+  (`products.price`, unchanged). A distributor-level default secondary-order unit and per-unit rate
+  overrides were flagged by the user as **future work** under a not-yet-built "distributor setup"
+  menu — not part of this change.
+
+**Built:**
+1. **`src/lib/unitConversion.js`** (new, shared, pure) — `availableUnitsForProduct(p)` (Base always
+   included; Lowest/Alt only if both that unit's name AND factor are set on the product),
+   `toBaseQty(product, unit, qty)` (divides by the relevant factor), `unitLabel(product, unit)`.
+2. **`Products.jsx`** — `unit` field/column relabeled "Base Unit"; 4 new `EntitySheet` fields
+   (`lowest_unit`, `lowest_unit_factor`, `alt_unit`, `alt_unit_factor`, free-text unit names, not
+   constrained to the fixed Base Unit dropdown list since real examples like "Piece"/"Pack" don't
+   fit that enum) added to both the form and the `payload` whitelist in `save()` (the whitelist is
+   the only thing gating persistence — confirmed via research before building, same
+   passthrough-payload pattern as every other field on this form). `save()` gained the ordering/
+   both-or-neither validation above, surfaced via the existing `showToast` error pattern already
+   used for failed `db.*` calls in this file — no new error-display mechanism introduced.
+3. **`DistributorSecondary.jsx`**'s `ItemOrderSheet` — cart state reshaped from `{ [product_id]: qty
+   }` to `{ [product_id]: { qty, unit } }` (`unit` defaults `'base'`); new `setUnit(pid, unit)`
+   alongside the existing `setQty`. Each product row now calls `availableUnitsForProduct(p)` — if it
+   returns just Base (the common case, most products won't have Lowest/Alt configured), the row
+   renders exactly as before with no selector; if 2+ units are available, a small `<select>` appears
+   next to the qty stepper. Changing the unit only updates `.unit` on that cart entry, leaving the
+   typed quantity number as-is — a live reinterpretation, not a reset, per the user's explicit
+   instruction ("changing of units... will calculate based on the units"). `cartLines` now converts
+   each entry to its Base-unit equivalent via `toBaseQty()` before computing `qty`/`cartTotal`,
+   while also carrying the raw `entered_unit`/`entered_qty` through as audit fields — `cartTotal`'s
+   formula itself (`qty * rate`) is unchanged, it just now operates on the converted quantity.
+4. **`db.createSecondaryOrder`**'s `itemRows` mapping gained `entered_unit`/`entered_qty` (falls
+   back to `'base'`/the canonical `qty` if not supplied, so nothing breaks for callers that don't
+   send them) — the canonical `qty`/`rate` columns remain exactly what every downstream consumer
+   (Day Summary rollups, PDF/ZIP export, the Outlet Visits achievement hook) already reads, so none
+   of those needed any changes.
+
+**Schema — NOT yet applied, user must run:**
+```sql
+alter table products
+  add column lowest_unit text,
+  add column lowest_unit_factor numeric,
+  add column alt_unit text,
+  add column alt_unit_factor numeric;
+
+alter table secondary_order_items
+  add column entered_unit text not null default 'base',
+  add column entered_qty numeric;
+```
+
+**Browser-test round — CONFIRMED WORKING via headless Playwright (same-day follow-up).** Schema was
+applied by the user, then driven end-to-end as Admin (`admin@co.com`) and a Sales Team member
+(`arjun@co.com`) against the live Supabase instance — same approach as the 3 Aug 2026 "Browser-test
+round" (Playwright installed into the scratchpad, not the repo).
+
+**Confirmed:**
+- "Base Unit" relabel live on both the list column header and the edit form.
+- Both validation rules block save with the correct toast message: factor ≤ 1
+  ("Lowest Unit factor must be greater than 1") and Lowest ≤ Alternate ("Lowest Unit factor must be
+  greater than Alternate Unit factor") — sheet stays open, no partial save.
+- A product saved with valid factors (Lowest "Piece" ×50, Alt "Pack" ×5) persists and displays
+  correctly in the product list.
+- In the Distributor Secondary cart: products with no Lowest/Alt configured show no unit selector
+  (unchanged, matches every pre-existing product); a configured product shows the `<select>`.
+  Picking "Piece" and tapping + to 10 produced a cart total of exactly ₹20 (₹100 base price × 10÷50
+  = 0.2 base-equivalent) — the conversion math is correct. Checkout wrote a real order; Day
+  Summary's product-wise rollup showed the same converted `0.2 · ₹20`, confirming the canonical
+  `qty` column downstream is genuinely base-unit, untouched by which unit the rep picked.
+
+**One real bug found and fixed by this test round** (not caught by `eslint`/`vite build`, only by
+actually driving the cart): `setUnit` was a no-op when a product had no cart entry yet
+(`prev[pid] ? {...} : prev` — falsy when qty was still 0), so picking a unit *before* tapping `+`
+silently discarded the selection and the line saved at the Base Unit instead. This is the natural
+order a rep would use the picker (pick unit, then quantity), so it wasn't an edge case. Fixed by
+having both `setQty` and `setUnit` write a full `{ qty, unit }` entry unconditionally (no more
+delete-at-zero), with `cartLines` now filtering to `entry.qty > 0` so a unit-only, still-zero-qty
+selection never reaches the total or gets submitted as a phantom line item.
+
+**Test data left in the live DB from this round** (harmless, same convention as prior
+Playwright-driven test rounds in this project): a few `PW Unit Test *` products, a `PW Test Beat`/
+existing `Cuttack-Bt1` beat gained a couple of `PW Test Outlet *` outlets with one real secondary
+order each. Safe to delete via the normal UI (Products list, Distributor Secondary) whenever
+convenient — not cleaned up automatically since deleting is a judgment call, not this session's to
+make unprompted.
+
+**Still open / not done yet:**
+- Nothing outstanding — schema applied, full flow confirmed, the one bug found during testing is
+  fixed and re-verified in the same round.
