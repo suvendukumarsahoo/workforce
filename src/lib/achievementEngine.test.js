@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { getGoalOverallStatus } from './achievementEngine.js'
+import { getGoalOverallStatus, computeAchievements } from './achievementEngine.js'
 
 test('treats a rejected value goal as editable and rejected', () => {
   const goal = {
@@ -39,4 +39,22 @@ test('treats a rejected field mixed with still-pending fields as partial, not pe
   }
 
   assert.equal(getGoalOverallStatus(goal), 'partial')
+})
+
+test('a pending_approval invoice does not count toward achievements', () => {
+  // Regression test: CLAUDE.md documented this status guard as already applied, but it had never
+  // actually landed in computeAchievements — a not-yet-approved invoice was silently counting
+  // (e.g. inflating the Distributor Presence Map's "billed" status, and every achievement number
+  // that reads from computeAchievements). See DistributorPresenceMap.jsx / AwaitingInvoiceTile.jsx.
+  const goals = {
+    m1: { value_goal: 100000, value_status: 'approved' },
+  }
+  const invoices = [
+    { member_id: 'm1', distributor_id: 'd1', status: 'pending_approval', date: '2026-08-01', lines: [{ product_id: 'p1', qty: 10, rate: 100 }] },
+    { member_id: 'm1', distributor_id: 'd1', status: 'approved', date: '2026-08-02', lines: [{ product_id: 'p1', qty: 5, rate: 100 }] },
+    { member_id: 'm1', distributor_id: 'd1', date: '2026-08-03', lines: [{ product_id: 'p1', qty: 2, rate: 100 }] }, // no status = legacy, treated as approved
+  ]
+
+  const result = computeAchievements(invoices, goals)
+  assert.equal(result.m1.value, 700) // only the approved (500) + status-less (200) invoices count, not the pending one (1000)
 })

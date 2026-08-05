@@ -1627,6 +1627,64 @@ since it fires needlessly on literally every page load for every user.
 unrelated to the dashboard work above.
 2. **POD photo upload** (Phase 3, older, still parked) — needs a new Supabase Storage bucket.
 
+## Admin Dashboard: Distributor Presence Map — BUILT, BROWSER-TESTED & CONFIRMED WORKING
+(4 Aug 2026 session)
+
+New Admin-only Dashboard section (`src/components/DistributorPresenceMap.jsx`, wired into
+`Dashboard.jsx`'s existing `role?.id === 'r1'` block as the first section, before Warehouse): every
+billable distributor (`type !== 'New Customer'`) with `confirmed_latitude`/`confirmed_longitude`
+set is plotted on a Leaflet+OpenStreetMap map (same CDN-loader/no-npm-package pattern as
+`RouteMapSheet.jsx`/`VehicleLiveMap.jsx`), colored by billing recency: green = billed this calendar
+month, orange = billed within the last 3 months (not this one), red = not billed within 3 months or
+never. Pure client-side derivation off `distributors`/`invoices`, both already in `useData()`
+context — no new fetch, no new `db.js` function, no schema change. Distributors missing lat/long are
+excluded from the map with a visible count rather than silently dropped. Marker click = a simple
+Leaflet popup (name, type, last-billed date), no new detail Sheet.
+
+**Real bug found and fixed in the same session, unrelated to the map itself but surfaced while
+scoping "billed":** CLAUDE.md previously claimed `achievementEngine.js` gates on
+`invoice.status === 'approved'`, but that guard had never actually landed in the code (confirmed via
+`git log -S` — zero matching commits) — `pending_approval` invoices were silently counting toward
+every achievement number `computeAchievements` feeds (Dashboard, Team/Manager goal views, etc.).
+Fixed by adding the guard back at the top of the invoice loop. Zero live invoices are currently
+non-`'approved'` (checked via a live REST query before/after), so this changed no numbers today —
+it only closes the gap for future pending invoices. Added a regression test to
+`achievementEngine.test.js` (now 4/4 passing, `node --test src/lib/achievementEngine.test.js`).
+
+**Browser-tested via the new `run-workforce` skill** (first real use of that skill for a feature,
+not just its own verification) — logged in as Admin, confirmed against live data:
+- 8 distributors plotted, 5 excluded for missing location — cross-checked directly against a raw
+  REST dump of the `distributors` table: exactly matches (13 billable minus 5 null-lat/long = 8).
+- Bucket counts (green=1, orange=4, red=3) cross-checked against the live `invoices` table by hand,
+  per-distributor — exact match, including one never-billed distributor correctly landing red.
+- Marker popup content verified accurate against the DB (name, type, and last-billed date all
+  correct) via a live click.
+- Zero console errors (excluding the two known pre-existing 400s, see the `run-workforce` skill's
+  Gotchas).
+
+**Judgment call made without a 4th clarifying question (flag if wrong, easy to change):**
+`distributors.type` has a `'Direct'` value in addition to `'Distributor'`/`'New Customer'`, meaning
+undocumented elsewhere — the map includes both `'Distributor'` and `'Direct'` (excludes only
+in-pipeline `'New Customer'` leads). Narrow to `type === 'Distributor'` only if `'Direct'` shouldn't
+appear here.
+
+**Follow-up same session: locked the map to Odisha's extent, not the earlier auto-fit-to-markers.**
+User asked for "the state map of Odisha in country India only" — clarified via AskUserQuestion to
+mean a fixed Odisha-scoped view (no boundary-outline GeoJSON, that's still explicitly out of scope),
+not auto-zooming to wherever the plotted distributors happen to be. First attempt used
+`map.fitBounds(ODISHA_BOUNDS)` at init, which looked wrong when actually rendered — Leaflet's
+`fitBounds` picks a zoom constrained by whichever container dimension is the tighter fit, and this
+component's map container is much wider than tall while Odisha's bounding box is roughly square, so
+it zoomed out far enough to fit the box's height and showed a huge unwanted swath of India
+(Maharashtra to Bangladesh). Fixed by using a fixed `setView([20.5, 84.5], 7)` (center + zoom tuned
+by eye against the actual rendered container) instead of `fitBounds`, still with a soft
+`maxBounds`-based pan restriction. The marker-sync effect's per-render `fitBounds(markerBounds)` call
+was also removed entirely — the map now always shows the same Odisha-centered view regardless of
+where the plotted distributors fall, rather than re-zooming on every data change.
+
+**Nothing outstanding** — schema-free, fully tested end-to-end same session (including this
+follow-up, re-verified by screenshot after the fix).
+
 ## Distributor terminology, ungated Distributors achievement, auto "Other Distributors" target,
 ## Admin goal reset, and two real bugs found via live testing (4 Aug 2026 session)
 

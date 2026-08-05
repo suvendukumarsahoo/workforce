@@ -6,6 +6,7 @@ import { aggregateForMembers } from '../../lib/goalAggregation.js'
 import { ChartSection, MeterGauge, ContributionDonut, GoalVsAchievedBreakdown } from '../../components/charts/GoalBarChart.jsx'
 import MemberGoalDetail from '../../components/MemberGoalDetail.jsx'
 import SalesSnapshot from '../../components/SalesSnapshot.jsx'
+import DistributorPresenceMap from '../../components/DistributorPresenceMap.jsx'
 import { rangeForTab } from '../../lib/period.js'
 import * as db from '../../lib/db.js'
 
@@ -188,6 +189,9 @@ leads={(customers || []).filter(d => d.lead_stage &&
 
       {role?.id === 'r1' && (
         <>
+          <SectionHeader icon="🗺️" title="Distributor Map" />
+          <DistributorPresenceMap distributors={customers} invoices={invoices} />
+
           <SectionHeader icon="🏭" title="Warehouse" />
           <WarehouseSection onNavigate={onNavigate} />
 

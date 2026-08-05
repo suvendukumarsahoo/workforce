@@ -38,6 +38,12 @@ export function computeAchievements(invoices = [], goals = {}, products = [], di
   // whichever specific fields ARE approved — matches what every consumer (TeamApp.jsx, Dashboard,
   // Targets.jsx) already assumes by checking `fg?.status === 'approved'` per field before display.
   invoices.forEach(invoice => {
+    // Only approved invoices count toward achievement — a pending_approval invoice shouldn't move
+    // the needle until Admin/Accounts signs off on it (see AwaitingInvoiceTile.jsx/
+    // InvoiceApprovalTile.jsx). This guard was documented in CLAUDE.md as already applied but had
+    // never actually landed in code — restored here.
+    if (invoice.status && invoice.status !== 'approved') return
+
     const mid  = String(invoice.member_id || invoice.memberId)
     const goal = goals[mid]
     if (!goal) return

@@ -160,6 +160,25 @@ above (actually clicking through the change) is the full verification loop.
   point to a new script.
 - **Credentials are never in this repo.** Ask the user each session; pass them via `WF_EMAIL`/
   `WF_PASSWORD` env vars or inline in a scratchpad-only script, never a committed one.
+- **`shot()`'s `fullPage: true` does NOT capture the whole page on desktop shells.** `WebApp.jsx`'s
+  layout is `height: 100vh; overflow: hidden` with the actual scrolling happening in a nested inner
+  `<div>`, not the document body — Playwright's full-page screenshot only captures document height,
+  which here is just the viewport. A screenshot of a long page (e.g. Dashboard) silently shows only
+  the first ~900px with nothing below it looking "cut off" or erroring. To reach content further
+  down, find the real scrollable container and scroll *it*, then screenshot:
+  ```js
+  await page.evaluate(() => {
+    const el = Array.from(document.querySelectorAll('div'))
+      .filter(e => { const s = getComputedStyle(e); return (s.overflowY === 'auto' || s.overflowY === 'scroll') && e.scrollHeight > e.clientHeight + 50 })
+      .sort((a, b) => b.scrollHeight - a.scrollHeight)[0]
+    el && (el.scrollTop = el.scrollHeight)   // or scrollIntoView() a specific heading/element instead
+  })
+  ```
+- **The very first `login()` after a cold dev-server start can be too slow for the driver's fixed
+  ~2.5s post-submit wait** (Vite's "Re-optimizing dependencies" first-request compile) — the
+  resulting screenshot/next action can catch the app still showing "Signing in...". Not a bug in the
+  app; just re-run once the dev server has served at least one request, or add an explicit
+  `page.waitForSelector` on something only the logged-in shell renders instead of a fixed timeout.
 
 ## Troubleshooting
 
