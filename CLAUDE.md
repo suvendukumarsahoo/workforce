@@ -2077,3 +2077,25 @@ make unprompted.
 **Still open / not done yet:**
 - Nothing outstanding — schema applied, full flow confirmed, the one bug found during testing is
   fixed and re-verified in the same round.
+
+## Session handoff note (5 Aug 2026) — nothing outstanding, safe to start a new chat
+
+Two features landed this session, both fully built, browser-tested, committed, and pushed
+(`de510e5` → `acd39d7`) — see "Admin Dashboard: Distributor Presence Map" earlier in this file for
+full detail:
+
+1. **Distributor Presence Map**, now reached via its own **"Geographical Business View"** menu
+   (Distributor Functions section) rather than embedded in the Admin dashboard — every billable
+   distributor plotted on a fixed Odisha-centered map, colored by billing recency. Confirmed working
+   end-to-end for Admin.
+2. **`achievementEngine.js` invoice-status gap fixed** (a documented-but-never-shipped guard) —
+   `pending_approval` invoices no longer count toward achievements. Zero live invoices were
+   non-approved at the time, so no visible number changed; regression test added (4/4 passing).
+
+The `run-workforce` skill gained several real gotchas from this session's verification detour
+(alphabetically-sorted Settings role tabs, an async checkbox's unreliable post-click screenshot
+state, the sidebar's own internal scrolling) — read `.claude/skills/run-workforce/SKILL.md`'s
+Gotchas section before the next browser-testing pass rather than rediscovering these.
+
+**Nothing else from this session is pending** — no schema to run, no menu box left unchecked (Admin
+role's `geoBusinessView` is confirmed live in the DB), no follow-up verification queued.
