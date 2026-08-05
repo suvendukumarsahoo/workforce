@@ -1,15 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
+import { useData } from '../../hooks/useData.jsx'
 
 /**
- * Admin-only Dashboard section — every real distributor plotted on a map, colored by how recently
+ * Standalone "Geographical Business View" page (Admin/Manager, per Settings menu access — see
+ * Recurring Bug Pattern #6 in CLAUDE.md, mirrored into both WebApp.jsx's ALL_MENUS and
+ * Settings.jsx's separate copy) — every real distributor plotted on a map, colored by how recently
  * they've billed: green = billed this calendar month, orange = billed within the last 3 months (but
  * not this one), red = not billed within the last 3 months (or never). Pure client-side derivation
  * off `distributors`/`invoices`, both already loaded globally via useData() — no new fetch, no new
  * db.js function, no schema change.
  *
+ * Originally built as an inline Dashboard.jsx section (2 Aug 2026 session — sic, actually 4 Aug
+ * 2026); moved to its own routed page same session per user's follow-up ask, so it now reads
+ * distributors/invoices from useData() directly instead of taking them as props.
+ *
  * Map plumbing (CDN Leaflet loader, map init, marker-sync-by-id) mirrors VehicleLiveMap.jsx's
  * pattern exactly, minus the polling/realtime/idle-detection parts this static view doesn't need.
- * Colored dot markers (Leaflet has no built-in colored pin) are new to this codebase — both existing
+ * Colored dot markers (Leaflet has no built-in colored pin) are new to this codebase — both other
  * map files use the plain default marker.
  */
 
@@ -23,7 +30,7 @@ const BUCKET_LABEL = { green: 'Billed This Month', orange: 'Billed Last 3 Months
 // ever bad data — zoom out to show unrelated regions).
 const ODISHA_BOUNDS = [[17.7, 81.3], [22.75, 87.6]]
 
-const darkContainer = { background: '#0f172a', borderRadius: 16, padding: 16, marginBottom: 20 }
+const darkContainer = { background: '#0f172a', borderRadius: 16, padding: 16 }
 const DarkStat = ({ label, value, color }) => (
   <div style={{ background: '#1e293b', borderRadius: 12, padding: '14px 16px', flex: '1 1 150px', minWidth: 140 }}>
     <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 6 }}>{label}</div>
@@ -53,7 +60,8 @@ function billingStatus(distributorId, invoices, nowIdx) {
   return { bucket, lastDate: last }
 }
 
-export default function DistributorPresenceMap({ distributors, invoices }) {
+export default function DistributorPresenceMap() {
+  const { distributors, invoices } = useData()
   const [mapReady, setMapReady] = useState(false)
   const [mapError, setMapError] = useState(null)
   const mapRef = useRef(null)
@@ -169,7 +177,7 @@ export default function DistributorPresenceMap({ distributors, invoices }) {
       </div>
 
       {mapError && <div style={{ color: '#f87171', fontSize: 13, marginBottom: 10 }}>{mapError}</div>}
-      <div ref={mapRef} style={{ height: 440, borderRadius: 12, background: '#1e293b' }} />
+      <div ref={mapRef} style={{ height: 600, borderRadius: 12, background: '#1e293b' }} />
     </div>
   )
 }

@@ -1682,8 +1682,36 @@ by eye against the actual rendered container) instead of `fitBounds`, still with
 was also removed entirely — the map now always shows the same Odisha-centered view regardless of
 where the plotted distributors fall, rather than re-zooming on every data change.
 
-**Nothing outstanding** — schema-free, fully tested end-to-end same session (including this
-follow-up, re-verified by screenshot after the fix).
+**Second follow-up same session: moved from an inline Dashboard section to its own standalone menu,
+"Geographical Business View."** User asked for this after seeing it embedded in the Admin dashboard.
+`DistributorPresenceMap.jsx` moved from `src/components/` to `src/pages/shared/` and now reads
+`distributors`/`invoices` directly via `useData()` instead of taking them as props (no longer nested
+inside `Dashboard.jsx`, which had the funnel/customers already in scope — a standalone routed page
+needs its own context access). New menu id `geoBusinessView` added to both `WebApp.jsx`'s
+`ALL_MENUS`/`PAGE_MAP` and `Settings.jsx`'s separate copy, per Recurring Bug Pattern #6, placed in
+the `Distributor Functions` section next to `vehicleLiveMap` ("Live Tracking"). Map height bumped
+440→600 now that it has a full page instead of a cramped dashboard slot. The old Dashboard.jsx
+embedding (import + `SectionHeader` + component usage inside the `role?.id === 'r1'` block) was
+removed entirely.
+
+**A confusing debugging detour, root-caused, worth remembering:** after wiring the menu, a fresh
+Admin login didn't show "Geographical Business View" in the sidebar. Chased it through several dead
+ends — suspected the Settings checkbox toggle wasn't persisting (it briefly wasn't: `Settings.jsx`'s
+role tabs sort **alphabetically by name**, so the default-selected tab was "Accounts," not "Admin" —
+toggling the checkbox without first explicitly clicking the "Admin" tab was silently editing the
+wrong role; a checkbox's `checked` appearance right after a click can't be trusted either, since the
+native DOM toggles before React's async-save-then-`setState` reconciles, so it *looked* saved when it
+wasn't). Once the DB was confirmed correct for `r1` (verified via a direct REST read, not just the
+UI), the menu STILL didn't appear on screen — turned out the sidebar item was there in the DOM the
+entire time, just scrolled below the screenshot's visible area: `WebApp.jsx`'s sidebar menu list is
+`overflowY: auto` with a fixed-height parent, the same class of "internally-scrolling region a
+full-page screenshot can't see" issue already documented for the main content area, just a second
+instance of it nobody had hit before. All three lessons (sidebar scroll, alphabetical role-tab
+default, don't-trust-a-post-click-checkbox-screenshot) folded into the `run-workforce` skill's
+Gotchas so they don't cost a debugging session again.
+
+**Nothing outstanding** — schema-free, fully tested end-to-end same session (including both
+follow-ups, re-verified by screenshot/DOM query after each fix).
 
 ## Distributor terminology, ungated Distributors achievement, auto "Other Distributors" target,
 ## Admin goal reset, and two real bugs found via live testing (4 Aug 2026 session)

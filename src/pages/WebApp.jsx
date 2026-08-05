@@ -35,6 +35,7 @@ import VehicleLiveMap from './shared/VehicleLiveMap.jsx'
 import JourneyApprovals from './admin/JourneyApprovals.jsx'
 import StockUpdate from './shared/StockUpdate.jsx'
 import ProductionIssues from './shared/ProductionIssues.jsx'
+import DistributorPresenceMap from './shared/DistributorPresenceMap.jsx'
 
 const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard',        icon:'📊', sec:'Overview'  },
@@ -64,6 +65,7 @@ const ALL_MENUS = [
  { id:'orderStatus', label:'Order Status', icon:'\ud83d\udcca', sec:'Distributor Functions' },
 { id:'loadCreatedList', label:'Load Created List', icon:'📋', sec:'Distributor Functions' },
 { id:'vehicleLiveMap', label:'Live Tracking', icon:'📍', sec:'Distributor Functions' },
+{ id:'geoBusinessView', label:'Geographical Business View', icon:'🗺️', sec:'Distributor Functions' },
 { id:'journeyApprovals', label:'Journey Approvals', icon:'🏁', sec:'Distributor Functions' },
 { id:'assignedLoads', label:'My Loads', icon:'🚚', sec:'Overview' },
 { id:'driverLoadingConfirm', label:'Confirm Loading', icon:'📦', sec:'Overview' },
@@ -95,6 +97,7 @@ const PAGE_MAP = {
   orderStatus: OrderStatus,
 loadCreatedList: LoadCreatedList,
 vehicleLiveMap: VehicleLiveMap,
+geoBusinessView: DistributorPresenceMap,
 journeyApprovals: JourneyApprovals,
 stockUpdate: StockUpdate,
 productionIssues: ProductionIssues,

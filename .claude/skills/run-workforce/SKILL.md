@@ -174,6 +174,33 @@ above (actually clicking through the change) is the full verification loop.
     el && (el.scrollTop = el.scrollHeight)   // or scrollIntoView() a specific heading/element instead
   })
   ```
+- **The sidebar itself is ALSO an internally-scrolling region**, separate from the main content
+  area's own scrolling issue above — `WebApp.jsx`'s menu list div has `overflowY: 'auto'` with a
+  fixed-height flex parent. A role with many enabled menus (Admin easily has 25+) pushes items below
+  the visible viewport, and a screenshot won't show them — this can look exactly like "the menu item
+  isn't rendering" when it's actually present in the DOM, just scrolled off. Before concluding a menu
+  item is missing, search the DOM directly rather than trusting a screenshot:
+  ```js
+  await page.evaluate(() => Array.from(document.querySelectorAll('button')).some(b => b.textContent.includes('Your Label')))
+  ```
+  `gotoMenu`/`page.getByText(...).click()` both still work fine on off-screen sidebar items —
+  Playwright auto-scrolls the target into view before clicking, this only affects *screenshots*.
+- **Settings.jsx's role tabs are sorted alphabetically by role name**, not by id or creation order —
+  `roles[0]` (the default-selected tab, `selId`) is whichever role name sorts first (e.g.
+  "Accounts" before "Admin"), NOT necessarily the Admin role. Toggling a menu-access checkbox without
+  first explicitly clicking the intended role's tab can silently edit the WRONG role. Always click
+  the exact role name tab (`page.getByText('Admin', { exact: true })`, scoped to the role-tabs row if
+  the label could collide with other on-page text) before touching any checkbox on that page — and
+  verify which role you actually changed via a direct REST read afterward, not just the checkbox's
+  own visual state (see the next gotcha for why the visual state alone can't be trusted).
+- **A checkbox `onChange` handler that awaits a DB call before updating React state can show a
+  false-positive "checked" in a screenshot taken immediately after clicking** — the native browser
+  toggles a checkbox's DOM state on click before React's controlled `checked` prop reconciles on the
+  next render; if that async call fails (or, per the gotcha above, silently succeeds against the
+  wrong record), nothing ever triggers React to snap it back, so a screenshot taken in that window
+  shows "checked" even though the real state never changed. Don't trust a single post-click
+  screenshot for a controlled checkbox bound to an async save — re-verify via a fresh page load (new
+  render pass) or a direct DB read.
 - **The very first `login()` after a cold dev-server start can be too slow for the driver's fixed
   ~2.5s post-submit wait** (Vite's "Re-optimizing dependencies" first-request compile) — the
   resulting screenshot/next action can catch the app still showing "Signing in...". Not a bug in the
