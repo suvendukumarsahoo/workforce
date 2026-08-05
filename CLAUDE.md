@@ -2342,4 +2342,86 @@ Net result: the top row is back to a uniform look across all four panels (same f
 same panelBase styling), with only relative panel width — not color — signaling which one matters
 most. `vite build` + scoped `eslint` clean after this change.
 
+## Distributor Presence Map gains district + state boundary lines (5 Aug 2026 session) — BUILT,
+## NOT YET BROWSER-TESTED
+
+**User's ask:** on the existing "Geographical Business View" map (`DistributorPresenceMap.jsx`),
+draw actual district-level boundaries within Odisha, plus a distinct/deeper-colored border for the
+state outline itself — previously the page only had a fixed center+zoom framing a bounding box
+(`ODISHA_BOUNDS`), no real boundary geometry at all (explicitly flagged as deferred when that page
+was first built, see the entry above this one).
+
+**Resolved via AskUserQuestion before building:**
+- **Data source — CC BY 4.0 licensed, not the faster unlicensed option.** Two candidate sources
+  were found: `udit-001/india-maps-data` (ready-to-use GeoJSON/TopoJSON, but no LICENSE file and its
+  own README admits data was "curated from publicly available sources... no specific original
+  sources cited" — real risk given this repo's own already-flagged public-IP concern) vs. DataMeet's
+  `datameet/maps` (the standard reference for Indian open geodata, explicit **CC BY 4.0** license:
+  *"Unless explicitly stated, all datasets in this repository is shared under CC BY 4.0 license"* —
+  verified verbatim from the repo's own README, not just a paraphrase). User picked DataMeet
+  despite the extra conversion work it required (their data is Shapefile-only, not GeoJSON).
+- **Static outlines only, no interactivity** — no click-to-filter-by-district, no hover tooltips.
+  Simplest version to start; district polygons are non-interactive (`interactive: false`) so they
+  never intercept clicks meant for the map/markers underneath.
+
+**Data pipeline (one-time, offline — not part of the app's runtime or build):**
+1. Downloaded `Districts/Census_2011/2011_Dist.shp` (+`.dbf`/`.shx`/`.prj`) from `datameet/maps` —
+   all-India, 641 districts, ~10MB shapefile.
+2. Converted to GeoJSON via the lightweight `shapefile` npm package (pure JS, no native deps —
+   deliberately NOT `mapshaper`, whose install pulled in a huge unrelated dependency tree —
+   `better-sqlite3` native bindings, `geopackage`, `geotiff`, `flatgeobuf`, `ol` — and repeatedly
+   timed out/`ECOMPROMISED` mid-install in this environment).
+3. Filtered to Odisha's 30 districts via the `ST_NM` field (all present and correctly named,
+   Census-transliterated spellings e.g. "Anugul"/"Baleshwar" rather than "Angul"/"Balasore").
+4. Simplified each district independently via `@turf/simplify` (Douglas-Peucker, ~800m tolerance)
+   for the districts file — fine for thin individually-drawn reference lines.
+5. **State outline required a different approach, found via trial and error:** dissolving the
+   *simplified* districts via `@turf/union` produced a 14-fragment MultiPolygon (simplifying each
+   district independently breaks shared-edge alignment at their borders, leaving thin gaps that
+   don't merge cleanly). Fixed by dissolving the **raw, unsimplified** geometries first — this
+   still produced 204 rings (1 real ~156,279 km² outer boundary + ~200 sub-12km² interior "holes,"
+   union-seam digitization artifacts, not real geography — Odisha's actual area is ~155,700 km²,
+   confirming ring 0 alone was the real boundary). Kept only the single largest ring, simplified
+   *that* (1km tolerance → 540 points), dissolve-then-simplify rather than simplify-then-dissolve
+   being the actual fix.
+6. Output: `public/data/odisha-districts.geojson` (126KB, 30 features) and
+   `public/data/odisha-state.geojson` (21KB, 1 feature) — served as static assets (Vite's
+   `public/` convention), fetched at runtime via `fetch()`, NOT bundled into the JS chunk (confirmed:
+   `dist/` bundle sizes unchanged before/after).
+7. `public/data/ATTRIBUTION.txt` — full provenance (source repo, CC BY 4.0 link, exact processing
+   applied) — satisfies the license's attribution requirement as a durable record, independent of
+   the in-app attribution below.
+
+**App changes (`DistributorPresenceMap.jsx`):**
+- Map-init effect now also fetches both GeoJSON files (`Promise.all`, soft-fail like every other
+  fetch in this app — if this 404s or fails to parse, the core map/markers still work fine, just
+  without boundary lines) and renders them via `L.geoJSON()`: districts as subtle slate-gray hairlines
+  (`#64748b`, weight 1), state outline as a **deep, saturated navy-blue** (`#0c4a6e`, weight 3,
+  added after the district layer so it draws over any coincident edge segments) — user's explicit
+  follow-up ask, after a first pass in a lighter sky-blue (`#38bdf8`) read as not prominent enough.
+  Both layers `interactive: false` per the static-only decision above.
+- **In-app attribution**: `map.attributionControl.addAttribution(...)` adds "District boundaries ©
+  DataMeet (CC BY 4.0)" with a link back to `github.com/datameet/maps`, alongside the existing
+  OpenStreetMap attribution — same mechanism, so it appears in the same on-map attribution control
+  a user would already expect to check. **Still open**: DataMeet's suggested attribution format
+  links the *specific dataset* path, not just the repo root — current link is to the repo root;
+  tightening it to point at `Districts/Census_2011` specifically was flagged as a nice-to-have, not
+  yet done.
+
+**Explicitly NOT used anywhere in the shipped app:** the unlicensed `udit-001/india-maps-data`
+source — it was only ever downloaded into the session's scratchpad (outside the repo) to compare
+file size/structure before the licensing AskUserQuestion; nothing derived from it was written to
+`public/data/` or committed.
+
+**Still open / not done yet:**
+- **Not browser-tested** — same constraint as most work this session (no chromium-cli/Playwright by
+  default; the `run-workforce` skill can drive a real verification pass but needs a test Admin
+  login, which wasn't available to finish this round). Need to visually confirm: the state border
+  reads as clearly deeper/more prominent than the district lines, district boundaries look
+  geographically sane (no spikes/self-intersections from the simplification), and distributor
+  markers still render correctly on top of both boundary layers (Leaflet's marker pane is above its
+  overlay pane by default, so this should hold, but hasn't been visually confirmed).
+- DataMeet attribution link could point at the specific dataset path instead of the repo root (minor,
+  flagged above).
+
 `vite build` + scoped `eslint` (`GoalsStatus.jsx`, `GoalBarChart.jsx`) clean after this change.

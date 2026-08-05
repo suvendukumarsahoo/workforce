@@ -1,0 +1,14 @@
+odisha-districts.geojson, odisha-state.geojson
+
+Derived from DataMeet's India Districts (Census 2011) shapefile:
+https://github.com/datameet/maps/tree/master/Districts/Census_2011
+
+Source license: CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/)
+Attribution: Data © DataMeet contributors (https://github.com/datameet/maps)
+
+Processing applied (5 Aug 2026 session): filtered to Odisha's 30 districts,
+simplified for web-map display (Douglas-Peucker, ~500m-1km tolerance via
+@turf/simplify), and — for odisha-state.geojson only — dissolved into a
+single outer boundary via @turf/union, keeping only the largest resulting
+ring (the real state outline; ~200 sub-km2 fragments produced by the dissolve
+were digitization/seam artifacts, not real geography, and were dropped).
