@@ -8,7 +8,7 @@ import NotificationBell from '../components/NotificationBell.jsx'
 import Dashboard     from './shared/Dashboard.jsx'
 import Parameters    from './manager/Parameters.jsx'
 import GoalApprovals from './manager/GoalApprovals.jsx'
-import Targets       from './shared/Targets.jsx'
+import GoalsStatus   from './shared/GoalsStatus.jsx'
 import ExpApprovals  from './shared/ExpApprovals.jsx'
 import Invoices      from './shared/Invoices.jsx'
 import Customers     from './shared/Distributors.jsx'
@@ -41,7 +41,7 @@ const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard',        icon:'📊', sec:'Overview'  },
   { id:'parameters',    label:'Set Parameters',   icon:'⚙️',  sec:'Targets'   },
   { id:'goalApprovals', label:'Goal Approvals',   icon:'✅', sec:'Targets'   },
-  { id:'targets',       label:'Targets',          icon:'🎯', sec:'Targets'   },
+  { id:'targets',       label:'Goals Status',     icon:'🏆', sec:'Targets'   },
   { id:'expApprovals',  label:'Expense Approvals',icon:'💳', sec:'Finance'   },
   { id:'invoices',      label:'Invoices',         icon:'🧾', sec:'Finance'   },
   { id:'customers',     label:'Distributors',     icon:'🤝', sec:'Master'    },  
@@ -76,7 +76,7 @@ const PAGE_MAP = {
   dashboard:     Dashboard,
   parameters:    Parameters,
   goalApprovals: GoalApprovals,
-  targets:       Targets,
+  targets:       GoalsStatus,
   expApprovals:  ExpApprovals,
   invoices:      Invoices,
   customers:     Customers,

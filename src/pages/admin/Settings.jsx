@@ -8,7 +8,7 @@ const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard'        },
   { id:'parameters',    label:'Set Parameters'   },
   { id:'goalApprovals', label:'Goal Approvals'   },
-  { id:'targets',       label:'Targets'          },
+  { id:'targets',       label:'Goals Status'     },
   { id:'expApprovals',  label:'Expense Approvals'},
   { id:'invoices',      label:'Invoices'         },
   { id:'customers',     label:'Distributors'     },

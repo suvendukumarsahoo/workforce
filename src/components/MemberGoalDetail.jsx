@@ -6,10 +6,10 @@ const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 
 /**
  * Full-screen member-level goal-vs-achievement drill-down. Shared by Dashboard.jsx's
- * Org→Manager→Member hierarchy and by Targets.jsx, so there's one implementation instead of the
- * three that used to exist (Dashboard's old MemberDetailSheet, Targets.jsx's own DrillSheet, and
- * TeamApp.jsx's self-view — TeamApp's stays separate since it also renders goal-entry, not just
- * a read-only drill-down).
+ * Org→Manager→Member hierarchy and by GoalsStatus.jsx (formerly Targets.jsx), so there's one
+ * implementation instead of the three that used to exist (Dashboard's old MemberDetailSheet,
+ * Targets.jsx's own DrillSheet, and TeamApp.jsx's self-view — TeamApp's stays separate since it
+ * also renders goal-entry, not just a read-only drill-down).
  *
  * `slices`: array of { goalsMap, paramsMap, achievementsMap, weight } — see goalAggregation.js.
  */

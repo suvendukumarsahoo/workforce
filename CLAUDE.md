@@ -2099,3 +2099,247 @@ Gotchas section before the next browser-testing pass rather than rediscovering t
 
 **Nothing else from this session is pending** — no schema to run, no menu box left unchecked (Admin
 role's `geoBusinessView` is confirmed live in the DB), no follow-up verification queued.
+
+## Goals Status — replaces Targets, Admin/Manager performance dashboard (5 Aug 2026 session) — BUILT,
+## SCHEMA-FREE, NOT YET BROWSER-TESTED
+
+New session, built from a Plecto "Sales Manager Dashboard" reference screenshot the user provided
+(dark cards: a big Deals-Won gauge, a top-3 rep leaderboard with avatars/medals, Inbound/Outbound
+Revenue %, Revenue from Upgrade, New Customers, Forecasted New Revenue, an Upcoming-Demos donut, an
+Employee table, a Deals-by-Team bar chart). Resolved via AskUserQuestion before building:
+
+- **Scope = Sales/goal performance** — this replaces `Targets.jsx` (the old flat approved-targets
+  list), not a new operational/HR dashboard.
+- **3 of the 9 reference tiles have no WorkForce equivalent** (Inbound/Outbound Revenue %, Revenue
+  from Upgrade, Forecasted New Revenue — no lead-source, upgrade, or forecasting concept exists
+  anywhere in this app) — dropped and replaced with tiles built from real goal data, same call as
+  when `TeamSnapshot.jsx` was built from its own reference image and analogous no-equivalent panels
+  (Avg Days to Close, Deal Loss Reasons, Deals Projection) were dropped rather than faked.
+- **Manager sees own team only, Admin sees the full org** — this is genuinely new scoping logic;
+  neither `Dashboard.jsx` nor the old `Targets.jsx` had ever filtered by `manager_id` before (both
+  are unscoped today, confirmed via exploration before building).
+- **Always "this month," no tab control** — matches the old `Targets.jsx` and the existing precedent
+  that goal-vs-achievement figures are inherently monthly (`SalesSnapshot`'s own Manager Leaderboard
+  already stays month-scoped regardless of its Today/Month/Year tabs, for the same reason: goals
+  don't have a daily or yearly concept in this app).
+
+**Built:**
+1. **`src/pages/shared/GoalsStatus.jsx`** (new, replaces `src/pages/shared/Targets.jsx`, which was
+   deleted) — dark-panel styling matching `SalesSnapshot.jsx`'s established token pair
+   (`panelBase`/`labelStyle`, `#0f172a` outer / `#1e293b` card). Tile mapping from the reference:
+   - **Deals Won Value vs Target → Sales Value gauge** (reuses `MeterGauge` from
+     `GoalBarChart.jsx`, `dark` prop).
+   - **New Revenue by Sales Rep → Top Performers podium** — top 3 members by achieved Sales Value
+     this month, 🥇🥈🥉 + `Av` avatar + name + value, click opens the member drill (no medal/podium
+     pattern existed anywhere else in the app — built fresh from `Av`).
+   - **Inbound/Outbound Revenue % → dropped**, replaced with a **Distributors Created + Outlet
+     Visits** stat pair (achieved counts, reusing `aggregateForMembers`'s `acq`/`visits` fields —
+     `acq.achieved` is already ungated per the 4 Aug 2026 fix, matching "Distributor Created"
+     elsewhere in the app).
+   - **Revenue from Upgrade / Forecasted New Revenue → dropped**, no substitute (no natural mapping,
+     unlike the pair above).
+   - **Upcoming Demos donut → Visits by Rep donut** (`ContributionDonut`, one slice per member,
+     colored by each member's own existing `color` field, same identity-color convention
+     `managerContribution`/`memberContribution` already use elsewhere).
+   - **Employee table (Won Deals/Demos) → Roster table**: Member | Sales Value | Visits |
+     Distributors, sorted descending by achieved Sales Value, row click → member drill.
+   - **Deals by Team bar chart → Category Breakdown bar** (`GoalVsAchievedBreakdown`, `dark` prop) —
+     deliberately NOT a per-manager-team bar chart, since that would duplicate `SalesSnapshot`'s own
+     Manager Leaderboard already showing exactly that breakdown elsewhere in the app.
+   - Member drill-down reuses `MemberGoalDetail.jsx` as-is (same component `Targets.jsx` used),
+     default Sheet z-index (300) — no nested-Sheet stacking here, unlike Dashboard.jsx's
+     Manager→Member drill, so no `zIndex={320}` override needed.
+2. **`ContributionDonut` (`GoalBarChart.jsx`) gained a `dark` prop** — previously the only one of
+   the three chart primitives without dark styling (`MeterGauge`/`GoalVsAchievedBreakdown` already
+   had it). Added dark background/border on the tooltip, dark stroke on pie slice borders, dark
+   legend/empty-state text — same token values used everywhere else in this app's dark panels.
+3. **Menu relabel, not a new menu id** — `WebApp.jsx`'s `ALL_MENUS`/`PAGE_MAP` and `Settings.jsx`'s
+   separate copy both changed `targets`'s **label** "Targets" → "Goals Status" (icon 🎯→🏆) and
+   `PAGE_MAP.targets` now points at `GoalsStatus` instead of the deleted `Targets`. The **id stays
+   `'targets'`** — per CLAUDE.md's own menu convention ("internal id stable, label can be renamed
+   freely without breaking `roles.menus` permission data"), so **no Settings re-check is needed**:
+   any role that already had "Targets" enabled sees "Goals Status" immediately, same permission row.
+
+**Not done / explicitly out of scope for this pass:**
+- No period picker — see "Always this month" resolution above; revisit only if Admin/Manager
+  specifically ask to browse past months here (the existing `listRecentPeriods()`/`historicalCache`
+  pattern from Dashboard.jsx's old, now-removed tab system would be the model to follow).
+- No Org→Manager drill step for Admin (unlike `SalesSnapshot`'s Leaderboard→`ManagerLevelSheet`) —
+  this page's roster/podium/donut are flat across whatever scope (org for Admin, team for Manager),
+  one level only, straight to `MemberGoalDetail`. That manager-level drill already exists via
+  `SalesSnapshot`'s Manager Leaderboard on the main Dashboard; not duplicated here.
+
+**Real cross-cutting bug found via live testing (first browser look at this page), fixed same
+session:** `MeterGauge`'s `RadialBarChart` had no explicit angle-axis domain. Recharts auto-scales
+an unset radial/angle-axis domain to `[0, max(data value)]` — with only one data point in the
+gauge's `data` array, that max IS the value itself, so the arc always rendered as a **full circle**
+regardless of the real percent (screenshot showed "3%" text with a solid, fully-filled red ring, no
+gray "remaining" track visible at all). The percent **text** was always correct; only the ring
+was wrong. This is not new-to-this-session code — `MeterGauge` is reused everywhere (Dashboard's
+old drill sheets, `TeamSnapshot.jsx`, `SalesSnapshot.jsx`, `MemberGoalDetail.jsx`, and now
+`GoalsStatus.jsx`), so every gauge in the app had this bug; it just took this page's low starting
+percentage (3%) to make it visually obvious versus a coincidentally-near-100% value elsewhere.
+Fixed by adding `<PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />`
+inside the `RadialBarChart`, pinning the domain so the arc always represents true percent-of-circle.
+`vite build` + scoped `eslint` clean after the fix.
+
+**Still open / not yet browser-tested (next thing to check in a new session):**
+- `vite build` and scoped `eslint` (on `GoalsStatus.jsx`, `GoalBarChart.jsx`,
+  `MemberGoalDetail.jsx`, `WebApp.jsx`, `Settings.jsx`) are clean — the only 4 lint errors reported
+  are pre-existing and already documented elsewhere in this file (`WebApp.jsx`'s `SideContent`
+  static-component warning + unused `Btn`, `Settings.jsx`'s unused `Inp`).
+- **Re-check the gauge visually after the `PolarAngleAxis` fix** — confirm the ring now shows a
+  partial arc proportional to percent (e.g. a small sliver at 3%, not a full circle), with the gray
+  track visible for the remaining portion, on this page AND spot-check one other page that uses
+  `MeterGauge` (e.g. `TeamSnapshot.jsx`'s Home tab) to confirm the same fix holds there too.
+- Sidebar shows "Goals Status" (not "Targets") for both an Admin and a Manager login without needing
+  any Settings change — confirmed via screenshot for Manager (Meera Iyer), not yet for Admin.
+  Admin's gauge/podium/stats/donut/breakdown/roster reflect the whole org; a Manager with team
+  members assigned (via `manager_id`) sees only their own team's numbers — confirmed for one Manager
+  (Meera Iyer, "My Team · August 2026" scope label rendered correctly, 1 team member "Arjun Nair"
+  shown in Top Performers). A Manager with zero assigned members still needs checking (empty states,
+  no crash). Clicking a podium entry or a roster row opens `MemberGoalDetail` correctly — not yet
+  confirmed. Category Breakdown bar showed real category rows immediately (Snacks/Lubricants/
+  Namkeens/Brake Fluids/Coolants, goal vs achieved) — confirms the aggregation wiring works
+  correctly (see the chart-type change right below — the bar itself didn't survive as the final
+  form, but the data feeding it was already right).
+
+**Follow-up same session: Category Breakdown changed from a bar chart to a "fuel meter" per
+category.** User's ask, after seeing the bar-chart version live. Per the `dataviz` skill's own form
+guidance ("a single ratio against a limit → Meter"; several such ratios side by side → small
+multiples of that Meter, not one wide bar list) — first pass swapped `GoalVsAchievedBreakdown` out
+for a `flex-wrap` grid of the existing `MeterGauge` component (full-circle radial ring), one per
+category.
+
+**Immediate second follow-up, same breath — user wanted an actual needle-pointer gauge (a
+semicircular "speedometer" style, per a Geckoboard reference screenshot) with a DIFFERENT color per
+category, not `MeterGauge`'s single red/amber/green severity ramp reused for every category.** Built
+a new component instead of trying to bend `MeterGauge` to a second visual style:
+1. **`NeedleGauge`** (new, `GoalBarChart.jsx`) — hand-drawn SVG semicircle: a background track arc
+   (0–180°, left-to-right over the top), a colored fill arc from 0 to the achieved percent, and a
+   needle line + pivot dot pointing at that percent. `color` is a required-ish prop (falls back to
+   blue) — the arc + needle carry the category's identity color; the percent/value TEXT stays
+   neutral ink (`#e2e8f0`/`#374151`), per the `dataviz` skill's own rule that text wears text
+   tokens, never the series color — a small colored dot next to the category name carries identity
+   there instead of coloring the label itself.
+2. **`src/lib/categoryColors.js`** (new) — `CATEGORY_PALETTE` (the same 8-color validated
+   categorical set `ContributionDonut` already used internally, now pulled out and exported so both
+   components draw from one source instead of two independently-cycling copies) and
+   `colorForEntity(id, allItems)` — looks up an entity's color by its index in a **stable master
+   list** (e.g. the full `categories` array from `useData()`), not its index in whatever
+   sorted/filtered subset is being rendered, so a category keeps the same color on this page no
+   matter how the goal-vs-achieved ranking reorders it between renders ("color follows the entity,
+   never its rank" — the skill's own non-negotiable). Pulled into its own file rather than left
+   inline in `GoalBarChart.jsx` because a plain constant export there triggered
+   `react-refresh/only-export-components` (component files must export only components) —
+   `GoalBarChart.jsx` and `GoalsStatus.jsx` both now import from this new shared module.
+   `ContributionDonut`'s own fallback-color line was repointed at the same `CATEGORY_PALETTE`
+   import instead of its old private copy — one less place a palette could drift.
+3. **`GoalsStatus.jsx`**'s Category Breakdown panel now renders `NeedleGauge` (not `MeterGauge`) per
+   category, colored via `colorForEntity(c.id, categories)`.
+
+`vite build` + scoped `eslint` (`GoalsStatus.jsx`, `GoalBarChart.jsx`, `categoryColors.js`) clean
+after both follow-ups. Net: `GoalVsAchievedBreakdown` itself is untouched and still used elsewhere
+(`MemberGoalDetail.jsx`'s Products/Categories/Distributors breakdowns) — only this one panel on
+this one page changed form, twice, in response to live feedback.
+
+**Third same-session follow-up: "Outlet Visits" renamed to "Retail Visits" and re-sourced from
+Distributor Secondary's raw `retail_visits` count, not the goal-gated/combined achievement figure.**
+Every prior number on this page for "visits" was `aggregateForMembers(...).visits.achieved` —
+`achievementEngine.js`'s `ach.visits`, which (a) sums BOTH `distributor_visits` (New Customer Visit)
+and `retail_visits` (Distributor Secondary beat-outlet visits) together, and (b) only counts once the
+member's Visits goal field is manager-approved for the period (`goal.visits_status === 'approved'`).
+User wanted the page's visit figures to instead read as a literal "how many retail outlets were
+visited" count, sourced specifically from Distributor Secondary. Fixed by computing a new,
+separate, ungated count directly off the raw `retailVisits` array (already loaded globally by
+`useData()`) filtered to the current period's calendar month (`monthRangeForPeriod(currentPeriod)`)
+and the in-scope member ids — same root-cause pattern as the 4 Aug 2026 fix that made the
+Distributors meter match "Distributor Created" everywhere by reading the raw pipeline event instead
+of a differently-scoped/gated aggregate. Applied consistently to all three places "visits" appeared
+on this page (not just the one stat tile asked about), since leaving them on the old mixed/gated
+definition would have shown three different numbers for the same person/scope/period on one screen:
+1. **Stat pair tile**: "Outlet Visits" → **"Retail Visits"**, value is now the raw scoped count
+   (goal fraction dropped — the old combined Visits goal target no longer describes what this
+   number measures, same reasoning the Distributors Created tile beside it already followed by
+   showing a bare count with no goal fraction).
+2. **Donut**: "Visits by Rep" → **"Retail Visits by Rep"**, each slice now `retailVisits` count per
+   member instead of `agg.visits.achieved`.
+3. **Roster table**: "Visits" column → **"Retail Visits"**, per-row value now each member's own
+   scoped `retailVisits` count.
+
+Confirmed in code before building this: `retail_visits.member_id` is filtered against `goals[mid]`
+inside `achievementEngine.js`'s own retailVisits loop using the SAME key space as `members.id` (not
+`users.id`, despite the column's schema comment literally saying `references users(id)` — the app
+inserts each Sales Team rep's `member_id`, i.e. their `members.id`, into that column in practice), so
+`String(v.member_id) === String(member.id)` is the correct, already-established matching pattern —
+reused here rather than re-derived. `vite build` + scoped `eslint` clean after this change too.
+The **Category Breakdown** meters and the **Sales Value** gauge/podium are untouched by this —
+only the three "visits" spots above changed source.
+
+**Fourth same-session follow-up: Distributors Created gained a target, and the Retail Visits number
+moved out of the stat-pair panel into the donut panel.**
+1. **Distributors Created** was a bare achieved count with no goal shown (unlike every other
+   figure on this page). Changed to the same `achieved / goal` format the page uses everywhere
+   else: `scopeAgg.acq.achieved` (the ungated, real "Distributor Created" pipeline count, unchanged
+   from before) **`/` `scopeAgg.acq.goal`** (the manager-approved Distributor Creation goal target
+   for the period — goal fraction only renders when `goal > 0`, same convention as the Sales Value
+   gauge and the old pre-this-session Outlet Visits tile).
+2. **The stat-pair panel that used to hold both "Distributors Created" and "Retail Visits" stacked
+   together now holds only Distributors Created** (single stat, panel simplified from a two-item
+   flex-column to one centered block). The Retail Visits total moved into the donut panel instead —
+   that panel's header is now "Retail Visits *by rep*" with the scoped total (`scopeRetailVisits`)
+   shown inline at the right of the header, the donut itself unchanged below it (same
+   `retailVisits`-per-member data from the third follow-up above). Net effect: each panel now holds
+   one coherent metric (Distributors Created alone; Retail Visits total + its by-rep breakdown
+   together) instead of two unrelated stats sharing one box.
+
+`vite build` + scoped `eslint` clean after this change too.
+
+**Fifth same-session follow-up: Sales Value promoted to a hero panel — biggest size, biggest
+font/graph, distinct "most attractive" color treatment, since it's this page's single most
+important figure.** User asked for a literal panel-size swap between Sales Value and Retail Visits
+first, then a stronger ask on top: Sales Value's graph and font should be the biggest/most prominent
+of every panel on the page, with the most attractive color combination — not just matching Retail
+Visits' old size.
+1. **`MeterGauge` (`GoalBarChart.jsx`) gained a `size` prop** (diameter in px, default `108` —
+   unchanged for every other call site: `TeamSnapshot.jsx`, `MemberGoalDetail.jsx`). Ring diameter,
+   ring thickness, and all three font sizes (percent/label/sub) scale together off this one number,
+   so a caller can promote one gauge to a hero figure (the `dataviz` skill's own figure contract:
+   "the one number a dashboard leads with... exactly one per view") without a second component.
+2. **`GoalsStatus.jsx`'s Sales Value panel** — no longer shares `panelBase`'s flat `#1e293b` with
+   every other panel on the page. Own gradient background
+   (`linear-gradient(135deg, #1e3a8a 0%, #4338ca 55%, #7c3aed 100%)` — blue → indigo → violet, built
+   from hues already in this app's palette, not new ones invented), a soft violet glow
+   (`box-shadow: 0 0 44px rgba(99,102,241,.35)`), and a bordered edge. `flex: '2 1 320px'` — the
+   largest basis of any panel on the page (bigger than Top Performers' `1.4`).
+3. **Retail Visits panel** took Sales Value's old size (`flex: '1 1 180px'`, back on the shared
+   `panelBase` styling) — the literal swap part of the ask, alongside the hero treatment above.
+
+**Immediate revert, same session — the `size={190}` enlarged gauge "looked odd."** User's very
+next message walked back just the font/ring-size piece, keeping everything else: panel size,
+gradient, and glow all stay; `MeterGauge`'s call in this panel dropped back to the default `size`
+(108, same as every other gauge on the page — Top Performers/Distributors Created/etc. never used
+the `size` prop to begin with). The `size` prop itself stays on `MeterGauge` (harmless, unused by
+any current call site) rather than being ripped back out, in case a future ask wants it again. The
+panel's larger flex-basis + distinct gradient/glow are what carry "most important" now, without
+also blowing up the numeral/ring past what read well.
+
+**Second immediate revert, same session — the gradient/glow itself was called "improper," and
+Distributors Created was missing a graph.** Two more corrections in the same breath:
+1. **Sales Value panel's gradient background, border, and glow all removed** — back to plain
+   `panelBase` (flat `#1e293b`, no border/shadow), same as every other panel on the page. Emphasis
+   now carries through size alone: `flex: '2 1 320px'` is still the largest basis on the page, just
+   no longer visually distinct in color from its neighbors.
+2. **Distributors Created panel gained a graph** — it was the one stat-pair panel left as bare
+   text (`achieved / goal` numerals, no chart), inconsistent with Sales Value and (before this
+   session's edits) the old Outlet Visits tile, which both showed a ring. Replaced the text block
+   with `<MeterGauge label="Distributors Created" value={scopeAgg.acq.achieved}
+   goal={scopeAgg.acq.goal} dark />` — same component, default size, same red/amber/green severity
+   convention as Sales Value's own gauge right next to it, so every scalar-goal panel on this page
+   now renders the same way.
+
+Net result: the top row is back to a uniform look across all four panels (same flat dark background,
+same panelBase styling), with only relative panel width — not color — signaling which one matters
+most. `vite build` + scoped `eslint` clean after this change.
+
+`vite build` + scoped `eslint` (`GoalsStatus.jsx`, `GoalBarChart.jsx`) clean after this change.
