@@ -11,15 +11,24 @@
  * @param {Object} goals      - { [memberId]: goalObject }
  * @param {Array}  products   - product master array
  * @param {Array}  distributors - distributor master array (for Distributor Appointment count)
- * @param {Array}  visits     - distributor_visits rows (for Outlet Visits achievement)
+ * @param {Array}  visits     - distributor_visits rows (for "New Customer Visits" achievement)
  * @param {Array}  retailVisits - retail_visits rows (Distributor Secondary beat-outlet visits) —
- *                               additive with `visits` toward the same Outlet Visits achievement
+ *                               feeds the Distributor Secondary goal category's Productive Outlets
+ *                               / Total No. of Orders fields ONLY. Reverted 5 Aug 2026: this used
+ *                               to also add to the general Visits achievement (a session-4-Aug
+ *                               addition); now that Distributor Secondary has its own dedicated
+ *                               goal fields, that combination was removed — "New Customer Visits"
+ *                               (the renamed general Visits field) is `visits`-only again.
+ * @param {Array}  retailOutlets - retail_outlets rows (Distributor Secondary) — feeds New Outlets.
+ * @param {Array}  secondaryOrders - secondary_orders rows w/ joined `items` (qty, rate) —
+ *                               feeds Value.
  * @param {Object} [dateRange] - optional { from, to } ISO date strings (inclusive). When given,
  *                               invoices/visits/distributor-acquisitions outside the range are
  *                               excluded. Omitted = all-time (unchanged prior behavior).
- * @returns {Object}          - { [memberId]: { value, custs, prods, cats, acq, visits } }
+ * @returns {Object}          - { [memberId]: { value, custs, prods, cats, acq, visits,
+ *                               new_outlets, productive_outlets, secondary_orders, secondary_value } }
  */
-export function computeAchievements(invoices = [], goals = {}, products = [], distributors = [], visits = [], retailVisits = [], dateRange = null) {
+export function computeAchievements(invoices = [], goals = {}, products = [], distributors = [], visits = [], retailVisits = [], retailOutlets = [], secondaryOrders = [], dateRange = null) {
   const result = {}
   const inRange = iso => {
     if (!dateRange || !iso) return true
@@ -29,7 +38,10 @@ export function computeAchievements(invoices = [], goals = {}, products = [], di
 
   // Initialise empty achievement for every member that has a goal
   Object.keys(goals).forEach(memberId => {
-    result[memberId] = { value: 0, custs: {}, prods: {}, cats: {}, acq: 0, visits: 0 }
+    result[memberId] = {
+      value: 0, custs: {}, prods: {}, cats: {}, acq: 0, visits: 0,
+      new_outlets: 0, productive_outlets: 0, secondary_orders: 0, secondary_value: 0,
+    }
   })
 
   // Gating is per-field (value/products/categories/customers/visits/acq are independently
@@ -94,7 +106,8 @@ export function computeAchievements(invoices = [], goals = {}, products = [], di
     }
   })
 
-  // Outlet visits count
+  // "New Customer Visits" count (renamed label; column/field name `visits` unchanged) —
+  // distributor_visits-only, see the JSDoc note above for why retail_visits no longer adds here.
   visits.forEach(v => {
     const mid = String(v.member_id)
     const goal = goals[mid]
@@ -104,16 +117,47 @@ export function computeAchievements(invoices = [], goals = {}, products = [], di
     ach.visits += 1
   })
 
-  // Outlet visits count — Distributor Secondary beat-outlet visits, additive with the above. Every
-  // retail_visits row counts (order or no_order outcome) — the achievement is "the rep visited this
-  // outlet," not "the visit resulted in an order."
+  // Distributor Secondary — New Outlets: retail_outlets created in range, attributed via
+  // created_by (stores members.id, same key space as every other loop here).
+  retailOutlets.forEach(o => {
+    const mid = String(o.created_by)
+    const goal = goals[mid]
+    const ach = result[mid]
+    if (!ach || !goal || goal.new_outlets_status !== 'approved') return
+    if (!inRange(o.created_at)) return
+    ach.new_outlets += 1
+  })
+
+  // Distributor Secondary — Productive Outlets (distinct outlets with >=1 order in range) and
+  // Total No. of Orders (count of order-outcome visits in range) — both derived from retailVisits,
+  // gated independently on their own field's approval status.
+  const productiveOutletSets = {}
   retailVisits.forEach(v => {
+    if (v.outcome !== 'order') return
+    if (!inRange(v.visit_date)) return
     const mid = String(v.member_id)
     const goal = goals[mid]
     const ach = result[mid]
-    if (!ach || !goal || goal.visits_status !== 'approved') return
-    if (!inRange(v.visit_date)) return
-    ach.visits += 1
+    if (!ach || !goal) return
+    if (goal.secondary_orders_status === 'approved') ach.secondary_orders += 1
+    if (goal.productive_outlets_status === 'approved') {
+      if (!productiveOutletSets[mid]) productiveOutletSets[mid] = new Set()
+      productiveOutletSets[mid].add(v.outlet_id)
+    }
+  })
+  Object.entries(productiveOutletSets).forEach(([mid, set]) => {
+    if (result[mid]) result[mid].productive_outlets = set.size
+  })
+
+  // Distributor Secondary — Value: sum of secondary_order_items (qty*rate) for orders in range.
+  secondaryOrders.forEach(o => {
+    const mid = String(o.member_id)
+    const goal = goals[mid]
+    const ach = result[mid]
+    if (!ach || !goal || goal.secondary_value_status !== 'approved') return
+    if (!inRange(o.order_date)) return
+    const orderTotal = (o.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
+    ach.secondary_value += orderTotal
   })
 
   // Distributor Appointment count — only counts leads that completed the full appointment pipeline.
@@ -155,10 +199,18 @@ export function getGoalOverallStatus(goal, param = null) {
   const enableCategories = param ? param.enable_categories : true
   const enableVisits     = param ? param.enable_visits     : true
   const enableAcq        = param ? param.enable_acq        : true
+  const enableNewOutlets        = param ? param.enable_new_outlets        : true
+  const enableProductiveOutlets = param ? param.enable_productive_outlets : true
+  const enableSecondaryOrders   = param ? param.enable_secondary_orders   : true
+  const enableSecondaryValue    = param ? param.enable_secondary_value    : true
 
   if (enableValue && goal.value_status) statuses.push(goal.value_status)
   if (enableVisits && goal.visits_status) statuses.push(goal.visits_status)
   if (enableAcq && goal.acq_status) statuses.push(goal.acq_status)
+  if (enableNewOutlets && goal.new_outlets_status) statuses.push(goal.new_outlets_status)
+  if (enableProductiveOutlets && goal.productive_outlets_status) statuses.push(goal.productive_outlets_status)
+  if (enableSecondaryOrders && goal.secondary_orders_status) statuses.push(goal.secondary_orders_status)
+  if (enableSecondaryValue && goal.secondary_value_status) statuses.push(goal.secondary_value_status)
 
   if (enableCustomers) {
     const selIds = param?.sel_custs || null

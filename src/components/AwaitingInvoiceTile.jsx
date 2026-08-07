@@ -63,6 +63,7 @@ export default function AwaitingInvoiceTile() {
     const { error } = await db.createInvoiceFromLoad(header, lines)
     setBusy(false)
     if (error) { showToast('Error creating invoice'); return }
+    db.logActivity(currentUser?.id, 'create', 'invoice', `Created invoice ${header.id} from order #${creating.id}`, header.id)
     await loadAll()
     await loadData()
     setCreating(null)

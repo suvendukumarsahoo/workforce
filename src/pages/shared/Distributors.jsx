@@ -6,7 +6,7 @@ import { CrudTable, EntitySheet, Av, SBadge } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
 
 export default function Distributors() {
-  const { can } = useAuth()
+  const { can, currentUser } = useAuth()
   const { distributors, setDistributors, members, showToast } = useData()
   const [sheet, setSheet] = useState(null)
 
@@ -50,11 +50,13 @@ const payload   = {
     if (sheet?.id) {
       const { error } = await db.updateDistributor(sheet.id, payload, memberIds)
       if (error) { showToast('Error saving'); return }
+      db.logActivity(currentUser?.id, 'update', 'distributor', `Updated distributor — ${payload.name}`, sheet.id)
       setDistributors(prev => prev.map(x => x.id === sheet.id ? { ...x, ...payload, assignedTo: memberIds } : x))
     } else {
       const id = 'C' + Date.now().toString(36).toUpperCase()
       const { error } = await db.createDistributor({ ...payload, id }, memberIds)
       if (error) { showToast('Error saving'); return }
+      db.logActivity(currentUser?.id, 'create', 'distributor', `Added distributor — ${payload.name}`, id)
       setDistributors(prev => [...prev, { ...payload, id, assignedTo: memberIds }])
     }
     setSheet(null)

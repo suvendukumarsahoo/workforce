@@ -16,11 +16,19 @@ const [editing, setEditing] = useState(null)
       enable_value: draft.enableValue, enable_customers: draft.enableCustomers,
       enable_products: draft.enableProducts, enable_categories: draft.enableCategories,
       enable_visits: draft.enableVisits, enable_acq: draft.enableAcq,
+      enable_new_outlets: draft.enableNewOutlets, enable_productive_outlets: draft.enableProductiveOutlets,
+      enable_secondary_orders: draft.enableSecondaryOrders, enable_secondary_value: draft.enableSecondaryValue,
       exp_budget: draft.expBudget === '' || draft.expBudget == null ? null : Number(draft.expBudget),
       sel_custs: draft.selCusts, sel_prods: draft.selProds, sel_cats: draft.selCats,
     })
     if (error) { console.error('upsertParameter failed:', error); showToast('Error saving parameters'); return }
-    setParams(prev => ({ ...prev, [memberId]: { ...draft, member_id: memberId, period: currentPeriod } }))
+    // Use the real saved row (snake_case columns) rather than reconstructing from `draft` (camelCase
+    // local form state) — the two shapes don't match, so writing `draft` in here left every
+    // `param.enable_x` check across the app (GoalEntrySheet, GoalApprovals, achievementEngine,
+    // goalAggregation) reading undefined/falsy until the next full page reload re-fetched the real
+    // row from Supabase. Real bug, pre-existing, surfaced by testing the new Distributor Secondary
+    // toggles without an intervening reload.
+    setParams(prev => ({ ...prev, [memberId]: data }))
     setEditing(null)
     showToast('Parameters saved')
   }
@@ -43,7 +51,7 @@ const [editing, setEditing] = useState(null)
         <CH title="Parameters per member" sub="Member enters their own goal values against these" />
         {(members || []).map(m => {
           const p = params[m.id] || {}
-          const fields = [p.enable_value && 'Value', p.enable_customers && 'Distributors', p.enable_products && 'Products', p.enable_categories && 'Categories', p.enable_visits && 'Visits', p.enable_acq && 'Acq'].filter(Boolean)
+          const fields = [p.enable_value && 'Value', p.enable_customers && 'Distributors', p.enable_products && 'Products', p.enable_categories && 'Categories', p.enable_visits && 'New Customer Visits', p.enable_acq && 'Acq', p.enable_new_outlets && 'New Outlets', p.enable_productive_outlets && 'Productive Outlets', p.enable_secondary_orders && 'Secondary Orders', p.enable_secondary_value && 'Secondary Value'].filter(Boolean)
           return (
             <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid #f3f4f6' }}>
               <Av av={m.avatar} color={m.color} sz={30} />
@@ -79,6 +87,10 @@ function ParamSheet({ member, param, products, categories, customers, onSave, on
     enableCategories: p.enable_categories ?? false,
     enableVisits: p.enable_visits ?? false,
     enableAcq: p.enable_acq ?? false,
+    enableNewOutlets: p.enable_new_outlets ?? false,
+    enableProductiveOutlets: p.enable_productive_outlets ?? false,
+    enableSecondaryOrders: p.enable_secondary_orders ?? false,
+    enableSecondaryValue: p.enable_secondary_value ?? false,
     expBudget: p.exp_budget || '',
     selCusts: p.sel_custs || [],
     selProds: p.sel_prods || [],
@@ -140,8 +152,13 @@ function ParamSheet({ member, param, products, categories, customers, onSave, on
       <Toggle label="Category-wise quantity" enableKey="enableCategories">
         <Chips listKey="selCats" allItems={categories} labelFn={x => `${x.name} (${x.unit})`} enableKey="enableCategories" />
       </Toggle>
-      <Toggle label="Outlet visits" enableKey="enableVisits" />
+      <Toggle label="New Customer Visits" enableKey="enableVisits" />
       <Toggle label="New Distributor Appointment" enableKey="enableAcq" />
+      <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '.04em', margin: '14px 0 6px' }}>Distributor Secondary</div>
+      <Toggle label="New Outlets" enableKey="enableNewOutlets" />
+      <Toggle label="Productive Outlets" enableKey="enableProductiveOutlets" />
+      <Toggle label="Total No. of Orders" enableKey="enableSecondaryOrders" />
+      <Toggle label="Value" enableKey="enableSecondaryValue" />
       <Inp label="Expense budget (₹)" type="number" value={d.expBudget} onChange={v => setD(x => ({ ...x, expBudget: Number(v) }))} placeholder="e.g. 25000" />
       <div style={{ display: 'flex', gap: 8 }}>
         <Btn v="pri" full onClick={() => onSave(member.id, d)}>Save parameters</Btn>

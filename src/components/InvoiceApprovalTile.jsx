@@ -30,6 +30,7 @@ export default function InvoiceApprovalTile() {
     const { error } = await db.approveInvoice(inv.id, currentUser?.member_id)
     setBusy(false)
     if (error) { showToast('Error approving invoice'); return }
+    db.logActivity(currentUser?.id, 'approve', 'invoice', `Approved invoice #${inv.id} — ${distributorName(inv.distributor_id)} (${F(invoiceTotal(inv))})`, inv.id)
     await loadAll()
     await loadData()
     setReviewing(null)

@@ -163,6 +163,22 @@ export default function GoalsStatus() {
         </div>
       </div>
 
+      <div style={{ background: '#0f172a', borderRadius: 16, padding: 16, marginBottom: 16 }}>
+        <div style={{ ...panelBase }}>
+          <div style={labelStyle}>Distributor Secondary — Goal vs Achieved (This Month)</div>
+          {scopeAgg.new_outlets.goal === 0 && scopeAgg.productive_outlets.goal === 0 && scopeAgg.secondary_orders.goal === 0 && scopeAgg.secondary_value.goal === 0
+            ? <div style={{ fontSize: 12, color: '#64748b', padding: '8px 0' }}>No approved Distributor Secondary goals for this month yet</div>
+            : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-around', gap: 8 }}>
+                {scopeAgg.new_outlets.goal > 0 && <MeterGauge label="New Outlets" value={scopeAgg.new_outlets.achieved} goal={scopeAgg.new_outlets.goal} dark />}
+                {scopeAgg.productive_outlets.goal > 0 && <MeterGauge label="Productive Outlets" value={scopeAgg.productive_outlets.achieved} goal={scopeAgg.productive_outlets.goal} dark />}
+                {scopeAgg.secondary_orders.goal > 0 && <MeterGauge label="Total No. of Orders" value={scopeAgg.secondary_orders.achieved} goal={scopeAgg.secondary_orders.goal} dark />}
+                {scopeAgg.secondary_value.goal > 0 && <MeterGauge label="Value" value={scopeAgg.secondary_value.achieved} goal={scopeAgg.secondary_value.goal} formatValue={F} dark />}
+              </div>
+            )}
+        </div>
+      </div>
+
       <div style={{ background: '#0f172a', borderRadius: 16, padding: 16 }}>
         <div style={labelStyle}>{scopeLabel} Roster</div>
         {ranked.length === 0 && <div style={{ fontSize: 12, color: '#64748b', padding: '8px 0' }}>No members in scope</div>}

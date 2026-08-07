@@ -43,10 +43,10 @@ const DarkFooterLinks = ({ links }) => (
 const DarkLoading = () => <div style={{ ...darkContainer, textAlign: 'center', color: '#64748b', fontSize: 13 }}>Loading...</div>
 
 export default function Dashboard({ onNavigate }) {
-  const { role } = useAuth()
+  const { role, currentUser } = useAuth()
   const {
     goals, expenses, invoices, members, users, achievements, params, products, categories,
-    distributors: customers, visits, payments,
+    distributors: customers, visits, payments, retailOutlets, secondaryOrders, retailVisits,
   } = useData()
   // Shared reporting-period tab, lifted here so SalesSnapshot and the New Customer Visits funnel
   // below it always show the same period instead of drifting independently (the funnel has no tab
@@ -188,6 +188,12 @@ leads={(customers || []).filter(d => d.lead_stage &&
 
       {role?.id === 'r1' && (
         <>
+          <SectionHeader icon="🏪" title="Distributor Secondary" />
+          <DistributorSecondarySection
+            memberIds={(members || []).map(m => m.id)}
+            retailOutlets={retailOutlets} secondaryOrders={secondaryOrders} retailVisits={retailVisits}
+          />
+
           <SectionHeader icon="🏭" title="Warehouse" />
           <WarehouseSection onNavigate={onNavigate} />
 
@@ -199,6 +205,16 @@ leads={(customers || []).filter(d => d.lead_stage &&
 
           <SectionHeader icon="💰" title="Accounts" />
           <AccountsSection onNavigate={onNavigate} invoices={invoices} expenses={expenses} />
+        </>
+      )}
+
+      {role?.id === 'r2' && (
+        <>
+          <SectionHeader icon="🏪" title="Distributor Secondary — My Team" />
+          <DistributorSecondarySection
+            memberIds={membersByManager(currentUser?.id).map(m => m.id)}
+            retailOutlets={retailOutlets} secondaryOrders={secondaryOrders} retailVisits={retailVisits}
+          />
         </>
       )}
     </div>
@@ -215,6 +231,47 @@ function isToday(iso) {
   if (!iso) return false
   const d = new Date(iso), t = new Date()
   return d.toDateString() === t.toDateString()
+}
+
+// Distributor Secondary — unlike Warehouse/Driver/HR/Accounts below, this section's data
+// (retailOutlets/secondaryOrders/retailVisits) is already loaded globally via useData(), so it
+// consumes context props directly instead of self-fetching. Today/Month/Year tab-scoped row of raw
+// activity counts only (own local tab state, `rangeForTab` — same control every other tab-scoped
+// panel in this app already uses) — the goal-vs-achieved gauges for these same 4 fields live on
+// GoalsStatus.jsx instead (5 Aug 2026 follow-up: "goal part should move to Goals Status, other
+// things stay under Distributor Secondary as earlier") so this section stays a pure activity feed,
+// not a mix of two different concepts.
+const DS_TABS = [['today', 'Today'], ['month', 'This Month'], ['year', 'This Year']]
+
+function DistributorSecondarySection({ memberIds, retailOutlets, secondaryOrders, retailVisits }) {
+  const [tab, setTab] = useState('month')
+  const range = rangeForTab(tab, new Date())
+  const inRange = iso => { if (!iso) return false; const d = new Date(iso); return d >= range.from && d <= range.to }
+  const memberIdSet = new Set((memberIds || []).map(String))
+
+  const newOutletsCount = (retailOutlets || []).filter(o => memberIdSet.has(String(o.created_by)) && inRange(o.created_at)).length
+  const orderVisits = (retailVisits || []).filter(v => memberIdSet.has(String(v.member_id)) && v.outcome === 'order' && inRange(v.visit_date))
+  const productiveOutletsCount = new Set(orderVisits.map(v => v.outlet_id)).size
+  const totalOrdersCount = orderVisits.length
+  const secondaryValueSum = (secondaryOrders || [])
+    .filter(o => memberIdSet.has(String(o.member_id)) && inRange(o.order_date))
+    .reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0), 0)
+
+  return (
+    <div style={darkContainer}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        {DS_TABS.map(([key, label]) => (
+          <button key={key} onClick={() => setTab(key)} style={{ padding: '7px 16px', borderRadius: 8, border: 'none', background: tab === key ? '#38bdf8' : '#1e293b', color: tab === key ? '#0f172a' : '#94a3b8', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>{label}</button>
+        ))}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+        <DarkStat icon="🏪" label={`New Outlets — ${DS_TABS.find(([k]) => k === tab)[1]}`} value={newOutletsCount} color="#60a5fa" />
+        <DarkStat icon="✅" label={`Productive Outlets — ${DS_TABS.find(([k]) => k === tab)[1]}`} value={productiveOutletsCount} color="#34d399" />
+        <DarkStat icon="🧾" label={`Total No. of Orders — ${DS_TABS.find(([k]) => k === tab)[1]}`} value={totalOrdersCount} color="#fbbf24" />
+        <DarkStat icon="💰" label={`Value — ${DS_TABS.find(([k]) => k === tab)[1]}`} value={F(secondaryValueSum)} color="#a78bfa" />
+      </div>
+    </div>
+  )
 }
 
 function WarehouseSection({ onNavigate }) {
@@ -444,7 +501,8 @@ function AccountsSection({ onNavigate, invoices, expenses }) {
 
 function ManagerLevelSheet({ manager, teamMembers, slices, products, categories, customers, onClose, onSelectMember }) {
   const agg = aggregateForMembers((teamMembers || []).map(m => m.id), slices, products, categories, customers)
-  const hasMeters = agg.value.goal > 0 || agg.visits.goal > 0 || agg.acq.goal > 0
+  const hasMeters = agg.value.goal > 0 || agg.visits.goal > 0 || agg.acq.goal > 0 ||
+    agg.new_outlets.goal > 0 || agg.productive_outlets.goal > 0 || agg.secondary_orders.goal > 0 || agg.secondary_value.goal > 0
   const hasAny = hasMeters || agg.products.length > 0 || agg.categories.length > 0
 
   const memberContribution = (teamMembers || []).map(m => ({
@@ -460,8 +518,12 @@ function ManagerLevelSheet({ manager, teamMembers, slices, products, categories,
         <ChartSection title="Team — This Period">
           <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-around', gap: 8 }}>
             {agg.value.goal > 0 && <MeterGauge label="Sales Value" value={agg.value.achieved} goal={agg.value.goal} formatValue={F} />}
-            {agg.visits.goal > 0 && <MeterGauge label="Outlet Visits" value={agg.visits.achieved} goal={agg.visits.goal} />}
+            {agg.visits.goal > 0 && <MeterGauge label="New Customer Visits" value={agg.visits.achieved} goal={agg.visits.goal} />}
             {agg.acq.goal > 0 && <MeterGauge label="Distributors" value={agg.acq.achieved} goal={agg.acq.goal} />}
+            {agg.new_outlets.goal > 0 && <MeterGauge label="New Outlets" value={agg.new_outlets.achieved} goal={agg.new_outlets.goal} />}
+            {agg.productive_outlets.goal > 0 && <MeterGauge label="Productive Outlets" value={agg.productive_outlets.achieved} goal={agg.productive_outlets.goal} />}
+            {agg.secondary_orders.goal > 0 && <MeterGauge label="Total No. of Orders" value={agg.secondary_orders.achieved} goal={agg.secondary_orders.goal} />}
+            {agg.secondary_value.goal > 0 && <MeterGauge label="Secondary Value" value={agg.secondary_value.achieved} goal={agg.secondary_value.goal} formatValue={F} />}
           </div>
         </ChartSection>
       )}

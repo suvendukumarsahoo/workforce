@@ -25,6 +25,8 @@ export function DataProvider({ children }) {
   const [toast,        setToast]        = useState(null)
   const [visits, setVisits] = useState([])
   const [retailVisits, setRetailVisits] = useState([])
+  const [retailOutlets, setRetailOutlets] = useState([])
+  const [secondaryOrders, setSecondaryOrders] = useState([])
   const [registrations, setRegistrations] = useState([])
   const [payments, setPayments] = useState([])
   const [currentPeriod] = useState(getCurrentPeriod())
@@ -40,14 +42,14 @@ export function DataProvider({ children }) {
   { data: r }, { data: u }, { data: m }, { data: c }, { data: p },
   { data: dist }, { data: pa }, { data: g }, { data: inv }, { data: exp },
   { data: sal }, { data: att }, { data: vis }, { data: reg }, { data: pay },
-  { data: rvis },
+  { data: rvis }, { data: routs }, { data: sord },
 ] = await Promise.all([
   db.fetchRoles(), db.fetchUsers(), db.fetchMembers(), db.fetchCategories(),
   db.fetchProducts(), db.fetchDistributors(), db.fetchParameters(currentPeriod), db.fetchGoals(currentPeriod),
   db.fetchInvoices(), db.fetchExpenses(), db.fetchSalaries(),
   db.fetchAttendance(new Date().getMonth()+1, new Date().getFullYear()),
   db.fetchVisits(), db.fetchRegistrations(), db.fetchPayments(),
-  db.fetchRetailVisits(),
+  db.fetchRetailVisits(), db.fetchRetailOutlets(), db.fetchSecondaryOrders(),
 ])
 
     if (r)    setRoles(r)
@@ -61,6 +63,8 @@ export function DataProvider({ children }) {
         if (reg) setRegistrations(reg)
           if (pay) setPayments(pay)
           if (rvis) setRetailVisits(rvis)
+          if (routs) setRetailOutlets(routs)
+          if (sord) setSecondaryOrders(sord)
     if (g)   {
       const goalMap = {}
       g.forEach(goal => {
@@ -76,8 +80,8 @@ export function DataProvider({ children }) {
   }
 
   const achievements = useMemo(
-  () => computeAchievements(invoices, goals, products, distributors, visits, retailVisits, monthRangeForPeriod(currentPeriod)),
-  [invoices, goals, products, distributors, visits, retailVisits, currentPeriod]
+  () => computeAchievements(invoices, goals, products, distributors, visits, retailVisits, retailOutlets, secondaryOrders, monthRangeForPeriod(currentPeriod)),
+  [invoices, goals, products, distributors, visits, retailVisits, retailOutlets, secondaryOrders, currentPeriod]
 )
 
   function showToast(msg, duration = 2800) {
@@ -95,6 +99,8 @@ export function DataProvider({ children }) {
       attendance, setAttendance, achievements,
       visits, setVisits,
       retailVisits, setRetailVisits,
+      retailOutlets, setRetailOutlets,
+      secondaryOrders, setSecondaryOrders,
       registrations, setRegistrations,
       loading, loadAll, toast, showToast,payments, setPayments,
       currentPeriod,

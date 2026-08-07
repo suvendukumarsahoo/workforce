@@ -96,6 +96,7 @@ const [allPayments, setAllPayments] = useState([])
       status: 'manager_approved_admin_pending', manager_id: mid, manager_approved_at: new Date().toISOString(),
     })
     if (error) { showToast('Error approving order'); setSubmitting(false); return }
+    db.logActivity(currentUser?.id, 'approve', 'order', `Manager-approved order #${selected.id} — ${selected.distributor?.name || selected.distributor_id}`, selected.id)
     await loadOrders(); await loadAll()
     setSubmitting(false); setSelected(null)
     showToast('Order approved — sent to Admin')
@@ -139,6 +140,7 @@ const [allPayments, setAllPayments] = useState([])
       status: 'confirmed', admin_confirmed_at: new Date().toISOString(),
     })
     if (error) { showToast('Error confirming order'); setSubmitting(false); return }
+    db.logActivity(currentUser?.id, 'approve', 'order', `Admin-confirmed order #${selected.id} — ${selected.distributor?.name || selected.distributor_id}`, selected.id)
     await loadOrders(); await loadAll()
     setSubmitting(false); setSelected(null)
     showToast('Order confirmed')
@@ -147,6 +149,7 @@ const advanceToPicking = async () => {
     setSubmitting(true)
     const { error } = await db.markSubmittedForPicking(selected.id)
     if (error) { showToast('Error updating'); setSubmitting(false); return }
+    db.logActivity(currentUser?.id, 'update', 'order', `Sent order #${selected.id} to picking — ${selected.distributor?.name || selected.distributor_id}`, selected.id)
     await loadOrders(); await loadAll()
     setSelected(s => ({ ...s, status: 'submitted_for_picking', submitted_for_picking_at: new Date().toISOString() }))
     setSubmitting(false)

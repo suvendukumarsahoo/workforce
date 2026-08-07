@@ -4,9 +4,34 @@ import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Btn, Inp, Sheet, F } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
 import { downloadSecondaryOrderPdf, downloadSecondaryOrdersBatch } from '../../lib/printSecondaryOrder.js'
+import { downloadDaySummaryPdf } from '../../lib/printDaySummary.js'
 import { availableUnitsForProduct, toBaseQty } from '../../lib/unitConversion.js'
+import { haversineMeters } from '../../lib/geo.js'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+// ~4 km/h on-foot estimate between nearby retail outlets — deliberately tentative (straight-line
+// haversine distance, no real routing/roads involved), same spirit as this app's other "tentative"
+// ETA figures (e.g. RouteMapSheet's OSRM estimate vs actual). Outlets missing lat/lng (geolocation
+// was denied when they were added) sort to the end with distance/ETA shown as unknown rather than
+// being dropped from the list — every remaining outlet stays choosable either way.
+const WALK_MPS = 4000 / 3600
+const distanceLabel = m => m == null ? 'Distance unknown' : m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`
+const etaLabel = m => m == null ? '' : `~${Math.max(1, Math.round(m / WALK_MPS / 60))} min`
+
+function sortOutletsByDistance(from, outlets) {
+  const withDist = (outlets || []).map(o => {
+    const hasCoords = from?.lat != null && from?.lng != null && o.lat != null && o.lng != null
+    const meters = hasCoords ? haversineMeters(from.lat, from.lng, o.lat, o.lng) : null
+    return { ...o, distanceMeters: meters }
+  })
+  return withDist.sort((a, b) => {
+    if (a.distanceMeters == null && b.distanceMeters == null) return 0
+    if (a.distanceMeters == null) return 1
+    if (b.distanceMeters == null) return -1
+    return a.distanceMeters - b.distanceMeters
+  })
+}
 
 // Soft-fail promise-wrapped geolocation — same pattern as NewCustomerVisit.jsx's getLocation().
 function getLocation() {
@@ -35,15 +60,30 @@ export default function DistributorSecondary() {
   const [tab, setTab] = useState('beats') // 'beats' | 'visit' | 'summary'
   const [beats, setBeats] = useState([])
   const [showCreateBeat, setShowCreateBeat] = useState(false)
+  // Distributor is the first thing a rep picks — beats are scoped underneath it, not mixed
+  // together across every distributor. Persists across tab switches (not reset on 'visit'/
+  // 'summary' navigation) so backing out of a beat/outlet returns to the same distributor's list;
+  // only the explicit "← Distributors" back action clears it.
+  const [selectedDistributor, setSelectedDistributor] = useState(null)
 
   const [activeBeat, setActiveBeat] = useState(null)
   const [outlets, setOutlets] = useState([])
   const [visitedToday, setVisitedToday] = useState({}) // { outlet_id: {outcome, ...} }
   const [showAddOutlet, setShowAddOutlet] = useState(false)
+  // After a visit is recorded, suggest nearby remaining outlets instead of auto-opening one —
+  // { from, options } | null.
+  const [nextOutletChoice, setNextOutletChoice] = useState(null)
   const [activeOutlet, setActiveOutlet] = useState(null)
 
   const [summaryVisits, setSummaryVisits] = useState(null)
   const [summaryOrders, setSummaryOrders] = useState(null)
+  const [daySummaryRecord, setDaySummaryRecord] = useState(null)
+
+  // Ongoing Orders — its own tab (before Day Summary), not a popup: today's not-yet-locked orders,
+  // Edit/Delete each, Retailing Complete at the bottom. editingOrder tracks an order reopened via
+  // Edit from that tab.
+  const [ongoingOrders, setOngoingOrders] = useState(null)
+  const [editingOrder, setEditingOrder] = useState(null)
 
   const myDistributors = (distributors || []).filter(d => (d.assignedTo || []).includes(mid) && d.type === 'Distributor')
 
@@ -74,41 +114,55 @@ export default function DistributorSecondary() {
 
   const loadSummary = async () => {
     setSummaryVisits(null); setSummaryOrders(null)
-    const [{ data: vis }, { data: ord }] = await Promise.all([
+    const [{ data: vis }, { data: ord }, { data: rec }] = await Promise.all([
       db.fetchRetailVisitsForDate(mid, todayStr()),
       db.fetchSecondaryOrdersForDate(mid, todayStr()),
+      db.fetchDaySummaryForDate(mid, todayStr()),
     ])
     setSummaryVisits(vis || [])
     setSummaryOrders(ord || [])
+    setDaySummaryRecord(rec || null)
   }
 
   const openSummary = () => { setTab('summary'); loadSummary() }
 
+  const loadOngoing = async () => {
+    setOngoingOrders(null)
+    const { data } = await db.fetchOngoingSecondaryOrders(mid, todayStr())
+    setOngoingOrders(data || [])
+  }
+  const openOngoing = () => { setTab('ongoing'); loadOngoing() }
+
   const afterVisitRecorded = async () => {
+    const completedOutlet = activeOutlet
     setActiveOutlet(null)
+    setEditingOrder(null)
     if (activeBeat) await loadOutletsAndStatus(activeBeat)
-    // auto-advance: open the next un-visited outlet in list order, if any
+    // No more auto-opening the next outlet — instead, suggest remaining outlets nearest-first
+    // (straight-line distance from the one just completed) and let the rep pick, same reasoning as
+    // "the next outlet is not necessarily the right one to walk into automatically."
     const { data: out } = await db.fetchOutletsForBeat(activeBeat.id)
     const { data: vis } = await db.fetchRetailVisitsForDate(mid, todayStr())
     const doneIds = new Set((vis || []).filter(v => v.beat_id === activeBeat.id).map(v => v.outlet_id))
-    const next = (out || []).find(o => !doneIds.has(o.id))
-    if (next) setActiveOutlet(next)
-    else showToast('All outlets in this beat are done for today')
+    const remaining = (out || []).filter(o => !doneIds.has(o.id))
+    if (remaining.length === 0) { showToast('All outlets in this beat are done for today'); return }
+    setNextOutletChoice({ from: completedOutlet, options: sortOutletsByDistance(completedOutlet, remaining) })
   }
 
   const TABS = [
     ['beats', 'Beats'],
     ...(activeBeat ? [['visit', activeBeat.name]] : []),
+    ['ongoing', 'Ongoing Orders'],
     ['summary', 'Day Summary'],
   ]
 
   return (
     <div>
-      {showCreateBeat && (
+      {showCreateBeat && selectedDistributor && (
         <CreateBeatSheet
-          distributors={myDistributors}
+          distributor={selectedDistributor}
           onSave={async (payload) => {
-            const { error } = await db.createBeat(payload.distributorId, payload.name, payload.coverageDays, mid)
+            const { error } = await db.createBeat(selectedDistributor.id, payload.name, payload.coverageDays, mid)
             if (error) { showToast('Error creating beat'); return }
             await loadBeats()
             setShowCreateBeat(false)
@@ -140,32 +194,64 @@ export default function DistributorSecondary() {
           products={products}
           categories={categories}
           showToast={showToast}
-          onClose={() => setActiveOutlet(null)}
+          existingOrder={editingOrder}
+          onClose={() => { setActiveOutlet(null); setEditingOrder(null) }}
           onDone={async () => { await afterVisitRecorded(); await loadAll() }}
+        />
+      )}
+
+      {nextOutletChoice && (
+        <NextOutletSheet
+          options={nextOutletChoice.options}
+          onSelect={(o) => { setActiveOutlet(o); setNextOutletChoice(null) }}
+          onClose={() => setNextOutletChoice(null)}
         />
       )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
         {TABS.map(([key, label]) => (
-          <button key={key} onClick={() => key === 'summary' ? openSummary() : setTab(key)}
+          <button key={key} onClick={() => key === 'summary' ? openSummary() : key === 'ongoing' ? openOngoing() : setTab(key)}
             style={{ padding: '7px 14px', borderRadius: 8, border: 'none', background: tab === key ? '#2563eb' : '#f3f4f6', color: tab === key ? '#fff' : '#374151', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
             {label}
           </button>
         ))}
       </div>
 
-      {tab === 'beats' && (
+      {tab === 'beats' && !selectedDistributor && (
         <>
+          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 10 }}>Select a distributor to see or create beats under them</div>
+          {myDistributors.length === 0 && <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}>No distributors assigned to you</div>}
+          {myDistributors.map(d => {
+            const count = beats.filter(b => b.distributor_id === d.id).length
+            return (
+              <Card key={d.id} onClick={() => setSelectedDistributor(d)}>
+                <div style={{ padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>{d.name}</span>
+                  <span style={{ fontSize: 11, color: '#9ca3af' }}>{count} beat{count === 1 ? '' : 's'}</span>
+                </div>
+              </Card>
+            )
+          })}
+        </>
+      )}
+
+      {tab === 'beats' && selectedDistributor && (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+            <button onClick={() => setSelectedDistributor(null)} style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0 }}>← Distributors</button>
+            <span style={{ fontSize: 12, fontWeight: 700 }}>{selectedDistributor.name}</span>
+          </div>
           <Btn v="pri" full onClick={() => setShowCreateBeat(true)} style={{ marginBottom: 12 }}>+ Create Beat</Btn>
-          {beats.length === 0 && <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}>No beats created yet</div>}
-          {beats.map(b => (
+          {beats.filter(b => b.distributor_id === selectedDistributor.id).length === 0 && (
+            <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}>No beats created yet under this distributor</div>
+          )}
+          {beats.filter(b => b.distributor_id === selectedDistributor.id).map(b => (
             <Card key={b.id} onClick={() => openBeat(b)}>
               <div style={{ padding: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontWeight: 600, fontSize: 13 }}>{b.name}</span>
                   <span style={{ fontSize: 11, color: '#9ca3af' }}>{b.id}</span>
                 </div>
-                <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{b.distributor?.name || b.distributor_id}</div>
                 <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>{(b.coverage_days || []).join(', ') || 'No coverage days set'}</div>
               </div>
             </Card>
@@ -196,8 +282,33 @@ export default function DistributorSecondary() {
         </>
       )}
 
+      {tab === 'ongoing' && (
+        <OngoingOrdersTab
+          mid={mid}
+          orders={ongoingOrders}
+          products={products}
+          showToast={showToast}
+          onRefresh={loadOngoing}
+          onEdit={(order) => {
+            const beat = beats.find(b => b.id === order.beat_id) || { id: order.beat_id, distributor_id: order.distributor_id }
+            setActiveBeat(beat)
+            setActiveOutlet(order.outlet ? { ...order.outlet, id: order.outlet_id } : { id: order.outlet_id })
+            setEditingOrder(order)
+          }}
+          onCancelled={async () => { await loadOngoing(); if (activeBeat) await loadOutletsAndStatus(activeBeat) }}
+          onRetailingComplete={async () => {
+            await loadOngoing()
+            if (activeBeat) await loadOutletsAndStatus(activeBeat)
+            await loadAll()
+            const { data: rec } = await db.fetchDaySummaryForDate(mid, todayStr())
+            setDaySummaryRecord(rec || null)
+          }}
+        />
+      )}
+
       {tab === 'summary' && (
         <DaySummary
+          daySummaryRecord={daySummaryRecord}
           visits={summaryVisits}
           orders={summaryOrders}
           products={products}
@@ -209,23 +320,14 @@ export default function DistributorSecondary() {
   )
 }
 
-function CreateBeatSheet({ distributors, onSave, onClose }) {
-  const [distributorId, setDistributorId] = useState('')
+function CreateBeatSheet({ distributor, onSave, onClose }) {
   const [name, setName] = useState('')
   const [coverageDays, setCoverageDays] = useState([])
 
   const toggleDay = d => setCoverageDays(prev => prev.includes(d) ? prev.filter(x => x !== d) : [...prev, d])
 
   return (
-    <Sheet title="Create Beat" sub="Under a distributor" onClose={onClose}>
-      <div style={{ marginBottom: 12 }}>
-        <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Distributor</label>
-        <select value={distributorId} onChange={e => setDistributorId(e.target.value)}
-          style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 13, fontFamily: 'inherit' }}>
-          <option value="">Select distributor...</option>
-          {distributors.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-        </select>
-      </div>
+    <Sheet title="Create Beat" sub={`Under ${distributor.name}`} onClose={onClose}>
       <Inp label="Beat Name" value={name} onChange={setName} placeholder="e.g. North Market Route" />
       <div style={{ marginBottom: 14 }}>
         <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>Coverage Days</label>
@@ -238,8 +340,8 @@ function CreateBeatSheet({ distributors, onSave, onClose }) {
           ))}
         </div>
       </div>
-      <Btn v="pri" full disabled={!distributorId || !name}
-        onClick={() => onSave({ distributorId, name, coverageDays })}>
+      <Btn v="pri" full disabled={!name}
+        onClick={() => onSave({ name, coverageDays })}>
         Save Beat
       </Btn>
     </Sheet>
@@ -259,12 +361,46 @@ function AddOutletSheet({ onSave, onClose }) {
   )
 }
 
-function ItemOrderSheet({ outlet, beat, mid, products, categories, showToast, onClose, onDone }) {
+// Shown right after a visit is recorded (order or no-order) instead of auto-opening the next
+// outlet — remaining outlets in the beat, nearest-first by straight-line distance from the one
+// just completed, each with a tentative walking ETA. Tapping any option opens it for ordering;
+// closing without picking just returns to the beat's own outlet list (still fully browsable there,
+// "choose any other outlet" per the ask).
+function NextOutletSheet({ options, onSelect, onClose }) {
+  return (
+    <Sheet title="Visit Recorded" sub="Nearest remaining outlets first" onClose={onClose} zIndex={330}>
+      {options.map(o => (
+        <Card key={o.id} onClick={() => onSelect(o)}>
+          <div style={{ padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: 13 }}>{o.name}</div>
+              <div style={{ fontSize: 11, color: '#9ca3af' }}>{o.id}{o.number ? ` · ${o.number}` : ''}</div>
+            </div>
+            <div style={{ textAlign: 'right', flexShrink: 0 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#2563eb' }}>{distanceLabel(o.distanceMeters)}</div>
+              <div style={{ fontSize: 11, color: '#9ca3af' }}>{etaLabel(o.distanceMeters)}</div>
+            </div>
+          </div>
+        </Card>
+      ))}
+    </Sheet>
+  )
+}
+
+function ItemOrderSheet({ outlet, beat, mid, products, categories, showToast, onClose, onDone, existingOrder }) {
   const [catFilter, setCatFilter] = useState('all')
-  const [cart, setCart] = useState({}) // { product_id: { qty, unit } }
+  // Pre-filled from existingOrder (Edit, from the Ongoing Orders sheet) when present — same
+  // { product_id: { qty, unit } } shape the rest of this component already works with.
+  const [cart, setCart] = useState(() => Object.fromEntries(
+    (existingOrder?.items || []).map(it => [it.product_id, { qty: it.entered_qty ?? it.qty, unit: it.entered_unit || 'base' }])
+  ))
   const [showNoOrder, setShowNoOrder] = useState(false)
   const [noOrderReason, setNoOrderReason] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // Tracks the saved-but-not-yet-locked order for this visit — null until the first successful
+  // save, after which re-checking-out updates that same order instead of creating a duplicate.
+  const [savedOrderId, setSavedOrderId] = useState(existingOrder?.id || null)
+  const [confirmData, setConfirmData] = useState(null) // { orderId, itemCount, total } | null
 
   const visibleProducts = (products || []).filter(p => catFilter === 'all' || p.category_id === catFilter)
   // Entries are kept (not deleted) at qty 0 so a unit picked before any + tap survives —
@@ -289,9 +425,21 @@ function ItemOrderSheet({ outlet, beat, mid, products, categories, showToast, on
     })
   const cartTotal = cartLines.reduce((s, l) => s + l.qty * l.rate, 0)
 
+  // Saves immediately (same DB write as before), but no longer closes/advances on success — instead
+  // shows a review dialog (order id/items/total, Edit or Confirm). Edit just closes the dialog and
+  // leaves the cart open for more changes; re-checking-out from there updates the same order
+  // (savedOrderId is already set) rather than creating a second one. Confirm is what actually moves
+  // on (see confirmDialog below).
   const checkout = async () => {
     if (cartLines.length === 0) { showToast('Add at least one item'); return }
     setSubmitting(true)
+    if (savedOrderId) {
+      const { error } = await db.updateSecondaryOrderItems(savedOrderId, cartLines)
+      setSubmitting(false)
+      if (error) { showToast('Error saving order'); return }
+      setConfirmData({ orderId: savedOrderId, itemCount: cartLines.length, total: cartTotal })
+      return
+    }
     const { data: order, error } = await db.createSecondaryOrder(
       { outlet_id: outlet.id, beat_id: beat.id, distributor_id: beat.distributor_id, member_id: mid },
       cartLines,
@@ -299,11 +447,17 @@ function ItemOrderSheet({ outlet, beat, mid, products, categories, showToast, on
     if (error) { showToast('Error saving order'); setSubmitting(false); return }
     const { error: visitError } = await db.createRetailVisit({
       beat_id: beat.id, outlet_id: outlet.id, member_id: mid, outcome: 'order', order_id: order.id,
+      // Explicit local calendar date rather than relying on the DB's `default current_date` —
+      // that resolves in the database session's own timezone (commonly UTC), which can land a
+      // late-night/early-morning IST visit on the wrong day relative to every query here that
+      // filters by this file's own local todayStr() (same bug class just fixed for order_date
+      // in db.createSecondaryOrder).
+      visit_date: todayStr(),
     })
     setSubmitting(false)
     if (visitError) { showToast('Order saved, but visit log failed'); }
-    showToast('Order confirmed')
-    onDone()
+    setSavedOrderId(order.id)
+    setConfirmData({ orderId: order.id, itemCount: cartLines.length, total: cartTotal })
   }
 
   const confirmNoOrder = async () => {
@@ -311,6 +465,7 @@ function ItemOrderSheet({ outlet, beat, mid, products, categories, showToast, on
     setSubmitting(true)
     const { error } = await db.createRetailVisit({
       beat_id: beat.id, outlet_id: outlet.id, member_id: mid, outcome: 'no_order', no_order_reason: noOrderReason,
+      visit_date: todayStr(), // same UTC-default fix as the 'order' outcome above
     })
     setSubmitting(false)
     if (error) { showToast('Error saving'); return }
@@ -374,18 +529,159 @@ function ItemOrderSheet({ outlet, beat, mid, products, categories, showToast, on
               <span style={{ fontWeight: 700 }}>{F(cartTotal)}</span>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Btn v="pri" full disabled={submitting} onClick={checkout}>Checkout & Confirm</Btn>
-              <Btn full disabled={submitting} onClick={() => setShowNoOrder(true)}>No Order</Btn>
+              <Btn v="pri" full disabled={submitting} onClick={checkout}>{savedOrderId ? 'Save Changes' : 'Checkout'}</Btn>
+              {!savedOrderId && <Btn full disabled={submitting} onClick={() => setShowNoOrder(true)}>No Order</Btn>}
             </div>
           </div>
         </>
+      )}
+
+      {confirmData && (
+        <div onClick={e => e.stopPropagation()} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ background: '#fff', borderRadius: 14, padding: 22, maxWidth: 340, width: '100%' }}>
+            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>Order Saved</div>
+            <div style={{ fontSize: 13, color: '#374151', marginBottom: 6 }}>Order ID: <strong>{confirmData.orderId}</strong></div>
+            <div style={{ fontSize: 13, color: '#374151', marginBottom: 6 }}>Items: <strong>{confirmData.itemCount}</strong></div>
+            <div style={{ fontSize: 13, color: '#374151', marginBottom: 16 }}>Total Value: <strong>{F(confirmData.total)}</strong></div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Btn v="pri" full onClick={() => { setConfirmData(null); onDone() }}>Confirm</Btn>
+              <Btn full onClick={() => setConfirmData(null)}>Edit</Btn>
+            </div>
+          </div>
+        </div>
       )}
     </Sheet>
   )
 }
 
-function DaySummary({ visits, orders, products, onRefresh, showToast }) {
+// Its own tab, positioned right before Day Summary — today's not-yet-locked, not-cancelled orders,
+// with Edit/Delete per row, and the one-time "Retailing Complete" action at the bottom. Data is
+// fetched by the parent (loadOngoing, mirroring loadSummary's existing pattern) and passed in as
+// `orders`, so switching to this tab always shows a fresh list rather than a stale mount-time fetch.
+function OngoingOrdersTab({ mid, orders, products, showToast, onRefresh, onEdit, onCancelled, onRetailingComplete }) {
+  const [cancellingId, setCancellingId] = useState(null)
+  const [showComplete, setShowComplete] = useState(false)
+
+  const orderValue = o => (o.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
+
+  // "Delete" in the UI — soft-cancel underneath (matches this app's existing convention, e.g.
+  // distributor_order_items.cancelled, and keeps an audit trail) rather than a hard delete.
+  const deleteOrder = async (order) => {
+    setCancellingId(order.id)
+    const { error } = await db.cancelSecondaryOrder(order.id)
+    setCancellingId(null)
+    if (error) { showToast('Error deleting order'); return }
+    showToast('Order deleted')
+    await onCancelled()
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: '#6b7280' }}>Today — not yet locked</div>
+        <Btn sm onClick={onRefresh}>↻ Refresh</Btn>
+      </div>
+
+      {orders === null && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>Loading...</div>}
+      {orders !== null && orders.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No ongoing orders today</div>}
+      {(orders || []).map(o => (
+        <Card key={o.id}>
+          <div style={{ padding: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{o.outlet?.name || o.outlet_id}</div>
+                <div style={{ fontSize: 11, color: '#9ca3af' }}>{o.id} · {(o.items || []).length} item(s) · {F(orderValue(o))}</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Btn sm onClick={() => onEdit(o)}>✏️ Edit</Btn>
+              <Btn sm v="bad" disabled={cancellingId === o.id} onClick={() => deleteOrder(o)}>{cancellingId === o.id ? 'Deleting...' : '🗑️ Delete'}</Btn>
+            </div>
+          </div>
+        </Card>
+      ))}
+
+      <Btn v="pri" full disabled={!orders || orders.length === 0} style={{ marginTop: 14 }} onClick={() => setShowComplete(true)}>
+        Retailing Complete
+      </Btn>
+
+      {showComplete && (
+        <RetailingCompleteDialog
+          mid={mid}
+          orders={orders || []}
+          products={products}
+          showToast={showToast}
+          onCancel={() => setShowComplete(false)}
+          onConfirmed={async () => { setShowComplete(false); await onRetailingComplete() }}
+        />
+      )}
+    </div>
+  )
+}
+
+function RetailingCompleteDialog({ mid, orders, products, showToast, onCancel, onConfirmed }) {
+  const [submitting, setSubmitting] = useState(false)
+  const [summary, setSummary] = useState(null) // set once created — switches this dialog to its success/download state
+  const total = orders.reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0), 0)
   const productName = pid => (products || []).find(p => p.id === pid)?.name || pid
+
+  const confirm = async () => {
+    setSubmitting(true)
+    const { error } = await db.lockSecondaryOrdersForDate(mid, todayStr())
+    if (error) { setSubmitting(false); showToast('Error completing retailing'); return }
+    const { data: visits } = await db.fetchRetailVisitsForDate(mid, todayStr())
+    const outletsVisited = new Set((visits || []).map(v => v.outlet_id)).size
+    const { data: daySummary, error: summaryError } = await db.createDaySummary(mid, todayStr(), {
+      outletsVisited, orders: orders.length, value: total,
+    })
+    setSubmitting(false)
+    if (summaryError) { showToast('Retailing complete, but summary record failed'); onConfirmed(); return }
+    showToast('Retailing complete — orders locked')
+    setSummary({ record: daySummary, visits: visits || [] })
+  }
+
+  const download = () => {
+    downloadDaySummaryPdf({ summary: summary.record, visits: summary.visits, orders, productName })
+  }
+
+  if (summary) {
+    return (
+      <div onClick={e => e.stopPropagation()} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 360, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+        <div style={{ background: '#fff', borderRadius: 14, padding: 22, maxWidth: 340, width: '100%' }}>
+          <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>✓ Retailing Complete</div>
+          <div style={{ fontSize: 13, color: '#374151', marginBottom: 6 }}>Summary ID: <strong>{summary.record.id}</strong></div>
+          <div style={{ fontSize: 13, color: '#374151', marginBottom: 16 }}>Generated: <strong>{new Date(summary.record.created_at).toLocaleString('en-IN')}</strong></div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Btn v="pri" full onClick={download}>⬇ Download Summary</Btn>
+            <Btn full onClick={onConfirmed}>Done</Btn>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div onClick={e => e.stopPropagation()} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 360, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+      <div style={{ background: '#fff', borderRadius: 14, padding: 22, maxWidth: 340, width: '100%' }}>
+        <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 12 }}>Complete Retailing for Today?</div>
+        <div style={{ fontSize: 13, color: '#374151', marginBottom: 6 }}>Orders: <strong>{orders.length}</strong></div>
+        <div style={{ fontSize: 13, color: '#374151', marginBottom: 16 }}>Total Value: <strong>{F(total)}</strong></div>
+        <div style={{ fontSize: 11, color: '#9ca3af', marginBottom: 16 }}>Once confirmed, today's orders are locked and can no longer be edited or cancelled.</div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Btn v="pri" full disabled={submitting} onClick={confirm}>{submitting ? 'Locking...' : 'Confirm'}</Btn>
+          <Btn full disabled={submitting} onClick={onCancel}>Cancel</Btn>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DaySummary({ daySummaryRecord, visits, orders, products, onRefresh, showToast }) {
+  const productName = pid => (products || []).find(p => p.id === pid)?.name || pid
+
+  const downloadSummary = () => {
+    downloadDaySummaryPdf({ summary: daySummaryRecord, visits, orders, productName })
+  }
 
   if (visits === null) return <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}>Loading...</div>
 
@@ -412,6 +708,16 @@ function DaySummary({ visits, orders, products, onRefresh, showToast }) {
 
   return (
     <div>
+      {daySummaryRecord && (
+        <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 10, padding: '10px 14px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#065f46' }}>✓ Retailing Complete — {daySummaryRecord.id}</div>
+            <div style={{ fontSize: 11, color: '#047857' }}>Generated {new Date(daySummaryRecord.created_at).toLocaleString('en-IN')}</div>
+          </div>
+          <Btn sm v="pri" onClick={downloadSummary}>⬇ Download Summary</Btn>
+        </div>
+      )}
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div style={{ fontSize: 12, color: '#6b7280' }}>{visits.length} outlet(s) visited today</div>
         <Btn sm onClick={onRefresh}>↻ Refresh</Btn>

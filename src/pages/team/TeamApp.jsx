@@ -31,7 +31,7 @@ const timeAgo = (isoDate) => {
 
 export default function TeamApp() {
   const { currentUser, logout, hasMenu } = useAuth()
-  const { params, goals, setGoals, achievements, expenses, setExpenses, salaries, products, categories, distributors: customers, visits, payments, invoices, showToast, loadAll, currentPeriod } = useData()
+  const { params, goals, setGoals, achievements, expenses, setExpenses, salaries, products, categories, distributors: customers, visits, payments, invoices, showToast, loadAll, currentPeriod, retailOutlets, secondaryOrders, retailVisits } = useData()
   const [tab, setTab]           = useState('dashboard')
   const [showGoalEntry, setShowGoalEntry] = useState(false)
   const [showExpForm, setShowExpForm]     = useState(false)
@@ -61,6 +61,10 @@ const hasRejected   = overallStatus === 'partial' || overallStatus === 'rejected
 const hasNewParam   = (p.enable_value && !g.value_status) ||
   (p.enable_visits && !g.visits_status) ||
   (p.enable_acq && !g.acq_status) ||
+  (p.enable_new_outlets && !g.new_outlets_status) ||
+  (p.enable_productive_outlets && !g.productive_outlets_status) ||
+  (p.enable_secondary_orders && !g.secondary_orders_status) ||
+  (p.enable_secondary_value && !g.secondary_value_status) ||
   (p.enable_products && (p.sel_prods || []).some(id => !(g.products || {})[id])) ||
   (p.enable_categories && (p.sel_cats || []).some(id => !(g.categories || {})[id])) ||
   (p.enable_customers && (p.sel_custs || []).some(id => !(g.customers || {})[id]))
@@ -80,6 +84,11 @@ const canEnter      = overallStatus === 'draft' || hasRejected || hasNewParam
   // and stays all-time regardless of the tab.
   const myVisits = (visits || []).filter(v => v.member_id === mid)
   const myLeads = (customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.lead_stage)
+  // Distributor Secondary raw records, same as-is-passthrough pattern as myVisits/myLeads above —
+  // TeamSnapshot scopes them by its own Today/Month/Year tab.
+  const myOutlets = (retailOutlets || []).filter(o => String(o.created_by) === String(mid))
+  const mySecondaryOrders = (secondaryOrders || []).filter(o => String(o.member_id) === String(mid))
+  const myRetailVisits = (retailVisits || []).filter(v => String(v.member_id) === String(mid))
 
   const submitGoal = async (memberId, draft) => {
     const existing = (goals || {})[memberId] || {}
@@ -92,11 +101,22 @@ const canEnter      = overallStatus === 'draft' || hasRejected || hasNewParam
       if (newVal === oldVal && existingField?.status) return existingField
       return { goal: newVal, status: 'pending' }
     }
-    
+    // Same NaN-safe comparison as mergeFieldStatus above, for the scalar goal fields (value/visits/
+    // acq/the 4 Distributor Secondary fields). These used to compare `Number(draft.x?.goal) !==
+    // Number(existing.x_goal)` directly — when a field was left untouched, draft.x?.goal is
+    // undefined, Number(undefined) is NaN, and NaN !== anything is always true, so every untouched
+    // scalar field silently flipped back to 'pending' on every resubmission (even ones the member
+    // never touched, and even when its value hadn't actually changed).
+    const scalarStatus = (newGoal, existingGoal, existingStatus) => {
+      const newVal = Number(newGoal) || 0
+      const oldVal = Number(existingGoal) || 0
+      return newVal !== oldVal ? 'pending' : (existingStatus || 'pending')
+    }
+
     const updated  = {
       ...existing,
       value_goal:   Number(draft.value?.goal) || existing.value_goal,
-      value_status: Number(draft.value?.goal) !== Number(existing.value_goal) ? 'pending' : (existing.value_status || 'pending'),
+      value_status: scalarStatus(draft.value?.goal, existing.value_goal, existing.value_status),
       // "Other Distributors" (`__other__`) is auto-derived and never goes through the normal
       // pending/approved/rejected per-field cycle — it has no `.status` of its own, everywhere that
       // reads its approval checks `value_status` instead (see achievementEngine.js/
@@ -107,9 +127,17 @@ const canEnter      = overallStatus === 'draft' || hasRejected || hasNewParam
       products:     { ...(existing.products || {}),  ...Object.fromEntries(Object.entries(draft.prods || {}).map(([id, v]) => [id, mergeFieldStatus(v.goal, existing.value_goal, (existing.products || {})[id])])) },
       categories:   { ...(existing.categories || {}), ...Object.fromEntries(Object.entries(draft.cats || {}).map(([id, v]) => [id, mergeFieldStatus(v.goal, existing.value_goal, (existing.categories || {})[id])])) },
       visits_goal:  Number(draft.visits?.goal) || existing.visits_goal,
-      visits_status: Number(draft.visits?.goal) !== Number(existing.visits_goal) ? 'pending' : (existing.visits_status || 'pending'),
+      visits_status: scalarStatus(draft.visits?.goal, existing.visits_goal, existing.visits_status),
       acq_goal:     Number(draft.acq?.goal)    || existing.acq_goal,
-      acq_status:   Number(draft.acq?.goal) !== Number(existing.acq_goal) ? 'pending' : (existing.acq_status || 'pending'),
+      acq_status:   scalarStatus(draft.acq?.goal, existing.acq_goal, existing.acq_status),
+      new_outlets_goal: Number(draft.new_outlets?.goal) || existing.new_outlets_goal,
+      new_outlets_status: scalarStatus(draft.new_outlets?.goal, existing.new_outlets_goal, existing.new_outlets_status),
+      productive_outlets_goal: Number(draft.productive_outlets?.goal) || existing.productive_outlets_goal,
+      productive_outlets_status: scalarStatus(draft.productive_outlets?.goal, existing.productive_outlets_goal, existing.productive_outlets_status),
+      secondary_orders_goal: Number(draft.secondary_orders?.goal) || existing.secondary_orders_goal,
+      secondary_orders_status: scalarStatus(draft.secondary_orders?.goal, existing.secondary_orders_goal, existing.secondary_orders_status),
+      secondary_value_goal: Number(draft.secondary_value?.goal) || existing.secondary_value_goal,
+      secondary_value_status: scalarStatus(draft.secondary_value?.goal, existing.secondary_value_goal, existing.secondary_value_status),
       submitted_at: now,
       status:       'pending',
     }
@@ -245,6 +273,9 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
               myVisits={myVisits}
               myLeads={myLeads}
               onSelectStage={setSelectedStage}
+              myOutlets={myOutlets}
+              mySecondaryOrders={mySecondaryOrders}
+              myRetailVisits={myRetailVisits}
             />
 {selectedStage && (
               <LeadListSheet
@@ -418,16 +449,66 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
               </Card>
             )}
 
-            {/* Outlet visits goal */}
+            {/* New Customer Visits goal */}
             {p.enable_visits && g.visits_goal > 0 && (
               <Card>
                 <div style={{ padding: 12 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>Outlet Visits</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>New Customer Visits</span>
                     <GBadge status={g.visits_status || 'draft'} />
                   </div>
                   <div style={{ fontSize: 12, color: '#6b7280' }}>Goal: {g.visits_goal}</div>
                   {g.visits_status === 'rejected' && <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>❌ {g.visits_note}</div>}
+                </div>
+              </Card>
+            )}
+
+            {/* Distributor Secondary goals */}
+            {p.enable_new_outlets && g.new_outlets_goal > 0 && (
+              <Card>
+                <div style={{ padding: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>New Outlets</span>
+                    <GBadge status={g.new_outlets_status || 'draft'} />
+                  </div>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>Goal: {g.new_outlets_goal}</div>
+                  {g.new_outlets_status === 'rejected' && <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>❌ {g.new_outlets_note}</div>}
+                </div>
+              </Card>
+            )}
+            {p.enable_productive_outlets && g.productive_outlets_goal > 0 && (
+              <Card>
+                <div style={{ padding: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>Productive Outlets</span>
+                    <GBadge status={g.productive_outlets_status || 'draft'} />
+                  </div>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>Goal: {g.productive_outlets_goal}</div>
+                  {g.productive_outlets_status === 'rejected' && <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>❌ {g.productive_outlets_note}</div>}
+                </div>
+              </Card>
+            )}
+            {p.enable_secondary_orders && g.secondary_orders_goal > 0 && (
+              <Card>
+                <div style={{ padding: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>Total No. of Orders</span>
+                    <GBadge status={g.secondary_orders_status || 'draft'} />
+                  </div>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>Goal: {g.secondary_orders_goal}</div>
+                  {g.secondary_orders_status === 'rejected' && <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>❌ {g.secondary_orders_note}</div>}
+                </div>
+              </Card>
+            )}
+            {p.enable_secondary_value && g.secondary_value_goal > 0 && (
+              <Card>
+                <div style={{ padding: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>Secondary Value</span>
+                    <GBadge status={g.secondary_value_status || 'draft'} />
+                  </div>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>Goal: {F(g.secondary_value_goal)}</div>
+                  {g.secondary_value_status === 'rejected' && <div style={{ fontSize: 11, color: '#991b1b', marginTop: 4 }}>❌ {g.secondary_value_note}</div>}
                 </div>
               </Card>
             )}
@@ -568,6 +649,10 @@ function GoalEntrySheet({ member, param, goal, period, products, categories, cus
       cats:   Object.fromEntries((param.sel_cats  || []).map(id => [id, { goal: get(`cat_${id}`,  (g.categories||{})[id]?.goal)}])),
       visits: { goal: get('visits', g.visits_goal) },
       acq:    { goal: get('acq',    g.acq_goal)    },
+      new_outlets:        { goal: get('new_outlets',        g.new_outlets_goal) },
+      productive_outlets: { goal: get('productive_outlets', g.productive_outlets_goal) },
+      secondary_orders:   { goal: get('secondary_orders',   g.secondary_orders_goal) },
+      secondary_value:    { goal: get('secondary_value',    g.secondary_value_goal) },
     }
     if (param.enable_value) {
       const valueGoal = Number(draft.value.goal) || 0
@@ -614,12 +699,28 @@ function GoalEntrySheet({ member, param, goal, period, products, categories, cus
       })}
 
       {param.enable_visits && (
-        <StableInp label="Outlet visits goal" fieldKey="visits" defaultVal={g.visits_goal} fg={{ status: g.visits_status, note: g.visits_note }} />
+        <StableInp label="New Customer Visits goal" fieldKey="visits" defaultVal={g.visits_goal} fg={{ status: g.visits_status, note: g.visits_note }} />
       )}
 
       {param.enable_acq && (
 <StableInp label="Distributor Creation goal" fieldKey="acq" defaultVal={g.acq_goal} fg={{ status: g.acq_status, note: g.acq_note }} />
 )}
+
+      {(param.enable_new_outlets || param.enable_productive_outlets || param.enable_secondary_orders || param.enable_secondary_value) && (
+        <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '.04em', margin: '14px 0 6px' }}>Distributor Secondary</div>
+      )}
+      {param.enable_new_outlets && (
+        <StableInp label="New Outlets goal" fieldKey="new_outlets" defaultVal={g.new_outlets_goal} fg={{ status: g.new_outlets_status, note: g.new_outlets_note }} />
+      )}
+      {param.enable_productive_outlets && (
+        <StableInp label="Productive Outlets goal" fieldKey="productive_outlets" defaultVal={g.productive_outlets_goal} fg={{ status: g.productive_outlets_status, note: g.productive_outlets_note }} />
+      )}
+      {param.enable_secondary_orders && (
+        <StableInp label="Total No. of Orders goal" fieldKey="secondary_orders" defaultVal={g.secondary_orders_goal} fg={{ status: g.secondary_orders_status, note: g.secondary_orders_note }} />
+      )}
+      {param.enable_secondary_value && (
+        <StableInp label="Value goal (₹)" fieldKey="secondary_value" defaultVal={g.secondary_value_goal} fg={{ status: g.secondary_value_status, note: g.secondary_value_note }} />
+      )}
 
       {error && <div style={{ fontSize: 12, color: '#991b1b', marginBottom: 10, background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: 10 }}>{error}</div>}
       <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Btn, Sheet, F, Inp } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
@@ -8,6 +9,7 @@ import { bearing, angularDiff } from '../../lib/geo.js'
 const statusLabel = (s) => s === 'waiting_driver_acceptance' ? 'Waiting Driver Acceptance' : s
 
 export default function LoadCreatedList() {
+  const { currentUser } = useAuth()
   const { showToast } = useData()
   const [loads, setLoads] = useState([])
   const [loaded, setLoaded] = useState(false)
@@ -98,6 +100,8 @@ const directionWarning = () => {
     const { error } = await db.allocateVehicle(selectedIds, pickVehicle, pickWarehouse, pickDriver)
     setBusy(false)
     if (error) { showToast('Error allocating vehicle'); return }
+    const vehicleLabel = vehicles.find(v => v.id === pickVehicle)?.vehicle_number || pickVehicle
+    db.logActivity(currentUser?.id, 'update', 'allocation', `Allocated vehicle ${vehicleLabel} to ${selectedIds.length} load(s)`, pickVehicle)
     const fresh = await loadLoads()
     const justAllocated = fresh.find(l => selectedIds.includes(l.id) && l.allocation_id)
     setAllocating(false)
@@ -109,6 +113,7 @@ const deallocate = async (allocationId) => {
     if (!window.confirm('Deallocate this vehicle? Loads will return to the unallocated list.')) return
     const { error } = await db.deallocateVehicle(allocationId)
     if (error) { showToast('Error deallocating'); return }
+    db.logActivity(currentUser?.id, 'update', 'allocation', `Deallocated vehicle allocation ${allocationId}`, allocationId)
     await loadLoads()
     showToast('Vehicle deallocated')
   }

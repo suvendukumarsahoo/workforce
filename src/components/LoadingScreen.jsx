@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
+import { useAuth } from '../hooks/useAuth.jsx'
 import { Sheet, Card, CH, Btn, Inp } from './ui.jsx'
 import * as db from '../lib/db.js'
 
 export default function LoadingScreen({ allocation, products, onClose, onAllComplete }) {
+      const { currentUser } = useAuth()
       const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
   const [stopIndex, setStopIndex] = useState(allocation.current_stop_index || 0)
@@ -101,6 +103,7 @@ export default function LoadingScreen({ allocation, products, onClose, onAllComp
         const nextIndex = stopIndex + 1
         if (nextIndex >= stopSequence.length) {
           await db.markLoadingComplete(allocation.id)
+          db.logActivity(currentUser?.id, 'update', 'allocation', `Loading complete — allocation #${allocation.id}`, allocation.id)
           const distNames = orders.map(o => o.distributor?.name).filter(Boolean).join(', ')
           await db.createNotification({
             target_roles: ['r1', 'r3'],
