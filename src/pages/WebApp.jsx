@@ -38,6 +38,7 @@ import JourneyApprovals from './admin/JourneyApprovals.jsx'
 import StockUpdate from './shared/StockUpdate.jsx'
 import ProductionIssues from './shared/ProductionIssues.jsx'
 import DistributorPresenceMap from './shared/DistributorPresenceMap.jsx'
+import DistributorSecondaryReport from './shared/DistributorSecondaryReport.jsx'
 
 const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard',        icon:'📊', sec:'Overview'  },
@@ -71,6 +72,7 @@ const ALL_MENUS = [
 { id:'vehicleLiveMap', label:'Live Tracking', icon:'📍', sec:'Distributor Functions' },
 { id:'geoBusinessView', label:'Geographical Business View', icon:'🗺️', sec:'Distributor Functions' },
 { id:'journeyApprovals', label:'Journey Approvals', icon:'🏁', sec:'Distributor Functions' },
+{ id:'distributorSecondaryReport', label:'Distributor Secondary Report', icon:'📈', sec:'Distributor Functions' },
 { id:'assignedLoads', label:'My Loads', icon:'🚚', sec:'Overview' },
 { id:'driverLoadingConfirm', label:'Confirm Loading', icon:'📦', sec:'Overview' },
 { id:'driverJourney', label:'Journey', icon:'🧭', sec:'Overview' },
@@ -105,6 +107,7 @@ loadCreatedList: LoadCreatedList,
 vehicleLiveMap: VehicleLiveMap,
 geoBusinessView: DistributorPresenceMap,
 journeyApprovals: JourneyApprovals,
+distributorSecondaryReport: DistributorSecondaryReport,
 stockUpdate: StockUpdate,
 productionIssues: ProductionIssues,
 assignedLoads: AssignedLoads,
@@ -121,6 +124,10 @@ export default function WebApp() {
   // First allowed menu is the default page
   const allowedMenus = ALL_MENUS.filter(m => hasMenu(m.id))
   const [nav, setNav] = useState(allowedMenus[0]?.id || 'dashboard')
+  // Optional payload alongside a navigation — e.g. DistributorSecondaryReport reads this to
+  // pre-fill/lock its date range when reached via a dashboard's "View Report" click-through rather
+  // than a direct sidebar click. A plain sidebar click passes no params, clearing any stale ones.
+  const [navParams, setNavParams] = useState(null)
 
   const pendingGoals = Object.values(goals  || {}).filter(g => g.status === 'pending' || g.status === 'partial').length
   const pendingExp   = (expenses || []).filter(e => e.status === 'pending').length
@@ -129,7 +136,7 @@ export default function WebApp() {
 
   const sections = [...new Set(allowedMenus.map(m => m.sec))]
 
-  const goTo = id => { setNav(id); setSideOpen(false) }
+  const goTo = (id, params = null) => { setNav(id); setNavParams(params); setSideOpen(false) }
 
   const SideContent = () => (
     <>
@@ -206,7 +213,7 @@ export default function WebApp() {
 
         {/* Page content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
-          <PageComponent onNavigate={goTo} />
+          <PageComponent onNavigate={goTo} navParams={navParams} />
         </div>
 
         {/* Bottom tab bar */}
@@ -271,7 +278,7 @@ export default function WebApp() {
 
         {/* Page content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: 16 }}>
-          <PageComponent onNavigate={goTo} />
+          <PageComponent onNavigate={goTo} navParams={navParams} />
         </div>
       </div>
 

@@ -100,7 +100,9 @@ function StatTile({ label, value, bg }) {
 
 const IN_PROGRESS_STAGES = ['final_pending', 'registration_pending', 'documents_submitted', 'documentation_verification', 'payment_pending', 'payment_verification']
 
-export default function TeamSnapshot({ mid, invoices, customers, myAgg, periodTab, setPeriodTab, currentPeriod, myVisits, myLeads, onSelectStage, myOutlets, mySecondaryOrders, myRetailVisits }) {
+const isoDate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+export default function TeamSnapshot({ mid, invoices, customers, myAgg, periodTab, setPeriodTab, currentPeriod, myVisits, myLeads, onSelectStage, myOutlets, mySecondaryOrders, myRetailVisits, onOpenSecondaryReport }) {
   const [tab, setTab] = useState('month')
 
   const now = new Date()
@@ -189,7 +191,15 @@ export default function TeamSnapshot({ mid, invoices, customers, myAgg, periodTa
         <StatTile label="Avg Open Lead Age" value={`${avgOpenAgeDays}d`} bg="#0d9488" />
       </div>
 
-      <div style={labelStyle}>Distributor Secondary — {tabLabel}</div>
+      <div style={{ ...labelStyle, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <span>Distributor Secondary — {tabLabel}</span>
+        {onOpenSecondaryReport && (
+          <button onClick={() => onOpenSecondaryReport({ from: isoDate(range.from), to: isoDate(range.to) })}
+            style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: 11, fontWeight: 700, cursor: 'pointer', textTransform: 'none' }}>
+            View Report →
+          </button>
+        )}
+      </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
         <StatTile label="New Outlets" value={newOutletsCount} bg="#0ea5e9" />
         <StatTile label="Productive Outlets" value={productiveOutletsCount} bg="#10b981" />

@@ -13,6 +13,7 @@ import DocumentSubmitWizard from '../shared/DocumentSubmitWizard.jsx'
 import PaymentEntryForm from '../shared/PaymentEntryForm.jsx'
 import DistributorOrder from '../shared/DistributorOrder.jsx'
 import DistributorSecondary from '../shared/DistributorSecondary.jsx'
+import DistributorSecondaryReport from '../shared/DistributorSecondaryReport.jsx'
 import OrderStatus from '../shared/OrderStatus.jsx'
 
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
@@ -33,6 +34,11 @@ export default function TeamApp() {
   const { currentUser, logout, hasMenu } = useAuth()
   const { params, goals, setGoals, achievements, expenses, setExpenses, salaries, products, categories, distributors: customers, visits, payments, invoices, showToast, loadAll, currentPeriod, retailOutlets, secondaryOrders, retailVisits } = useData()
   const [tab, setTab]           = useState('dashboard')
+  // Payload for DistributorSecondaryReport when reached via TeamSnapshot's "View Report" link
+  // (pre-fills its date range to match whatever Today/Month/Year tab was active there) — this
+  // shell has no generic onNavigate(id, params) the way WebApp.jsx does, so it's a plain local
+  // state + callback instead.
+  const [reportParams, setReportParams] = useState(null)
   const [showGoalEntry, setShowGoalEntry] = useState(false)
   const [showExpForm, setShowExpForm]     = useState(false)
   const [expForm, setExpForm]             = useState({ cat: 'Travel', desc: '', amt: '' })
@@ -201,6 +207,7 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
   hasMenu('orderStatus') && { id: 'orderStatus', icon: '📊', label: 'Order Status' },
   hasMenu('distributorOrder') && { id: 'distributorOrder', icon: '🛒', label: 'Distributor Order' },
   hasMenu('distributorSecondary') && { id: 'distributorSecondary', icon: '🏪', label: 'Distributor Secondary' },
+  hasMenu('distributorSecondaryReport') && { id: 'distributorSecondaryReport', icon: '📈', label: 'Secondary Order Report' },
 ].filter(Boolean)
   const TABS = [
     hasMenu('dashboard')    && { id: 'dashboard',    icon: '🏠', label: 'Home'     },
@@ -276,6 +283,7 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
               myOutlets={myOutlets}
               mySecondaryOrders={mySecondaryOrders}
               myRetailVisits={myRetailVisits}
+              onOpenSecondaryReport={(params) => { setReportParams(params); setTab('distributorSecondaryReport') }}
             />
 {selectedStage && (
               <LeadListSheet
@@ -571,6 +579,7 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
         {tab === 'newCustomerVisit' && <NewCustomerVisit />}
         {tab === 'distributorOrder' && <DistributorOrder />}
         {tab === 'distributorSecondary' && <DistributorSecondary />}
+        {tab === 'distributorSecondaryReport' && <DistributorSecondaryReport navParams={reportParams} />}
         {tab === 'orderStatus' && <OrderStatus />}
         {tab === 'pendingVisits' && (
           <Card>

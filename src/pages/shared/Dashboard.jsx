@@ -192,6 +192,7 @@ leads={(customers || []).filter(d => d.lead_stage &&
           <DistributorSecondarySection
             memberIds={(members || []).map(m => m.id)}
             retailOutlets={retailOutlets} secondaryOrders={secondaryOrders} retailVisits={retailVisits}
+            onNavigate={onNavigate}
           />
 
           <SectionHeader icon="🏭" title="Warehouse" />
@@ -214,6 +215,7 @@ leads={(customers || []).filter(d => d.lead_stage &&
           <DistributorSecondarySection
             memberIds={membersByManager(currentUser?.id).map(m => m.id)}
             retailOutlets={retailOutlets} secondaryOrders={secondaryOrders} retailVisits={retailVisits}
+            onNavigate={onNavigate}
           />
         </>
       )}
@@ -243,7 +245,9 @@ function isToday(iso) {
 // not a mix of two different concepts.
 const DS_TABS = [['today', 'Today'], ['month', 'This Month'], ['year', 'This Year']]
 
-function DistributorSecondarySection({ memberIds, retailOutlets, secondaryOrders, retailVisits }) {
+const isoDate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+function DistributorSecondarySection({ memberIds, retailOutlets, secondaryOrders, retailVisits, onNavigate }) {
   const [tab, setTab] = useState('month')
   const range = rangeForTab(tab, new Date())
   const inRange = iso => { if (!iso) return false; const d = new Date(iso); return d >= range.from && d <= range.to }
@@ -270,6 +274,9 @@ function DistributorSecondarySection({ memberIds, retailOutlets, secondaryOrders
         <DarkStat icon="🧾" label={`Total No. of Orders — ${DS_TABS.find(([k]) => k === tab)[1]}`} value={totalOrdersCount} color="#fbbf24" />
         <DarkStat icon="💰" label={`Value — ${DS_TABS.find(([k]) => k === tab)[1]}`} value={F(secondaryValueSum)} color="#a78bfa" />
       </div>
+      {onNavigate && (
+        <DarkFooterLinks links={[['View Report', () => onNavigate('distributorSecondaryReport', { from: isoDate(range.from), to: isoDate(range.to) })]]} />
+      )}
     </div>
   )
 }

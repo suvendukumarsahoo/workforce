@@ -51,7 +51,7 @@ const tdStyle = { padding: '9px 10px', fontSize: 12, color: '#e2e8f0', verticalA
 
 const MEDALS = ['🥇', '🥈', '🥉']
 
-export default function GoalsStatus() {
+export default function GoalsStatus({ onNavigate }) {
   const { members, goals, params, achievements, products, categories, distributors: customers, retailVisits, currentPeriod } = useData()
   const { currentUser, role } = useAuth()
   const [drill, setDrill] = useState(null)
@@ -165,7 +165,15 @@ export default function GoalsStatus() {
 
       <div style={{ background: '#0f172a', borderRadius: 16, padding: 16, marginBottom: 16 }}>
         <div style={{ ...panelBase }}>
-          <div style={labelStyle}>Distributor Secondary — Goal vs Achieved (This Month)</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={labelStyle}>Distributor Secondary — Goal vs Achieved (This Month)</div>
+            {onNavigate && (
+              <button onClick={() => onNavigate('distributorSecondaryReport', { ...visitRange, locked: true })}
+                style={{ background: 'none', border: 'none', color: '#38bdf8', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
+                View Report →
+              </button>
+            )}
+          </div>
           {scopeAgg.new_outlets.goal === 0 && scopeAgg.productive_outlets.goal === 0 && scopeAgg.secondary_orders.goal === 0 && scopeAgg.secondary_value.goal === 0
             ? <div style={{ fontSize: 12, color: '#64748b', padding: '8px 0' }}>No approved Distributor Secondary goals for this month yet</div>
             : (

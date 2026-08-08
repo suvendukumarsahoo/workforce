@@ -40,6 +40,7 @@ const ALL_MENUS = [
   { id:'vehicleLiveMap',       label:'Live Tracking'           },
   { id:'geoBusinessView',      label:'Geographical Business View' },
   { id:'journeyApprovals',     label:'Journey Approvals'       },
+  { id:'distributorSecondaryReport', label:'Distributor Secondary Report' },
   { id:'assignedLoads',        label:'My Loads (Driver)'       },
   { id:'driverLoadingConfirm', label:'Confirm Loading (Driver)'},
   { id:'driverJourney',        label:'Journey (Driver)'        },

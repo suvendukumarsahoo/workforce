@@ -1821,6 +1821,31 @@ export async function fetchDaySummariesForDate(memberId, date) {
   return { data, error }
 }
 
+// Distributor Secondary Order Report — single fetch feeding both the Summary tab (grouped
+// client-side by batch/distributor/beat) and the Detail tab (flattened to one row per item).
+// Scoped to completed batches only (batch_id not null, i.e. locked) — still-ongoing orders aren't
+// part of any batch and belong to the live Day Summary rollup instead, not this report.
+export async function fetchSecondaryOrdersForReport({ memberIds, distributorId, beatId, from, to }) {
+  // No `member:members(...)` embed here — secondary_orders.member_id's FK constraint actually
+  // points to users(id), even though the app stores members.id values in it in practice (same
+  // known quirk as retail_visits.member_id) — PostgREST can't embed a relationship that doesn't
+  // exist at the constraint level. Callers resolve the member's name client-side against the
+  // already-loaded `members` list from useData() instead.
+  let q = supabase
+    .from('secondary_orders')
+    .select('*, outlet:retail_outlets(id,name), beat:beats(id,name), distributor:distributors(id,name), items:secondary_order_items(*, product:products(id,name))')
+    .in('member_id', memberIds)
+    .gte('order_date', from)
+    .lte('order_date', to)
+    .eq('cancelled', false)
+    .not('batch_id', 'is', null)
+    .order('order_date', { ascending: false })
+  if (distributorId) q = q.eq('distributor_id', distributorId)
+  if (beatId) q = q.eq('beat_id', beatId)
+  const { data, error } = await q
+  return { data, error }
+}
+
 // dateRange: { from, to } ISO date strings — feeds the Distributor Secondary goal category's
 // Productive Outlets / Total No. of Orders achievement (see achievementEngine.js). No longer feeds
 // the general Visits/"New Customer Visits" goal — that reverted to distributor_visits-only once
