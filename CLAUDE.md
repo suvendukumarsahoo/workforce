@@ -3552,4 +3552,43 @@ approval flows.
 clicking a pending rule opens the Sheet showing all fields including a real "HR Manager" creator
 name and timestamp, Approve Rule works from inside it, and the Sheet closes automatically once
 approved.
-  would close the loop.
+
+### Second immediate follow-up, same session: "Waiver Counts by Employee" oversight card
+
+User's next ask: "admin should be able to see the total waiver counts done by hr in any month —
+also waiver caps are per month and counts only for monthly period." Resolved the one real design
+fork (aggregate total vs. per-employee breakdown) via AskUserQuestion — per-employee, since the cap
+itself is per-employee and a bare total wouldn't show who's actually close to it.
+
+**Built:**
+1. **`db.js`'s new `fetchWaiverCountsForPeriod(fromDate, toDate)`** — fetches every
+   `attendance_punches` row with `rule_status is not null` in the given date range (embedding
+   `user:users!attendance_punches_user_id_fkey(id, name)` — this table's own two-FK-to-`users`
+   ambiguity, already worked around everywhere else this session, applies here too) and
+   `rule:attendance_rules(approver1_role)`, then aggregates client-side into one row per employee
+   with `managerWaivers`/`hrWaivers` counts. Uses the **exact same counting rule** the cap
+   enforcement itself already uses (`countMonthlyWaivers`, module-private) — a Manager-granted
+   waiver is `rule_approver1_by` set + that rule's `approver1_role==='manager'`; an HR-granted one
+   is either a direct single-stage approval (`approver1_role==='hr'`) or a stage-2 sign-off
+   (`rule_approver2_by` set) — just summed across everyone for the range instead of scoped to one
+   employee, so this view's numbers always agree with what actually blocks a waiver.
+2. **New "Waiver Counts by Employee" card** (Admin-only, `AttendanceRules.jsx`) — a month-picker
+   dropdown (reused `src/lib/period.js`'s existing `listRecentPeriods()`/`formatPeriodLabel()`/
+   `monthRangeForPeriod()`, the same utilities Goals Status already uses for its own period picker,
+   rather than inventing a new one) drives a `useEffect` that re-fetches whenever the selected
+   period changes. Lists each employee with any waivers that month, showing `Manager: N` / `HR: N`
+   side by side, sorted by total descending; empty state reads "No waivers granted this period."
+   Placed right after the existing Attendance Rule Settings card, not tab-scoped (waivers can come
+   from either rule type, same as the caps themselves).
+
+`vite build` + scoped `eslint` clean (`db.js` zero errors; `AttendanceRules.jsx`'s new
+`useEffect(() => { if (isAdmin) loadWaiverCounts(...) }, [isAdmin, waiverCountPeriod])` matches the
+same already-accepted `set-state-in-effect` pattern class as this page's other two mount-fetch
+effects — 3 total now, all the same class, nothing new). Confirmed live via headless Playwright:
+the card shows real per-employee counts matching the actual DB state (e.g. Arjun Nair correctly
+showing `HR: 1` from an already-resolved test waiver, `Manager: 0` since that punch had been
+replaced since), a still-pending (not yet granted) waiver correctly does **not** count yet, and
+switching the month picker to a period with no activity correctly shows the empty state.
+
+**Still open:** none — schema-free (reads existing columns only), built and confirmed working in
+the same pass.

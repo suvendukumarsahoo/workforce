@@ -1178,6 +1178,34 @@ export async function approveWaiverStage2(punchId, approverUserId) {
   return { data, error }
 }
 
+// Admin oversight — per-employee waiver counts granted by Manager vs HR within an arbitrary date
+// range (browsable by month, not just "this month"). Uses the exact same counting rule the cap
+// enforcement itself uses (countMonthlyWaivers, above) — a Manager-granted waiver is any row where
+// rule_approver1_by is set and that rule's approver1_role='manager'; an HR-granted waiver is either
+// a direct single-stage approval (approver1_role='hr') or a stage-2 sign-off (rule_approver2_by
+// set) — just aggregated across every employee for the range instead of scoped to one.
+export async function fetchWaiverCountsForPeriod(fromDate, toDate) {
+  const { data, error } = await supabase
+    .from('attendance_punches')
+    .select('user_id, rule_approver1_by, rule_approver2_by, user:users!attendance_punches_user_id_fkey(id, name), rule:attendance_rules(approver1_role)')
+    .gte('date', fromDate)
+    .lte('date', toDate)
+    .not('rule_status', 'is', null)
+  if (error) return { data: null, error }
+
+  const byUser = {}
+  ;(data || []).forEach(p => {
+    const uid = p.user_id
+    if (!byUser[uid]) byUser[uid] = { userId: uid, name: p.user?.name || `User #${uid}`, managerWaivers: 0, hrWaivers: 0 }
+    if (p.rule_approver1_by && p.rule?.approver1_role === 'manager') byUser[uid].managerWaivers++
+    if ((p.rule?.approver1_role === 'hr' && p.rule_approver1_by) || p.rule_approver2_by) byUser[uid].hrWaivers++
+  })
+  const rows = Object.values(byUser)
+    .filter(r => r.managerWaivers > 0 || r.hrWaivers > 0)
+    .sort((a, b) => (b.managerWaivers + b.hrWaivers) - (a.managerWaivers + a.hrWaivers))
+  return { data: rows, error: null }
+}
+
 // ─── ACTIVITY LOG (generic, feeds Attendance Stage 2's non-driver vein diagram) ────────────────
 // user_id is explicitly users.id (matches currentUser.id) — NOT members.id. Several existing
 // `approved_by`-style columns in this app inconsistently store one or the other (see CLAUDE.md);

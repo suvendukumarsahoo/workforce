@@ -3,6 +3,7 @@ import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Btn, Sheet, Inp } from '../../components/ui.jsx'
 import { RULE_TYPE_LABEL, APPROVER_ROLE_LABEL, eligibleForWaiverStage } from '../../lib/attendanceRules.js'
+import { getCurrentPeriod, formatPeriodLabel, monthRangeForPeriod, listRecentPeriods } from '../../lib/period.js'
 import * as db from '../../lib/db.js'
 
 export default function AttendanceRules() {
@@ -26,6 +27,9 @@ function RuleManagement() {
   const [reviewRule, setReviewRule] = useState(null)
   const [busyId, setBusyId] = useState(null)
   const [loadError, setLoadError] = useState(null)
+  const [waiverCountPeriod, setWaiverCountPeriod] = useState(getCurrentPeriod())
+  const [waiverCounts, setWaiverCounts] = useState(null)
+  const [waiverCountsError, setWaiverCountsError] = useState(null)
 
   const load = async () => {
     const [{ data: ar, error: arErr }, { data: wq, error: wqErr }, { data: rs, error: rsErr }] = await Promise.all([
@@ -40,6 +44,19 @@ function RuleManagement() {
   }
 
   useEffect(() => { load() }, [])
+
+  // Admin-only oversight card, loaded independently of the main `load()` above since it's scoped
+  // to whichever month is selected, not "current state" — re-fetches whenever the period changes.
+  const loadWaiverCounts = async (period) => {
+    const { from, to } = monthRangeForPeriod(period)
+    const { data, error } = await db.fetchWaiverCountsForPeriod(from, to)
+    setWaiverCounts(data || [])
+    setWaiverCountsError(error?.message || null)
+  }
+
+  useEffect(() => {
+    if (isAdmin) loadWaiverCounts(waiverCountPeriod)
+  }, [isAdmin, waiverCountPeriod])
 
   const approveRule = async (id) => {
     setBusyId(id)
@@ -189,6 +206,40 @@ function RuleManagement() {
             <Inp label="Unapproved Half Day count = 1 Absent" value={settingsDraft.unapproved_half_day_to_absent ?? ''} onChange={v => setSettingsDraft(s => ({ ...s, unapproved_half_day_to_absent: v }))} type="number" helper="Leave blank to disable" />
             <Btn v="pri" disabled={savingSettings} onClick={saveSettings}>{savingSettings ? 'Saving...' : 'Save Settings'}</Btn>
           </div>
+        </Card>
+      )}
+
+      {isAdmin && (
+        <Card>
+          <CH
+            title="Waiver Counts by Employee"
+            sub={`How many waivers each employee received from Manager / HR — ${formatPeriodLabel(waiverCountPeriod)}`}
+            right={
+              <select
+                value={waiverCountPeriod}
+                onChange={e => setWaiverCountPeriod(e.target.value)}
+                style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12, fontFamily: 'inherit', background: '#fff' }}
+              >
+                {listRecentPeriods(12).map(p => <option key={p} value={p}>{formatPeriodLabel(p)}</option>)}
+              </select>
+            }
+          />
+          {waiverCountsError && (
+            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 10px', margin: '0 14px 10px', fontSize: 11, color: '#991b1b' }}>
+              {waiverCountsError}
+            </div>
+          )}
+          {waiverCounts === null && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>Loading...</div>}
+          {waiverCounts?.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No waivers granted this period</div>}
+          {waiverCounts?.map(r => (
+            <div key={r.userId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '1px solid #f3f4f6' }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</div>
+              <div style={{ display: 'flex', gap: 14, fontSize: 12 }}>
+                <span style={{ color: '#06b6d4', fontWeight: 600 }}>Manager: {r.managerWaivers}</span>
+                <span style={{ color: '#10b981', fontWeight: 600 }}>HR: {r.hrWaivers}</span>
+              </div>
+            </div>
+          ))}
         </Card>
       )}
 
