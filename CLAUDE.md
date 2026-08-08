@@ -2634,8 +2634,8 @@ Phase 1's confirmation — one single `activity_log` table serves both phases). 
 browser-tested. Vehicles/Warehouses/Categories/Employees master screens and any other remaining
 write paths are an explicit further follow-up, not done this pass.
 
-## Distributor Secondary goal category + dashboard entries (5 Aug 2026 session) — BUILT, SCHEMA NOT
-## YET APPLIED, NOT YET BROWSER-TESTED
+## Distributor Secondary goal category + dashboard entries (5 Aug 2026 session) — BUILT, SCHEMA
+## CONFIRMED APPLIED (verified via live REST probe, 8 Aug 2026), NOT YET BROWSER-TESTED
 
 **User's ask, condensed:** a dashboard entry for Distributor Secondary showing Outlets Created,
 Outlets Visited (framed as a real goal), and Secondary Value. Clarified via AskUserQuestion into a
@@ -2754,10 +2754,9 @@ pre-existing inline-component-in-render pattern (`Toggle` in `Parameters.jsx`, `
 new bug introduced now.
 
 **Still open / not done yet:**
-- **Schema not yet applied** — every new field will error on `upsertParameter`/`upsertGoal` until
-  the columns exist; achievement loops soft-fail-safe (just read as `undefined`/0) so nothing
-  crashes, the numbers just won't move.
-- **Not browser-tested** — same constraint as most work this session. Full flow to verify once
+- ~~Schema not yet applied~~ — confirmed applied via a live REST probe against `parameters`/`goals`
+  (8 Aug 2026): all 4 `enable_*` columns and all 12 goal-field columns exist and return real rows.
+- **Not browser-tested** — same constraint as most work this session. Full flow to verify now that
   schema is live: enable the 4 toggles in Parameters for a Sales Team member → submit goal values
   as that member → approve as Manager → create beats/outlets/orders via the existing Distributor
   Secondary flow → confirm achievement numbers move on both `TeamSnapshot.jsx` and
@@ -2932,7 +2931,7 @@ or Cancel each) → **Retailing Complete** button → **summary dialog** (Confir
    to Beats afterward; not worth the complexity of tracking "beat being walked" separately from
    "beat of the order being edited" for this pass.
 
-**Schema — NOT yet applied, user must run:**
+**Schema — CONFIRMED APPLIED (verified via live REST probe, 8 Aug 2026):**
 ```sql
 alter table secondary_orders
   add column locked boolean not null default false,
@@ -2940,8 +2939,8 @@ alter table secondary_orders
 ```
 
 **Still open / not done yet:**
-- **Schema not yet applied** — every new `db.js` function above will error until both columns
-  exist; the existing create/update paths are unaffected (they don't touch these columns).
+- ~~Schema not yet applied~~ — confirmed applied via REST probe against `secondary_orders` (8 Aug
+  2026): both columns exist and return real values on live rows.
 - **Not browser-tested** — same constraint as most work this session. `vite build` clean; scoped
   `eslint` (`db.js`, `DistributorSecondary.jsx`) clean — the one new lint hit
   (`react-hooks/set-state-in-effect` on `OngoingOrdersSheet`'s load-on-mount effect) is explicitly
@@ -3096,7 +3095,9 @@ stamped once retailing is actually finished for the day, not a replacement for t
    breakdown is always regenerated from the real underlying data, which is safe here since the
    orders are already locked by the time a summary exists.
 
-**Schema — NOT yet applied, user must run:**
+**Schema — CONFIRMED APPLIED (verified via live REST probe, 8 Aug 2026 — table already holds at
+least one real row, `DS-3-08082026`, meaning a full Retailing Complete flow has already run
+successfully end-to-end):**
 ```sql
 create table day_summaries (
   id text primary key,
@@ -3111,11 +3112,10 @@ create table day_summaries (
 ```
 
 **Still open:**
-- **Schema not yet applied** — `createDaySummary`/`fetchDaySummaryForDate` will error until the
-  table exists; `RetailingCompleteDialog` already soft-fails this specific step (locking still
-  succeeds even if the summary-record insert fails, showing "Retailing complete, but summary
-  record failed" rather than blocking the lock itself).
-- **Not browser-tested** — `vite build` + scoped `eslint` (`db.js`, `printDaySummary.js`,
+- ~~Schema not yet applied~~ — confirmed applied, see above.
+- **Not fully browser-verified by this session directly** — a real `day_summaries` row exists in
+  the live DB, which is strong evidence the flow works, but this was discovered via a REST probe,
+  not a driven browser pass. `vite build` + scoped `eslint` (`db.js`, `printDaySummary.js`,
   `DistributorSecondary.jsx`) clean, zero new errors. Full flow to verify once schema is applied:
   Retailing Complete → confirm the success dialog shows a real id/timestamp and the downloaded PDF
   matches the day's actual orders → reopen the Day Summary tab → confirm the same banner + a
