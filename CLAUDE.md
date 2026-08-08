@@ -3121,8 +3121,8 @@ create table day_summaries (
   matches the day's actual orders → reopen the Day Summary tab → confirm the same banner + a
   working re-download appears there too.
 
-## Late Present Rule + Half Day Rule (Attendance) (8 Aug 2026 session) — BUILT, SCHEMA CONFIRMED
-## APPLIED (verified via live REST probe, 8 Aug 2026), NOT YET BROWSER-TESTED
+## Late Present Rule + Half Day Rule (Attendance) (8 Aug 2026 session) — BUILT, SCHEMA APPLIED,
+## BROWSER-TESTED & CONFIRMED WORKING (headless Playwright, 8 Aug 2026, same session)
 
 Brand-new feature, not discussed in any prior session (confirmed via full-file exploration + a
 CLAUDE.md grep before planning). Turns the existing Attendance/Punch-In system's `duty_status`/
@@ -3280,23 +3280,96 @@ mount-fetch effects (in `AttendanceHR` and the new `AttendanceManagerView`) trig
 `InvoiceApprovalTile.jsx`'s pre-existing, left-unsuppressed `useEffect(() => { loadData() }, [])`
 (confirmed identical shape via direct comparison), not a new category of problem.
 
+**Real pre-existing regression found during this session's browser-test setup (unrelated to this
+feature's own code):** before testing could even start, a live REST probe found `users.duty_start_time`/
+`hq_latitude`/`hq_longitude`/`allowed_deviation_m` — the whole original Attendance/Punch-In System's
+per-user config columns, documented in CLAUDE.md as applied and browser-confirmed back on 2 Aug
+2026 — **did not exist** on the live `users` table (`42703 column does not exist`, confirmed via a
+direct probe, not a guess from the UI). This meant `dutyStatusFor()` always returned `null`
+(`duty_start_time` always undefined) and no user in this database could ever have been flagged
+late, silently, since whatever removed those columns happened. Not caused by this session's work
+(only `manager_id` was added by this feature, confirmed present) — flagged to the user immediately
+rather than routed around; user re-ran the original `alter table users add column
+hq_latitude/hq_longitude/duty_start_time/allowed_deviation_m` migration, confirmed live again via a
+follow-up REST probe. If this happens again, check first via a direct REST probe before assuming a
+UI bug — the app itself was correctly soft-failing around the missing columns (`location_flag: true,
+flag_reason: "HQ location not set for this employee"`), which is what made this easy to miss from
+the UI alone.
+
+**One real bug found and fixed via this session's live testing** — `CreateRuleSheet`'s "+ Add
+user..." `<select>`'s `onChange` read `Number(e.target.value)` **inside** the `setUserIds`
+functional-updater closure, then reset `e.target.value = ''` on the very next line of the same
+handler. Because React invokes a functional state updater lazily (when it processes the update, not
+synchronously at the point `setUserIds(...)` is called), the updater read `e.target.value` *after*
+it had already been reset to `''` by the same handler — so every added user was silently stored as
+`Number('') = 0`, not the real selected id (not even `NaN`, which at least would have been visibly
+wrong). Every rule created before the fix landed with `user_ids: [0]` — confirmed live via REST,
+and the fix confirmed live via REST afterward (`user_ids: [7]`, correct). Fixed by capturing
+`e.target.value` into a local `const v` *before* calling `setUserIds` and resetting the input, so
+the updater closes over the captured primitive instead of the mutable DOM property. `vite build` +
+scoped `eslint` re-confirmed clean after the fix (same 2 pre-existing-pattern `set-state-in-effect`
+errors as before, nothing new).
+
+**Full flow confirmed working live** (headless Playwright, `hr@co.com`/`admin@co.com`/
+`meera@co.com`/`arjun@co.com` test accounts, real Supabase data — a handful of punch rows were
+deleted/reset with the user's explicit authorization at each step to get fresh same-day punches,
+since punch-in is once-per-day; one synthetic historical row was inserted with explicit
+authorization specifically to test the waiver cap, then deleted afterward):
+1. HR sees "Attendance Rules"/"Pending Waiver Approvals" cards; Admin additionally sees "Attendance
+   Rule Settings" (correctly hidden from HR).
+2. HR created a Late Present rule (role=Sales Team, user=Arjun, threshold=1m, Approver 1=Manager)
+   and a Half Day rule (threshold=5m, Approver 1=HR) — both saved `status: 'pending'`.
+3. Admin approved both rules — `status` flipped to `'approved'` live.
+4. Arjun (`duty_start_time` set to `00:01` via `Employees.jsx`'s new Reporting Manager/duty fields,
+   both confirmed saved correctly through the real UI) punched in 998 minutes late — the punch
+   correctly classified `rule_status: 'half_day'` (not `'late_present'`), confirming **Half Day
+   correctly supersedes Late Present** even though both rules' thresholds were crossed.
+5. HR's "Pending Waiver Approvals" queue showed the instance with a "Waive" button (single-stage,
+   since this rule's `approver1_role='hr'`); clicking it set `rule_waiver_status: 'approved'`,
+   `rule_approver1_by` = HR's id, `rule_approver2_by: null` — correct single-stage shape.
+6. Re-tested with only the Late Present rule active (Half Day rule temporarily un-approved, with
+   the user's authorization, specifically to isolate this path): Arjun's fresh punch classified
+   `rule_status: 'late_present'`. HR's own queue correctly showed this item as **"Not yours"** (no
+   action button) since `approver1_role='manager'` — confirms `eligibleForWaiverStage` correctly
+   gates HR out of a Manager-first stage-1 item. Logged in as Meera (Manager) — **the new "Team
+   Waiver Approvals" card appeared and was correctly scoped** (this is the first time Manager has
+   ever had any presence on this page) — approved Stage 1, DB confirmed `rule_waiver_status:
+   'stage1_approved'`, `rule_approver1_by` = Meera's id. Logged back in as HR — queue now showed
+   "Approve (Stage 2)"; approving it set `rule_waiver_status: 'approved'`, `rule_approver2_by` =
+   HR's id.
+7. Roster visually confirmed: Arjun's row showed a `🟠 Late: 1` badge and a small orange dot on
+   today's calendar cell while unapproved; both cleared once fully waived.
+8. Admin's Attendance Rule Settings form saved all 4 fields correctly (confirmed via REST) —
+   `max_waivers_manager`/`max_waivers_hr`/`unapproved_late_to_absent`/`unapproved_half_day_to_absent`.
+9. **Waiver cap enforcement confirmed live, not just saved**: with `max_waivers_manager=1` and
+   Meera already having granted Arjun one waiver this month, a second (synthetic, clearly-labeled
+   test) unwaived instance was blocked with the exact inline error "Manager waiver limit (1/month)
+   already reached for this employee." — the item correctly stayed in the pending queue, not
+   silently dropped or approved.
+10. **Escalation confirmed live**: with `unapproved_late_to_absent=1` and one unapproved instance,
+    Arjun's roster row showed `1A` (Effective Absent) even though his raw punch-day count was a
+    full 8/8 for the month — proving the escalation genuinely adds to the Absent tally rather than
+    just reflecting missing punch days, and reads correctly on the HR roster (self-view not
+    independently re-checked this round, but shares the exact same `computeAttendanceStats` call).
+
+**⚠️ Live settings left in place from testing — review before relying on them for real use:**
+`attendance_rule_settings` currently holds `max_waivers_manager=1, max_waivers_hr=1,
+unapproved_late_to_absent=1, unapproved_half_day_to_absent=2` — deliberately restrictive values
+picked to make the cap/escalation tests trigger easily, not vetted as sensible real policy. These
+are live or the next real employee to get an unapproved Late Present flag will count as an
+extra Absent. Revisit via Admin → Attendance → Attendance Rule Settings before this matters for a
+real employee.
+
+**Test fixtures left in the live DB** (harmless, same convention as prior Playwright-driven test
+rounds in this project — safe to delete via the UI whenever convenient, not cleaned up
+automatically since deleting is a judgment call): two approved rules, `attendance_rules` id 3
+("Late Present — Sales Team", threshold 1m, Manager→HR) and id 4 ("Half Day — Sales Team",
+threshold 5m, HR-only), both scoped to Arjun Nair only. Arjun's own real punch history for this
+month has been left clean (every test punch/waiver was either fully resolved through the real
+approval flow or deleted afterward) — nothing fake-looking should be visible if the user checks his
+attendance calendar.
+
 **Still open / not done yet:**
-- ~~Schema not yet applied~~ — confirmed applied via a live REST probe (8 Aug 2026):
-  `users.manager_id`, `attendance_rules` (empty, as expected before any rule is created),
-  `attendance_punches`'s 6 new columns (correct defaults — `rule_waiver_status: 'not_applicable'`,
-  rest null), and `attendance_rule_settings`'s singleton row (id=1, all caps/thresholds null =
-  unlimited/off) all confirmed live.
-- **Not browser-tested** — same constraint as most feature work in this project (no chromium-cli/
-  Playwright by default). Full flow to verify once schema is applied, in order: as HR, create a Late
-  Present rule (small threshold, 1-2 test users) → as Admin, approve the rule → as one of those
-  users, punch in late → as HR/Admin, confirm the instance appears in Pending Waiver Approvals and
-  the roster's Late badge/dot → approve Stage 1 (as Manager if the rule was Manager-first, confirming
-  the new `AttendanceManagerView` queue is correctly scoped) → confirm Stage 2 (HR) is required and
-  completes it → confirm the badge/dot clears once fully approved. Repeat briefly for a Half Day
-  rule with a larger threshold, confirming it supersedes Late Present on the same punch. Set a low
-  waiver cap in Attendance Rule Settings and confirm the UI blocks further waivers once hit. Set a
-  low "N unapproved = absent" threshold and confirm the Effective Absent stat increments correctly
-  on both the HR roster and self-view.
 - **`Employees.jsx`'s Reporting Manager field has no cycle guard** — nothing stops assigning a
   Manager as their own report, or a manager-chain loop; not asked for, not built. Low real-world
   risk (the dropdown only lists `role_id==='r2'` users, and a Manager assigning themselves would be
@@ -3304,3 +3377,8 @@ mount-fetch effects (in `AttendanceHR` and the new `AttendanceManagerView`) trig
 - **No reject path on a waiver instance** — matches the confirmed "no reversal" design; an
   unwaived instance simply stays unapproved and feeds the escalation count, there's no explicit
   "Reject" button distinct from "not yet approved."
+- **Self-view (`MyAttendanceCalendar.jsx`)'s Late/Half-Day badges and Effective Absent were not
+  independently re-verified in this round's live pass** — it shares the exact same
+  `computeAttendanceStats` call already confirmed correct on the HR roster, and the same underlying
+  data, so this is low-risk, but a direct look (log in as Arjun, check his own attendance view)
+  would close the loop.

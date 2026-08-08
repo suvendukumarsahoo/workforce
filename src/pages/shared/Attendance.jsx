@@ -449,7 +449,16 @@ function CreateRuleSheet({ onClose, onCreated }) {
             })}
           </div>
           {available.length > 0 && (
-            <select onChange={e => { if (e.target.value) setUserIds(prev => [...prev, Number(e.target.value)]); e.target.value = '' }} style={selectStyle}>
+            <select onChange={e => {
+              // Capture the value into a local const BEFORE resetting the input — the functional
+              // state updater below runs lazily (React invokes it when processing the update, not
+              // synchronously here), so if it closed over `e.target.value` directly it would read
+              // whatever `e.target.value = ''` below had already reset it to by then, always
+              // pushing Number('') = 0 instead of the real selected id. Real bug, caught live.
+              const v = e.target.value
+              if (v) setUserIds(prev => [...prev, Number(v)])
+              e.target.value = ''
+            }} style={selectStyle}>
               <option value="">+ Add user...</option>
               {available.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
