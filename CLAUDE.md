@@ -4005,3 +4005,71 @@ all 9 non-zero products, including the two whose totals visibly changed once the
 5L 12→10, partially excluded).
 
 **Nothing outstanding** — schema-free, single-file change, confirmed working live in the same pass.
+
+## Distributor Secondary: multiple Retailing Complete batches per day (9 Aug 2026 session) — BUILT,
+## SCHEMA APPLIED, BROWSER-TESTED & CONFIRMED WORKING
+
+**User's ask:** once Retailing Complete generates a summary/batch id and locks that day's orders,
+if the rep takes further orders that same day, the Retailing Complete button should become
+available again — confirming it should create a **new** batch id, linking only the orders taken
+since the last batch. This repeats for as many batches as happen in one day.
+
+**Real finding before writing any code:** the Ongoing Orders list and the Retailing Complete
+button's `disabled={!orders || orders.length === 0}` already naturally re-populate/re-enable once a
+new order is taken after a batch locks the previous ones (a fresh order starts `locked: false` by
+default) — zero code change needed there. The actual blocker was `day_summaries` having
+`id = DS-{memberId}-DDMMYYYY` as its primary key plus a `unique(member_id, summary_date)`
+constraint — a **second** `createDaySummary` call for the same member+day failed outright on the
+duplicate id/constraint, which is what actually prevented a second batch from ever completing.
+
+**Resolved via AskUserQuestion before building:** each batch's own summary/PDF shows only the
+orders locked in that specific batch (not a cumulative day-to-date snapshot) — Batch 1's receipt ≠
+Batch 2's receipt. The Day Summary tab's live Outlet-wise/Product-wise rollup stays showing the
+whole day (locked + still-ongoing) regardless of how many batches exist — unaffected by this
+change.
+
+**Built:**
+1. **Schema** — `secondary_orders` gains `batch_id text references day_summaries(id)` (nullable —
+   still-ongoing orders have none yet); `day_summaries`' `unique(member_id, summary_date)`
+   constraint dropped (its `id` stays the primary key — the new sequence-suffixed format below is
+   still naturally unique per row, just no longer capped at one row per member+day).
+2. **`db.js`** — `createDaySummary(memberId, date, totals)`: id generation changes from the fixed
+   `DS-{memberId}-DDMMYYYY` to a sequence-suffixed `DS-{memberId}-DDMMYYYY-{seq}`, same
+   count-then-pad pattern as `createSecondaryOrder`'s `SO-DDMMYYYY-NN`/`createLoad`'s
+   `LD-DDMMYYYY-NN`. `lockSecondaryOrdersForDate(memberId, date, batchId)` gains the `batchId` param,
+   stamps `{ locked: true, batch_id: batchId }` — the existing `locked=false` filter already
+   guarantees only *this* call's newly-ongoing orders are touched, never a prior batch's.
+   `fetchDaySummaryForDate` → `fetchDaySummariesForDate` (plural), drops `.maybeSingle()`, returns
+   every batch for that member+day, newest first.
+3. **`DistributorSecondary.jsx`**'s `RetailingCompleteDialog.confirm()` — reordered so the batch id
+   exists before orders are locked with it: create the summary first (its id becomes known), then
+   lock+tag the orders with that id. Visits are scoped to just this batch's own orders (`v.order_id`
+   matching one of this batch's order ids) rather than every visit recorded today — a no-order visit
+   has no `order_id` and so never belongs to any batch, matching the resolved per-batch-receipt
+   design.
+4. **`DaySummary` component** — `daySummaryRecord` (singular banner) → `daySummaryRecords` (array,
+   one card per batch): own id, "Batch {N}" label, generated timestamp, order count, value, and its
+   own scoped "⬇ Download Summary" (filters the day's already-loaded `orders`/`visits` down to
+   `o.batch_id === record.id`). The Outlet-wise/Product-wise cards and "⬇ Download Batch (ZIP)"
+   button are **unchanged** — still read the full day's orders/visits regardless of batch, exactly
+   the "live day-wide rollup, unaffected by batching" behavior confirmed above. `printDaySummary.js`
+   needed **no changes** — it already takes arbitrary `{ summary, visits, orders, productName }`,
+   scoping is entirely the caller's job.
+
+**Verification:** `vite build` + scoped `eslint` clean (baseline was already 0 errors on both
+touched files, still 0 after). Confirmed live end-to-end via headless Playwright against real
+Supabase data (Arjun Nair, member id 3): took one order at outlet Ret1 → Retailing Complete →
+`DS-3-09082026-1` created, order `SO-09082026-01` correctly `locked: true, batch_id:
+"DS-3-09082026-1"` (verified via direct REST, not just the UI). Took a second order at Ret2 →
+confirmed the Retailing Complete button was already re-enabled with **zero** code change involved →
+completed it → `DS-3-09082026-2` created independently. Day Summary tab correctly listed both
+batches as separate cards ("Batch 2"/"Batch 1", newest first, each with its own id/timestamp/order
+count/value), while the live Outlet-wise/Product-wise rollup below correctly combined both orders
+(2 outlets visited, AlphaMax 1L qty 2 / ₹1,700 total) — confirming the day-wide rollup stayed
+unaffected by the batch split. Zero non-400 console errors throughout.
+
+**Nothing outstanding** — schema applied, full two-batch flow confirmed working live via real
+punch-through of the UI, not just code review. Test data left in the live DB from this round: two
+real orders (Ret1/Ret2) and two day_summaries batches for Arjun Nair, 9 Aug 2026 — safe to leave
+(realistic-looking, harmless) or clean up via the UI, user's call, not cleaned up automatically per
+this session's established convention.
