@@ -1,8 +1,13 @@
 // Late Present Rule / Half Day Rule — pure helpers, no DB access.
 //
-// A rule (attendance_rules row) applies to a user when the user's role_id matches the rule's
-// role_id AND the user's id is in the rule's user_ids array. Only rules with status='approved'
-// (Admin has signed off) are ever passed in here — see useData.jsx's approvedAttendanceRules.
+// A rule (attendance_rules row) is a pure SETTING — role, rule type, grace-period minutes, who
+// approves exceptions — with no user list of its own. Which specific users it applies to is a
+// separate mapping (attendance_rule_users), only editable once the rule setting itself is
+// Admin-approved. `db.js`'s `fetchAttendanceRules()` embeds that mapping as `rule.mapped`
+// (`[{ user_id, user: {...} }]`) via a join, so a rule applies to a user when the user's role_id
+// matches the rule's role_id AND the user's id appears in `rule.mapped`. Only rules with
+// status='approved' (Admin has signed off on the setting) are ever passed in here — see
+// useData.jsx's approvedAttendanceRules.
 //
 // Half Day supersedes Late Present when a single arrival crosses both thresholds (confirmed via
 // AskUserQuestion) — both are driven by the same underlying arrival-delay-in-minutes signal
@@ -23,8 +28,8 @@ function rulesApplyingTo(user, approvedRules, ruleType) {
   return (approvedRules || []).filter(r =>
     r.rule_type === ruleType &&
     r.role_id === user.role_id &&
-    Array.isArray(r.user_ids) &&
-    r.user_ids.some(id => String(id) === String(user.id))
+    Array.isArray(r.mapped) &&
+    r.mapped.some(m => String(m.user_id) === String(user.id))
   )
 }
 

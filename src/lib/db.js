@@ -999,10 +999,13 @@ export async function approveActivityStage2(id, approvedBy) {
 // separate from the existing punch_approval_status/activity_approval_status columns above, which
 // keep meaning exactly what they always have.
 
+// A rule is a pure setting (role/type/threshold/approver chain) — WHO it applies to is a separate
+// mapping (attendance_rule_users), embedded here as `mapped` so both the mapping-editor UI and
+// resolveRuleClassification (attendanceRules.js) get everything from this one fetch.
 export async function fetchAttendanceRules() {
   const { data, error } = await supabase
     .from('attendance_rules')
-    .select('*, role:roles(id, name)')
+    .select('*, role:roles(id, name), mapped:attendance_rule_users(user_id, user:users(id, name, avatar, color))')
     .order('created_at', { ascending: false })
   return { data, error }
 }
@@ -1014,7 +1017,6 @@ export async function createAttendanceRule(payload) {
       rule_type: payload.rule_type,
       name: payload.name || null,
       role_id: payload.role_id,
-      user_ids: payload.user_ids || [],
       threshold_minutes: payload.threshold_minutes,
       approver1_role: payload.approver1_role,
       approver2_role: deriveApprover2Role(payload.approver1_role),
@@ -1034,6 +1036,28 @@ export async function approveAttendanceRule(id, approvedBy) {
     .select()
     .single()
   return { data, error }
+}
+
+// Mapping — decoupled from the rule setting itself, editable any time once the setting is
+// approved, no further Admin sign-off needed for mapping changes.
+export async function addRuleUser(ruleId, userId, addedBy) {
+  const { data, error } = await supabase
+    .from('attendance_rule_users')
+    .insert({ rule_id: ruleId, user_id: userId, added_by: addedBy })
+    .select()
+    .single()
+  // unique(rule_id, user_id) — already mapped, treat as success (same defensive pattern as punchIn).
+  if (error?.code === '23505') return { data: null, error: null }
+  return { data, error }
+}
+
+export async function removeRuleUser(ruleId, userId) {
+  const { error } = await supabase
+    .from('attendance_rule_users')
+    .delete()
+    .eq('rule_id', ruleId)
+    .eq('user_id', userId)
+  return { error }
 }
 
 export async function fetchAttendanceRuleSettings() {

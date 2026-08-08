@@ -15,6 +15,7 @@ import Customers     from './shared/Distributors.jsx'
 import Products      from './shared/Products.jsx'
 import Categories    from './shared/Categories.jsx'
 import Attendance    from './shared/Attendance.jsx'
+import AttendanceRules from './shared/AttendanceRules.jsx'
 import Employees     from './admin/Employees.jsx'
 import Payroll       from './shared/Payroll.jsx'
 import Settings      from './admin/Settings.jsx'
@@ -47,9 +48,10 @@ const ALL_MENUS = [
   { id:'customers',     label:'Distributors',     icon:'🤝', sec:'Master'    },  
   { id:'products',      label:'Products',         icon:'📦', sec:'Master'    },
   { id:'categories',    label:'Categories',       icon:'🗂️',  sec:'Master'    },
-  { id:'attendance',    label:'Attendance',       icon:'📅', sec:'HR'        },
-  { id:'employees',     label:'Employees',        icon:'👥', sec:'HR'        },
-  { id:'payroll',       label:'Payroll',          icon:'💰', sec:'HR'        },
+  { id:'attendance',    label:'Attendance',       icon:'📅', sec:'HR Functions' },
+  { id:'attendanceRules', label:'Daily Attendance Rules', icon:'⏱️', sec:'HR Functions' },
+  { id:'employees',     label:'Employees',        icon:'👥', sec:'HR Functions' },
+  { id:'payroll',       label:'Payroll',          icon:'💰', sec:'HR Functions' },
   { id:'settings',      label:'Settings',         icon:'🔧', sec:'Admin'     },
   { id:'newCustomerVisit', label:'New Customer Visit', icon:'🚶', sec:'Distributor Functions' },
   { id:'distributorApproval', label:'New Distributor Approval', icon:'📋', sec:'Distributor Functions' },
@@ -83,6 +85,7 @@ const PAGE_MAP = {
   products:      Products,
   categories:    Categories,
   attendance:    Attendance,
+  attendanceRules: AttendanceRules,
   employees:     Employees,
   payroll:       Payroll,
   settings:      Settings,

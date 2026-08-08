@@ -3381,4 +3381,124 @@ attendance calendar.
   independently re-verified in this round's live pass** — it shares the exact same
   `computeAttendanceStats` call already confirmed correct on the HR roster, and the same underlying
   data, so this is low-risk, but a direct look (log in as Arjun, check his own attendance view)
+
+## Daily Attendance Rules restructuring — decoupled mapping, own page, section rename (8 Aug 2026
+## session, same day as the feature above) — BUILT, SCHEMA NOT YET APPLIED, NOT YET BROWSER-TESTED
+
+Restructures the Late Present / Half Day Rule feature above per user feedback right after it was
+tested: a rule was bundling "who it applies to" into the same row Admin approves, and the whole
+thing lived bolted onto the existing Attendance page. Two structural changes, planned via plan-mode
+before building:
+
+1. **A rule becomes a pure setting** — role, rule type, grace-period minutes, who approves
+   exceptions — with no user list attached. Admin reviews and approves that setting alone. Only
+   once approved does it become "live for mapping" — a separate, no-approval-needed step where HR
+   attaches specific users from that role. Admin's own screen still shows the current role-wise/
+   user-wise mapping for visibility, even though mapping itself needs no further sign-off.
+2. **Moved off the Attendance page onto its own menu item**, "Daily Attendance Rules", under a
+   renamed "HR Functions" section (matches this app's existing "Distributor Functions" naming
+   convention), with Late Present and Half Day as two tabs.
+
+**Resolved via AskUserQuestion before building (2 rounds):**
+- Rename sidebar section `sec:'HR'` → `sec:'HR Functions'` (shared by Attendance/Employees/Payroll/
+  the new page — not a separate new section).
+- Late Present and Half Day render as two tabs on the new page, not stacked sections.
+- The existing "Pending Waiver Approvals" queue (HR/Admin) **and** Manager's "Team Waiver
+  Approvals" card both move to the new page — Attendance page reverts to just the original Stage
+  1/2 punch approvals + roster (Late/Half-Day badges and the `DayDetailSheet` waiver block on the
+  roster stay put — display/drill-down, not rule *management*).
+- Mapping unlocks only after the rule setting is Admin-approved.
+- Mapping changes need no separate approval — HR adds/removes users directly; Admin's screen shows
+  the same mapping read-only (no add/remove controls on Admin's side).
+
+**Built:**
+1. **Schema** — new `attendance_rule_users` join table (`rule_id`, `user_id`, `added_by`,
+   `added_at`, `unique(rule_id, user_id)`); `attendance_rules.user_ids` (jsonb array) dropped after
+   migrating any existing rows' array into the new table first.
+2. **`src/lib/attendanceRules.js`** — `resolveRuleClassification`'s internal `rulesApplyingTo`
+   switched from `r.user_ids.includes(...)` to `r.mapped?.some(m => ... m.user_id ...)`, reading the
+   new embedded-join array `db.fetchAttendanceRules()` now provides. Every other export
+   (`computeAttendanceStats`, `eligibleForWaiverStage`, `isUnapprovedInstance`,
+   `isFullyApprovedPunch`, `deriveApprover2Role`) untouched.
+3. **`db.js`** — `createAttendanceRule` no longer accepts/writes `user_ids`; `fetchAttendanceRules`
+   extended to `select('*, role:roles(id,name), mapped:attendance_rule_users(user_id, user:users(id,
+   name, avatar, color)))')` so one fetch feeds both the mapping-editor UI and punch-time detection;
+   new `addRuleUser(ruleId, userId, addedBy)` (23505 unique-violation on an already-mapped user
+   treated as success, same defensive pattern as `punchIn`'s duplicate-punch handling) and
+   `removeRuleUser(ruleId, userId)`.
+4. **New `src/pages/shared/AttendanceRules.jsx`** — role-router at the top (`RuleManagement` for
+   HR/Admin, `ManagerWaiverQueue` for Manager, matching `Attendance.jsx`'s own branch-by-role
+   style). `RuleManagement`: a Late Present/Half Day tab bar controls two tab-scoped cards (Rule
+   Setting — list + "+ Create Rule" Sheet, now asking only for Role/Threshold/Approver 1, no user
+   picker at all; **User Mapping** — one sub-section per *approved* rule of the active type, chips
+   with HR add-via-dropdown/remove-via-×, Admin sees the identical chips with no remove control),
+   plus two cards shown underneath regardless of active tab (Pending Waiver Approvals — combined
+   both types, moved as-is; Attendance Rule Settings — Admin-only, moved as-is, since its
+   `max_waivers_*` fields apply across both rule types anyway). `ManagerWaiverQueue` is the old
+   `AttendanceManagerView`'s waiver card moved verbatim (Manager's self-view calendar itself stays
+   on the Attendance page, unaffected by this move).
+5. **`Attendance.jsx`** — router simplified back to two branches (HR/Admin vs. everyone else,
+   Manager included) — `AttendanceManagerView`/`CreateRuleSheet` deleted entirely. `AttendanceHR()`
+   lost the Attendance Rules/Attendance Rule Settings/Pending Waiver Approvals cards (moved out) —
+   kept Manpower Production Issues, Stage 1, Stage 2, and the Attendance Roster **including** its
+   Late/Half-Day badges, `AttCal` flags, and Effective Absent figure (display, not rule management).
+   `DayDetailSheet` keeps its rule-status block + inline Waive/Approve-(Stage 2) button exactly as
+   before, still reachable from a roster day-cell.
+6. **Menu wiring** (`WebApp.jsx` + `Settings.jsx`, per Recurring Bug Pattern #6) — `sec:'HR'` →
+   `sec:'HR Functions'` on the existing `attendance`/`employees`/`payroll` entries in `WebApp.jsx`'s
+   `ALL_MENUS`; new `{ id:'attendanceRules', label:'Daily Attendance Rules', icon:'⏱️',
+   sec:'HR Functions' }` added to both files' `ALL_MENUS` copies + `PAGE_MAP`.
+
+**Schema — NOT yet applied, user must run:**
+```sql
+create table attendance_rule_users (
+  id bigserial primary key,
+  rule_id bigint not null references attendance_rules(id),
+  user_id bigint not null references users(id),
+  added_by bigint references users(id),
+  added_at timestamptz not null default now(),
+  unique(rule_id, user_id)
+);
+
+-- Preserve the two existing test rules' current user_ids into the new mapping table before
+-- dropping the column, so nothing already-approved silently loses its mapping.
+insert into attendance_rule_users (rule_id, user_id)
+select id, (jsonb_array_elements_text(user_ids))::bigint
+from attendance_rules
+where user_ids is not null and jsonb_array_length(user_ids) > 0;
+
+alter table attendance_rules drop column user_ids;
+```
+
+**Verification done this session:** `vite build` clean. Scoped `eslint` on every new/touched file
+(`attendanceRules.js`, `db.js`, `Attendance.jsx`, `AttendanceRules.jsx`, `WebApp.jsx`,
+`Settings.jsx`) — `git stash` diff confirms the only pre-existing issues (`WebApp.jsx`'s
+`SideContent` static-component warning, `Settings.jsx`'s unused `Inp`) are byte-identical
+before/after. The 3 `react-hooks/set-state-in-effect` errors on this session's 3
+`useEffect(() => { load() }, [])` mount-fetch effects (one in `Attendance.jsx`, two in the new
+`AttendanceRules.jsx`) match the exact already-accepted pattern class documented earlier this
+session (`InvoiceApprovalTile.jsx`'s identical shape) — not new problems.
+
+**Still open / not done yet:**
+- **Schema not yet applied** — `createAttendanceRule`/`addRuleUser`/`removeRuleUser` will error
+  until the `attendance_rule_users` table exists and `user_ids` is dropped; `resolveRuleClassification`
+  will read `rule.mapped` as `undefined` (harmless — no rule ever matches, same soft-fail-safe
+  behavior as before schema was first applied for this feature).
+- **Not browser-tested** — same constraint as most feature work in this project. Full flow to
+  verify once schema is applied: as HR, create a Late Present rule with no user picker in sight →
+  as Admin, confirm the rule shows on the new page with an Approve button and (once approved) a
+  mapping section appears → as HR, map 1-2 users via the chip picker, confirm Admin's view shows
+  the same mapping read-only → punch in as a mapped user, confirm detection still fires correctly
+  (now reading the `mapped` join instead of `user_ids`) → confirm Pending Waiver Approvals and
+  Attendance Rule Settings still work exactly as before, just on the new page → confirm Manager's
+  Team Waiver Approvals card appears there too, correctly scoped → confirm the Attendance page
+  itself is back to just Stage 1/2 + roster (badges/dots intact) with no rule-authoring cards left.
+- **Admin's `attendanceRules` menu box not yet checked** for Admin/HR/Manager roles in Settings —
+  the id is genuinely new (not a relabel like the earlier Targets→Goals Status rename), so it needs
+  a fresh checkbox per role before anyone sees it, even after schema is live.
+- **The two existing test rules' mapping migration hasn't been verified live** — the `insert ...
+  select` in the schema block above should carry Arjun's mapping on both test rules forward into
+  `attendance_rule_users` automatically, but this hasn't been confirmed via a REST probe after the
+  user runs it (worth a quick check the same way schema application was verified for the feature
+  above, given this migration reads from a column that gets dropped in the same script).
   would close the loop.
