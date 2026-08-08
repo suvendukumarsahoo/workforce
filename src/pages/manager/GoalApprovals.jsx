@@ -9,7 +9,7 @@ import { formatPeriodLabel, listRecentPeriods } from '../../lib/period.js'
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 
 export default function GoalApprovals() {
-  const { can, role } = useAuth()
+  const { can, role, currentUser } = useAuth()
 const { goals, setGoals, members, params, products, distributors: customers, categories, showToast, loadAll, currentPeriod } = useData()
 const [reviewing, setReviewing] = useState(null)
 
@@ -50,12 +50,23 @@ const [reviewing, setReviewing] = useState(null)
     updated.categories = newCats
     if (decisions['visits']) { updated.visits_status = decisions['visits']; updated.visits_note = decisions['visits'] === 'rejected' ? (notes['visits'] || '') : null }
     if (decisions['acq'])    { updated.acq_status    = decisions['acq'];    updated.acq_note    = decisions['acq']    === 'rejected' ? (notes['acq']    || '') : null }
+    if (decisions['new_outlets'])        { updated.new_outlets_status        = decisions['new_outlets'];        updated.new_outlets_note        = decisions['new_outlets']        === 'rejected' ? (notes['new_outlets']        || '') : null }
+    if (decisions['productive_outlets']) { updated.productive_outlets_status = decisions['productive_outlets']; updated.productive_outlets_note = decisions['productive_outlets'] === 'rejected' ? (notes['productive_outlets'] || '') : null }
+    if (decisions['secondary_orders'])   { updated.secondary_orders_status   = decisions['secondary_orders'];   updated.secondary_orders_note   = decisions['secondary_orders']   === 'rejected' ? (notes['secondary_orders']   || '') : null }
+    if (decisions['secondary_value'])    { updated.secondary_value_status    = decisions['secondary_value'];    updated.secondary_value_note    = decisions['secondary_value']    === 'rejected' ? (notes['secondary_value']    || '') : null }
 
     updated.reviewed_at = new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
     updated.status = getGoalOverallStatus(updated)
 
     const { error } = await db.upsertGoal(memberId, currentPeriod, updated)
     if (error) { showToast('Error saving review'); return }
+    const memberName = (members || []).find(m => m.id === memberId)?.name || memberId
+    const decisionValues = Object.values(decisions)
+    const approvedCount = decisionValues.filter(d => d === 'approved').length
+    const rejectedCount = decisionValues.filter(d => d === 'rejected').length
+    const action = rejectedCount > 0 ? 'reject' : 'approve'
+    db.logActivity(currentUser?.id, action, 'goal',
+      `Reviewed goals — ${memberName} (${formatPeriodLabel(currentPeriod)}): ${approvedCount} approved, ${rejectedCount} rejected`, memberId)
     setGoals(prev => ({ ...prev, [memberId]: updated }))
     await loadAll()
     showToast('Review saved — member notified')
@@ -246,8 +257,12 @@ function GoalReviewSheet({ member, param, goal, products, customers, categories,
         const fg = (g.categories || {})[id]
         return <FieldRow key={id} fKey={`cat_${id}`} label={`Category: ${c.name}`} fg={fg} unit={c.unit} dec={dec} setDec={setDec} notes={notes} setNotes={setNotes} />
       })}
-      {param.enable_visits && <FieldRow fKey="visits" label="Outlet visits" fg={{ goal: g.visits_goal, status: g.visits_status, note: g.visits_note }} unit="visits" dec={dec} setDec={setDec} notes={notes} setNotes={setNotes} />}
+      {param.enable_visits && <FieldRow fKey="visits" label="New Customer Visits" fg={{ goal: g.visits_goal, status: g.visits_status, note: g.visits_note }} unit="visits" dec={dec} setDec={setDec} notes={notes} setNotes={setNotes} />}
       {param.enable_acq    && <FieldRow fKey="acq"    label="New customer acq." fg={{ goal: g.acq_goal, status: g.acq_status, note: g.acq_note }} unit="customers" dec={dec} setDec={setDec} notes={notes} setNotes={setNotes} />}
+      {param.enable_new_outlets && <FieldRow fKey="new_outlets" label="New Outlets" fg={{ goal: g.new_outlets_goal, status: g.new_outlets_status, note: g.new_outlets_note }} unit="outlets" dec={dec} setDec={setDec} notes={notes} setNotes={setNotes} />}
+      {param.enable_productive_outlets && <FieldRow fKey="productive_outlets" label="Productive Outlets" fg={{ goal: g.productive_outlets_goal, status: g.productive_outlets_status, note: g.productive_outlets_note }} unit="outlets" dec={dec} setDec={setDec} notes={notes} setNotes={setNotes} />}
+      {param.enable_secondary_orders && <FieldRow fKey="secondary_orders" label="Total No. of Orders" fg={{ goal: g.secondary_orders_goal, status: g.secondary_orders_status, note: g.secondary_orders_note }} unit="orders" dec={dec} setDec={setDec} notes={notes} setNotes={setNotes} />}
+      {param.enable_secondary_value && <FieldRow fKey="secondary_value" label="Secondary Value" fg={{ goal: g.secondary_value_goal, status: g.secondary_value_status, note: g.secondary_value_note }} unit="value" dec={dec} setDec={setDec} notes={notes} setNotes={setNotes} />}
       {hasDecisions
         ? <div style={{ display: 'flex', gap: 8, marginTop: 8 }}><Btn v="pri" full onClick={async () => { await onAction(member.id, dec, notes); onClose() }}>Save decisions</Btn><Btn full onClick={onClose}>Cancel</Btn></div>
         : <div style={{ fontSize: 12, color: '#9ca3af', textAlign: 'center', marginTop: 8 }}>Approve or reject at least one field to save.</div>

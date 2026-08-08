@@ -8,7 +8,7 @@ const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard'        },
   { id:'parameters',    label:'Set Parameters'   },
   { id:'goalApprovals', label:'Goal Approvals'   },
-  { id:'targets',       label:'Targets'          },
+  { id:'targets',       label:'Goals Status'     },
   { id:'expApprovals',  label:'Expense Approvals'},
   { id:'invoices',      label:'Invoices'         },
   { id:'customers',     label:'Distributors'     },
@@ -44,7 +44,7 @@ const ALL_MENUS = [
 ]
 
 export default function Settings() {
-  const { can } = useAuth()
+  const { can, currentUser } = useAuth()
   const { roles, setRoles, showToast } = useData()
   const [selId,   setSelId]   = useState(roles[0]?.id || '')
   const [editing, setEditing] = useState(null)
@@ -54,17 +54,21 @@ export default function Settings() {
 
   const togMenu = async (rid, mid) => {
     const r   = roles.find(x => x.id === rid)
+    const nowOn = !r.menus.includes(mid)
     const upd = { ...r, menus: r.menus.includes(mid) ? r.menus.filter(x => x !== mid) : [...r.menus, mid] }
     const { error } = await db.updateRole(rid, { menus: upd.menus })
     if (error) { showToast('Error saving'); return }
+    db.logActivity(currentUser?.id, 'update', 'settings', `${nowOn ? 'Enabled' : 'Disabled'} menu "${mid}" for role ${r.name}`, rid)
     setRoles(prev => prev.map(x => x.id === rid ? upd : x))
   }
 
   const togAction = async (rid, act) => {
     const r   = roles.find(x => x.id === rid)
+    const nowOn = !r.actions[act]
     const upd = { ...r, actions: { ...r.actions, [act]: !r.actions[act] } }
     const { error } = await db.updateRole(rid, { actions: upd.actions })
     if (error) { showToast('Error saving'); return }
+    db.logActivity(currentUser?.id, 'update', 'settings', `${nowOn ? 'Enabled' : 'Disabled'} action "${act}" for role ${r.name}`, rid)
     setRoles(prev => prev.map(x => x.id === rid ? upd : x))
   }
 
@@ -72,11 +76,13 @@ export default function Settings() {
     if (editing?.id) {
       const { error } = await db.updateRole(editing.id, { name: d.name, color: d.color })
       if (error) { showToast('Error saving'); return }
+      db.logActivity(currentUser?.id, 'update', 'settings', `Updated role — ${d.name}`, editing.id)
       setRoles(prev => prev.map(x => x.id === editing.id ? { ...x, name: d.name, color: d.color } : x))
     } else {
       const newRole = { id: 'r' + Date.now().toString(36), name: d.name, color: d.color || '#6b7280', menus: [], actions: { add: false, edit: false, del: false, approve: false, reject: false } }
       const { error } = await db.createRole(newRole)
       if (error) { showToast('Error saving'); return }
+      db.logActivity(currentUser?.id, 'create', 'settings', `Created role — ${d.name}`, newRole.id)
       setRoles(prev => [...prev, newRole])
       setSelId(newRole.id)
     }
@@ -87,6 +93,7 @@ export default function Settings() {
   const delRole = async (r) => {
     const { error } = await db.deleteRole(r.id)
     if (error) { showToast('Error deleting'); return }
+    db.logActivity(currentUser?.id, 'update', 'settings', `Deleted role — ${r.name}`, r.id)
     setRoles(prev => prev.filter(x => x.id !== r.id))
     setSelId(roles.filter(x => x.id !== r.id)[0]?.id || '')
     setConfirm(null)

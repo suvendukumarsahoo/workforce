@@ -146,6 +146,7 @@ const [step, setStep] = useState('list') // list -> select -> payment -> items -
           if (payError) { showToast('Order updated but payment save failed'); setSubmitting(false); return }
         }
       }
+      db.logActivity(currentUser?.id, 'update', 'order', `Updated order #${editingOrderId} — ${(customers || []).find(d => d.id === distributorId)?.name || distributorId}`, editingOrderId)
       await loadAll(); await loadMyOrders()
       setSubmitting(false)
       showToast('Order updated')
@@ -160,6 +161,7 @@ const [step, setStep] = useState('list') // list -> select -> payment -> items -
         })
         if (payError) { showToast('Order created but payment save failed'); setSubmitting(false); return }
       }
+      db.logActivity(currentUser?.id, 'submit', 'order', `Submitted order #${order.id} — ${(customers || []).find(d => d.id === distributorId)?.name || distributorId}`, order.id)
       await loadAll(); await loadMyOrders()
       setSubmitting(false)
       showToast('Order submitted for manager approval')

@@ -4,6 +4,8 @@ import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Av, Btn, Sheet, AttCal } from '../../components/ui.jsx'
 import MyAttendanceCalendar from '../../components/MyAttendanceCalendar.jsx'
 import { buildJourneyEvents, fmtTs } from '../../lib/journeyTimeline.js'
+import { buildActivityEvents } from '../../lib/activityTimeline.js'
+import VeinTimeline from '../../components/VeinTimeline.jsx'
 import { ISSUE_CATEGORIES, hasManpowerIssue } from '../../lib/productionIssues.js'
 import * as db from '../../lib/db.js'
 
@@ -218,6 +220,7 @@ function DayDetailSheet({ detail, onClose, onApproveStage1, onApproveStage2, bus
   const { user, date, punch } = detail
   const isDriver = user.role_id === 'r7'
   const [driverEvents, setDriverEvents] = useState(null)
+  const [activityEvents, setActivityEvents] = useState(null)
   const [actionError, setActionError] = useState(null)
 
   const runApprove = async (fn, id) => {
@@ -254,6 +257,13 @@ function DayDetailSheet({ detail, onClose, onApproveStage1, onApproveStage2, bus
         setDriverEvents(events)
       })
   }, [isDriver, user.member_id, date])
+
+  useEffect(() => {
+    if (isDriver) return
+    db.fetchActivityLog(user.id, date).then(({ data }) => {
+      setActivityEvents(buildActivityEvents(punch, data || []))
+    })
+  }, [isDriver, user.id, date, punch])
 
   return (
     <Sheet title={user.name} sub={date} onClose={onClose}>
@@ -324,10 +334,10 @@ function DayDetailSheet({ detail, onClose, onApproveStage1, onApproveStage2, bus
                 </div>
               ))}
             </>
+          ) : activityEvents === null ? (
+            <div style={{ fontSize: 12, color: '#9ca3af' }}>Loading...</div>
           ) : (
-            <div style={{ fontSize: 12, color: '#9ca3af' }}>
-              Detailed activity tracking isn't available for this role yet — approve based on other context.
-            </div>
+            <VeinTimeline events={activityEvents} />
           )}
         </>
       )}

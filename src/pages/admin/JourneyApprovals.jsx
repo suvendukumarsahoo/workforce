@@ -52,6 +52,7 @@ export default function JourneyApprovals() {
   const approve = async (allocation) => {
     setBusyId(allocation.id)
     await db.approveJourneyComplete(allocation.id, currentUser?.member_id, remarksById[allocation.id] || '')
+    db.logActivity(currentUser?.id, 'approve', 'allocation', `Approved journey complete — allocation #${allocation.id}`, allocation.id)
     setBusyId(null)
     await loadData()
     await loadApproved()

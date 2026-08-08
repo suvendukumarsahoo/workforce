@@ -7,7 +7,7 @@ import * as db from '../../lib/db.js'
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 
 export default function Products() {
-  const { can } = useAuth()
+  const { can, currentUser } = useAuth()
   const { products, setProducts, categories, showToast } = useData()
   const [sheet, setSheet] = useState(null)
 
@@ -49,11 +49,13 @@ export default function Products() {
     if (sheet?.id) {
       const { error } = await db.updateProduct(sheet.id, payload)
       if (error) { showToast('Error saving'); return }
+      db.logActivity(currentUser?.id, 'update', 'product', `Updated product — ${payload.name}`, sheet.id)
       setProducts(prev => prev.map(x => x.id === sheet.id ? { ...x, ...payload } : x))
     } else {
       const id = 'P' + Date.now().toString(36).toUpperCase()
       const { error } = await db.createProduct({ ...payload, id })
       if (error) { showToast('Error saving'); return }
+      db.logActivity(currentUser?.id, 'create', 'product', `Added product — ${payload.name}`, id)
       setProducts(prev => [...prev, { ...payload, id }])
     }
     setSheet(null)

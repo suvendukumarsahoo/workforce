@@ -6,15 +6,17 @@ import * as db from '../../lib/db.js'
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 
 export default function ExpApprovals() {
-  const { can } = useAuth()
+  const { can, currentUser } = useAuth()
   const { expenses, setExpenses, showToast, loadAll } = useData()
 
   const pending = (expenses || []).filter(e => e.status === 'pending')
 
-  const action = async (id, status) => {
-    const { error } = await db.updateExpense(id, { status })
+  const action = async (expense, status) => {
+    const { error } = await db.updateExpense(expense.id, { status })
     if (error) { showToast('Error updating expense'); return }
-    setExpenses(prev => prev.map(e => e.id === id ? { ...e, status } : e))
+    db.logActivity(currentUser?.id, status === 'approved' ? 'approve' : 'reject', 'expense',
+      `${status === 'approved' ? 'Approved' : 'Rejected'} expense — ${expense.member?.name || 'Member'} · ${F(expense.amount)} (${expense.category})`, expense.id)
+    setExpenses(prev => prev.map(e => e.id === expense.id ? { ...e, status } : e))
     await loadAll()
     showToast(status === 'approved' ? 'Expense approved' : 'Expense rejected')
   }
@@ -42,8 +44,8 @@ export default function ExpApprovals() {
             <div style={{ textAlign: 'right', flexShrink: 0 }}>
               <div style={{ fontWeight: 700, marginBottom: 8 }}>{F(e.amount)}</div>
               <div style={{ display: 'flex', gap: 6 }}>
-                {can('approve') && <Btn v="ok" sm onClick={() => action(e.id, 'approved')}>✓ Approve</Btn>}
-                {can('reject')  && <Btn v="bad" sm onClick={() => action(e.id, 'rejected')}>✗ Reject</Btn>}
+                {can('approve') && <Btn v="ok" sm onClick={() => action(e, 'approved')}>✓ Approve</Btn>}
+                {can('reject')  && <Btn v="bad" sm onClick={() => action(e, 'rejected')}>✗ Reject</Btn>}
               </div>
             </div>
           </div>

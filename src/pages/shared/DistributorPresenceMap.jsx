@@ -18,16 +18,22 @@ import { useData } from '../../hooks/useData.jsx'
  * pattern exactly, minus the polling/realtime/idle-detection parts this static view doesn't need.
  * Colored dot markers (Leaflet has no built-in colored pin) are new to this codebase — both other
  * map files use the plain default marker.
+ *
+ * District + state-outline boundaries (5 Aug 2026 session) — first use of boundary GeoJSON
+ * anywhere in this app. Static reference lines only, no click/hover interaction (explicit scope
+ * call — see the district-boundary session entry in CLAUDE.md). Data: `public/data/
+ * odisha-districts.geojson` / `odisha-state.geojson`, derived from DataMeet's Census 2011 district
+ * shapefile (CC BY 4.0 — see public/data/ATTRIBUTION.txt for full provenance/processing notes),
+ * fetched at runtime as static assets, not bundled into the JS chunk.
  */
 
 const BUCKET_COLOR = { green: '#34d399', orange: '#fbbf24', red: '#f87171' }
 const BUCKET_LABEL = { green: 'Billed This Month', orange: 'Billed Last 3 Months', red: 'Not Billed 3+ Months' }
 
-// Odisha state's approximate real bounding box (India) — this app has no state-boundary GeoJSON
-// (drawing the actual outline was explicitly deferred), so "state map of Odisha" here means: the
-// map always shows this fixed extent, rather than auto-fitting/zooming to wherever the plotted
-// distributors happen to be (which could zoom in too tight, or — if a distributor's coordinates are
-// ever bad data — zoom out to show unrelated regions).
+// Odisha state's approximate real bounding box (India) — used for the map's fixed view/pan
+// restriction (see the fitBounds note below); independent of the real district/state outline
+// GeoJSON now drawn on top (see the file header comment) — this bounding box just frames the
+// viewport, it isn't the shape rendered.
 const ODISHA_BOUNDS = [[17.7, 81.3], [22.75, 87.6]]
 
 const darkContainer = { background: '#0f172a', borderRadius: 16, padding: 16 }
@@ -113,6 +119,34 @@ export default function DistributorPresenceMap() {
         attribution: '&copy; OpenStreetMap contributors',
       }).addTo(map)
       setMapReady(true)
+
+      // District + a distinct state-outline overlay (5 Aug 2026 — first use of boundary GeoJSON in
+      // this app; source: DataMeet's Census 2011 district shapefile, CC BY 4.0, simplified +
+      // dissolved offline — see public/data/ATTRIBUTION.txt for full provenance). Soft-fail like
+      // every other fetch in this app: the core map (tiles + distributor markers) still works fine
+      // if this 404s or the JSON fails to parse, it just won't have boundary lines.
+      Promise.all([
+        fetch('/data/odisha-districts.geojson').then(r => r.json()),
+        fetch('/data/odisha-state.geojson').then(r => r.json()),
+      ]).then(([districtsGeoJson, stateGeoJson]) => {
+        if (cancelled) return
+        // Districts: subtle, non-interactive — reference lines, not a UI element (this session's
+        // ask was explicitly "static outlines only," no click/hover behavior).
+        L.geoJSON(districtsGeoJson, {
+          style: { color: '#64748b', weight: 1, opacity: 0.6, fill: false },
+          interactive: false,
+        }).addTo(map)
+        // State outline: the "distinct border" — deeper/more saturated blue than the district
+        // lines' slate gray, thicker, added after (so it draws over any coincident district-line
+        // segments along Odisha's own edge).
+        L.geoJSON(stateGeoJson, {
+          style: { color: '#0c4a6e', weight: 3, opacity: 0.95, fill: false },
+          interactive: false,
+        }).addTo(map)
+        map.attributionControl.addAttribution(
+          'District boundaries &copy; <a href="https://github.com/datameet/maps" target="_blank" rel="noopener">DataMeet</a> (CC BY 4.0)'
+        )
+      }).catch(() => { /* boundaries are a visual layer, not required for the map to function */ })
     }).catch(() => { if (!cancelled) setMapError('Error loading map library') })
 
     return () => {

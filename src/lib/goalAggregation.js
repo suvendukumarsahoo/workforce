@@ -19,6 +19,10 @@ export function aggregateForMembers(memberIds, slices, products = [], categories
   const value = emptyTotal()
   const visits = emptyTotal()
   const acq = emptyTotal()
+  const newOutlets = emptyTotal()
+  const productiveOutlets = emptyTotal()
+  const secondaryOrders = emptyTotal()
+  const secondaryValue = emptyTotal()
   const prodTotals = {}
   const catTotals = {}
   const custTotals = {}
@@ -30,7 +34,7 @@ export function aggregateForMembers(memberIds, slices, products = [], categories
     slices.forEach(({ goalsMap, paramsMap, achievementsMap, weight }) => {
       const goal = (goalsMap || {})[key]
       const param = (paramsMap || {})[key] || {}
-      const ach = (achievementsMap || {})[key] || { value: 0, visits: 0, acq: 0, prods: {}, cats: {}, custs: {} }
+      const ach = (achievementsMap || {})[key] || { value: 0, visits: 0, acq: 0, prods: {}, cats: {}, custs: {}, new_outlets: 0, productive_outlets: 0, secondary_orders: 0, secondary_value: 0 }
       if (!goal) return
 
       if (param.enable_value && goal.value_status === 'approved') {
@@ -47,6 +51,22 @@ export function aggregateForMembers(memberIds, slices, products = [], categories
         // must always show the true count (see achievementEngine.js's matching comment).
         if (goal.acq_status === 'approved') acq.goal += (Number(goal.acq_goal) || 0) * weight
         acq.achieved += ach.acq || 0
+      }
+      if (param.enable_new_outlets && goal.new_outlets_status === 'approved') {
+        newOutlets.goal += (Number(goal.new_outlets_goal) || 0) * weight
+        newOutlets.achieved += ach.new_outlets || 0
+      }
+      if (param.enable_productive_outlets && goal.productive_outlets_status === 'approved') {
+        productiveOutlets.goal += (Number(goal.productive_outlets_goal) || 0) * weight
+        productiveOutlets.achieved += ach.productive_outlets || 0
+      }
+      if (param.enable_secondary_orders && goal.secondary_orders_status === 'approved') {
+        secondaryOrders.goal += (Number(goal.secondary_orders_goal) || 0) * weight
+        secondaryOrders.achieved += ach.secondary_orders || 0
+      }
+      if (param.enable_secondary_value && goal.secondary_value_status === 'approved') {
+        secondaryValue.goal += (Number(goal.secondary_value_goal) || 0) * weight
+        secondaryValue.achieved += ach.secondary_value || 0
       }
       if (param.enable_products) {
         (param.sel_prods || []).forEach(pid => {
@@ -99,6 +119,8 @@ export function aggregateForMembers(memberIds, slices, products = [], categories
 
   return {
     value, visits, acq,
+    new_outlets: newOutlets, productive_outlets: productiveOutlets,
+    secondary_orders: secondaryOrders, secondary_value: secondaryValue,
     products: toRows(prodTotals, products, p => p?.unit),
     categories: toRows(catTotals, categories, c => c?.unit),
     customers: toRows(custTotals, customers),

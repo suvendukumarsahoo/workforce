@@ -985,6 +985,37 @@ export async function approveActivityStage2(id, approvedBy) {
   return { data, error }
 }
 
+// ─── ACTIVITY LOG (generic, feeds Attendance Stage 2's non-driver vein diagram) ────────────────
+// user_id is explicitly users.id (matches currentUser.id) — NOT members.id. Several existing
+// `approved_by`-style columns in this app inconsistently store one or the other (see CLAUDE.md);
+// users.id is right here because it's always available regardless of whether the actor has a
+// members row, and it matches attendance_punches.user_id itself, the table this feeds into.
+// `date` mirrors attendance_punches' own local-calendar-date column (todayStr(), just above) so
+// fetching by day is a plain equality check, not timezone-sensitive range math on `occurred_at`.
+
+export async function logActivity(userId, action, entity, label, entityId) {
+  // Soft-fail, non-blocking by design — called AFTER the real write already succeeded. A logging
+  // failure must never surface to the user or read as if the actual action failed.
+  try {
+    const { error } = await supabase
+      .from('activity_log')
+      .insert({ user_id: userId, date: todayStr(), action, entity, label, entity_id: entityId != null ? String(entityId) : null })
+    if (error) console.error('logActivity failed:', error)
+  } catch (e) {
+    console.error('logActivity failed:', e)
+  }
+}
+
+export async function fetchActivityLog(userId, date) {
+  const { data, error } = await supabase
+    .from('activity_log')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('date', date)
+    .order('occurred_at', { ascending: true })
+  return { data, error }
+}
+
 // ─── SALARY ───────────────────────────────────────────────────────────────────
 
 export async function fetchSalaries() {
@@ -1373,7 +1404,17 @@ export async function fetchOutletsForBeat(beatId) {
 
 export async function createSecondaryOrder(header, items) {
   const today = new Date()
-  const dateStr = `${String(today.getDate()).padStart(2, '0')}${String(today.getMonth() + 1).padStart(2, '0')}${today.getFullYear()}`
+  const dd = String(today.getDate()).padStart(2, '0')
+  const mm = String(today.getMonth() + 1).padStart(2, '0')
+  const yyyy = today.getFullYear()
+  const dateStr = `${dd}${mm}${yyyy}`
+  // Local calendar date, NOT toISOString()'s UTC date — for IST (UTC+5:30), any order placed
+  // between 12:00-5:29am local time would otherwise get stamped with the PREVIOUS day's
+  // order_date while the id prefix above (already local) still says today, so the order would
+  // never show up in "today's" Ongoing Orders/Day Summary queries (both filter by the same local
+  // todayStr() this file already uses elsewhere). Same bug class already fixed for
+  // attendance_punches/period.js; this call site had never been touched by those fixes.
+  const orderDate = `${yyyy}-${mm}-${dd}`
   const { count } = await supabase
     .from('secondary_orders')
     .select('id', { count: 'exact', head: true })
@@ -1382,7 +1423,7 @@ export async function createSecondaryOrder(header, items) {
   const id = `SO-${dateStr}-${seq}`
   const { data: order, error } = await supabase
     .from('secondary_orders')
-    .insert({ id, ...header, order_date: today.toISOString().slice(0, 10) })
+    .insert({ id, ...header, order_date: orderDate })
     .select()
     .single()
   if (error) return { data: null, error }
@@ -1416,15 +1457,116 @@ export async function fetchSecondaryOrdersForDate(memberId, date) {
     .select('*, outlet:retail_outlets(id, name, number), items:secondary_order_items(*, product:products(id, name, unit))')
     .eq('member_id', memberId)
     .eq('order_date', date)
+    // Cancelled orders are excluded here — Day Summary's outlet-wise/product-wise totals should
+    // read "as if it didn't happen" once a rep cancels an order (see cancelSecondaryOrder below),
+    // not silently include its value.
+    .eq('cancelled', false)
     .order('created_at', { ascending: true })
   return { data, error }
 }
 
-// dateRange: { from, to } ISO date strings — feeds the Outlet Visits achievement alongside the
-// existing distributor_visits source (see achievementEngine.js).
+// Checkout rework (5 Aug 2026) — a saved order isn't final until "Retailing Complete" locks it.
+// Between save and lock, a rep can revise items (updateSecondaryOrderItems) or back out entirely
+// (cancelSecondaryOrder, soft-cancel + reverts the outlet to unvisited).
+
+export async function updateSecondaryOrderItems(orderId, items) {
+  const { error: delError } = await supabase.from('secondary_order_items').delete().eq('order_id', orderId)
+  if (delError) return { data: null, error: delError }
+  const itemRows = items.map(it => ({
+    order_id: orderId, product_id: it.product_id, category_id: it.category_id,
+    qty: it.qty, rate: it.rate,
+    entered_unit: it.entered_unit || 'base', entered_qty: it.entered_qty ?? it.qty,
+  }))
+  const { error } = await supabase.from('secondary_order_items').insert(itemRows)
+  return { data: { id: orderId }, error }
+}
+
+export async function cancelSecondaryOrder(orderId) {
+  const { error } = await supabase.from('secondary_orders').update({ cancelled: true }).eq('id', orderId)
+  if (error) return { error }
+  // Soft-cancelling the order also removes its retail_visits row so the outlet reverts to "Not
+  // Visited" for today — the rep can walk it again and place a fresh order if they want to.
+  const { error: visitError } = await supabase.from('retail_visits').delete().eq('order_id', orderId)
+  return { error: visitError || null }
+}
+
+export async function fetchOngoingSecondaryOrders(memberId, date) {
+  const { data, error } = await supabase
+    .from('secondary_orders')
+    .select('*, outlet:retail_outlets(id, name, number), items:secondary_order_items(*, product:products(id, name, unit))')
+    .eq('member_id', memberId)
+    .eq('order_date', date)
+    .eq('cancelled', false)
+    .eq('locked', false)
+    .order('created_at', { ascending: true })
+  return { data, error }
+}
+
+export async function lockSecondaryOrdersForDate(memberId, date) {
+  const { error } = await supabase
+    .from('secondary_orders')
+    .update({ locked: true })
+    .eq('member_id', memberId)
+    .eq('order_date', date)
+    .eq('cancelled', false)
+    .eq('locked', false)
+  return { error }
+}
+
+// Day Summary — a permanent "receipt" created once Retailing Complete is confirmed (not the live,
+// always-recomputable rollup the Day Summary tab already shows any time of day). id is
+// DS-{memberId}-DDMMYYYY — naturally unique per member+day without a count-query race, since this
+// only ever fires once per member per day (backstopped by the unique(member_id, summary_date)
+// constraint).
+export async function createDaySummary(memberId, date, totals) {
+  const [y, m, d] = date.split('-')
+  const id = `DS-${memberId}-${d}${m}${y}`
+  const { data, error } = await supabase
+    .from('day_summaries')
+    .insert({
+      id, member_id: memberId, summary_date: date,
+      total_outlets_visited: totals.outletsVisited || 0,
+      total_orders: totals.orders || 0,
+      total_value: totals.value || 0,
+    })
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function fetchDaySummaryForDate(memberId, date) {
+  const { data, error } = await supabase
+    .from('day_summaries')
+    .select('*')
+    .eq('member_id', memberId)
+    .eq('summary_date', date)
+    .maybeSingle()
+  return { data, error }
+}
+
+// dateRange: { from, to } ISO date strings — feeds the Distributor Secondary goal category's
+// Productive Outlets / Total No. of Orders achievement (see achievementEngine.js). No longer feeds
+// the general Visits/"New Customer Visits" goal — that reverted to distributor_visits-only once
+// Distributor Secondary got its own dedicated goal fields (5 Aug 2026 session).
 export async function fetchRetailVisits(dateRange = null) {
   let query = supabase.from('retail_visits').select('*')
   if (dateRange) query = query.gte('visit_date', dateRange.from).lte('visit_date', dateRange.to)
+  const { data, error } = await query
+  return { data, error }
+}
+
+// Global, date-ranged fetches for the Distributor Secondary goal category (New Outlets / Value) —
+// same dateRange-optional pattern as fetchRetailVisits above, org-wide (no member_id filter).
+export async function fetchRetailOutlets(dateRange = null) {
+  let query = supabase.from('retail_outlets').select('*')
+  if (dateRange) query = query.gte('created_at', dateRange.from).lte('created_at', dateRange.to)
+  const { data, error } = await query
+  return { data, error }
+}
+
+export async function fetchSecondaryOrders(dateRange = null) {
+  let query = supabase.from('secondary_orders').select('*, items:secondary_order_items(qty, rate)')
+  if (dateRange) query = query.gte('order_date', dateRange.from).lte('order_date', dateRange.to)
   const { data, error } = await query
   return { data, error }
 }

@@ -1,8 +1,10 @@
 import { useState } from 'react'
+import { useAuth } from '../hooks/useAuth.jsx'
 import { Card, CH, Btn, Sheet, F } from './ui.jsx'
 import * as db from '../lib/db.js'
 
 export default function PickingEditSheet({ order, products, showToast, onClose, onSubmitted }) {
+  const { currentUser } = useAuth()
   const [localAvail, setLocalAvail] = useState(() => {
     const avail = {}
     order.items.forEach(it => { avail[it.id] = it.availability || 'Available' })
@@ -60,6 +62,7 @@ export default function PickingEditSheet({ order, products, showToast, onClose, 
     const { error } = await db.submitPicking(order.id, anyIncomplete)
     setSubmitting(false)
     if (error) { showToast && showToast('Error submitting picking'); return }
+    db.logActivity(currentUser?.id, 'submit', 'order', `Submitted picking for order #${order.id} — ${order.distributor?.name || order.distributor_id}`, order.id)
     showToast && showToast(anyIncomplete ? 'Picking submitted — pending review' : 'Picking submitted — ready for Admin final approval')
     onSubmitted()
   }

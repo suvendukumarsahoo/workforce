@@ -2099,3 +2099,1024 @@ Gotchas section before the next browser-testing pass rather than rediscovering t
 
 **Nothing else from this session is pending** — no schema to run, no menu box left unchecked (Admin
 role's `geoBusinessView` is confirmed live in the DB), no follow-up verification queued.
+
+## Goals Status — replaces Targets, Admin/Manager performance dashboard (5 Aug 2026 session) — BUILT,
+## SCHEMA-FREE, NOT YET BROWSER-TESTED
+
+New session, built from a Plecto "Sales Manager Dashboard" reference screenshot the user provided
+(dark cards: a big Deals-Won gauge, a top-3 rep leaderboard with avatars/medals, Inbound/Outbound
+Revenue %, Revenue from Upgrade, New Customers, Forecasted New Revenue, an Upcoming-Demos donut, an
+Employee table, a Deals-by-Team bar chart). Resolved via AskUserQuestion before building:
+
+- **Scope = Sales/goal performance** — this replaces `Targets.jsx` (the old flat approved-targets
+  list), not a new operational/HR dashboard.
+- **3 of the 9 reference tiles have no WorkForce equivalent** (Inbound/Outbound Revenue %, Revenue
+  from Upgrade, Forecasted New Revenue — no lead-source, upgrade, or forecasting concept exists
+  anywhere in this app) — dropped and replaced with tiles built from real goal data, same call as
+  when `TeamSnapshot.jsx` was built from its own reference image and analogous no-equivalent panels
+  (Avg Days to Close, Deal Loss Reasons, Deals Projection) were dropped rather than faked.
+- **Manager sees own team only, Admin sees the full org** — this is genuinely new scoping logic;
+  neither `Dashboard.jsx` nor the old `Targets.jsx` had ever filtered by `manager_id` before (both
+  are unscoped today, confirmed via exploration before building).
+- **Always "this month," no tab control** — matches the old `Targets.jsx` and the existing precedent
+  that goal-vs-achievement figures are inherently monthly (`SalesSnapshot`'s own Manager Leaderboard
+  already stays month-scoped regardless of its Today/Month/Year tabs, for the same reason: goals
+  don't have a daily or yearly concept in this app).
+
+**Built:**
+1. **`src/pages/shared/GoalsStatus.jsx`** (new, replaces `src/pages/shared/Targets.jsx`, which was
+   deleted) — dark-panel styling matching `SalesSnapshot.jsx`'s established token pair
+   (`panelBase`/`labelStyle`, `#0f172a` outer / `#1e293b` card). Tile mapping from the reference:
+   - **Deals Won Value vs Target → Sales Value gauge** (reuses `MeterGauge` from
+     `GoalBarChart.jsx`, `dark` prop).
+   - **New Revenue by Sales Rep → Top Performers podium** — top 3 members by achieved Sales Value
+     this month, 🥇🥈🥉 + `Av` avatar + name + value, click opens the member drill (no medal/podium
+     pattern existed anywhere else in the app — built fresh from `Av`).
+   - **Inbound/Outbound Revenue % → dropped**, replaced with a **Distributors Created + Outlet
+     Visits** stat pair (achieved counts, reusing `aggregateForMembers`'s `acq`/`visits` fields —
+     `acq.achieved` is already ungated per the 4 Aug 2026 fix, matching "Distributor Created"
+     elsewhere in the app).
+   - **Revenue from Upgrade / Forecasted New Revenue → dropped**, no substitute (no natural mapping,
+     unlike the pair above).
+   - **Upcoming Demos donut → Visits by Rep donut** (`ContributionDonut`, one slice per member,
+     colored by each member's own existing `color` field, same identity-color convention
+     `managerContribution`/`memberContribution` already use elsewhere).
+   - **Employee table (Won Deals/Demos) → Roster table**: Member | Sales Value | Visits |
+     Distributors, sorted descending by achieved Sales Value, row click → member drill.
+   - **Deals by Team bar chart → Category Breakdown bar** (`GoalVsAchievedBreakdown`, `dark` prop) —
+     deliberately NOT a per-manager-team bar chart, since that would duplicate `SalesSnapshot`'s own
+     Manager Leaderboard already showing exactly that breakdown elsewhere in the app.
+   - Member drill-down reuses `MemberGoalDetail.jsx` as-is (same component `Targets.jsx` used),
+     default Sheet z-index (300) — no nested-Sheet stacking here, unlike Dashboard.jsx's
+     Manager→Member drill, so no `zIndex={320}` override needed.
+2. **`ContributionDonut` (`GoalBarChart.jsx`) gained a `dark` prop** — previously the only one of
+   the three chart primitives without dark styling (`MeterGauge`/`GoalVsAchievedBreakdown` already
+   had it). Added dark background/border on the tooltip, dark stroke on pie slice borders, dark
+   legend/empty-state text — same token values used everywhere else in this app's dark panels.
+3. **Menu relabel, not a new menu id** — `WebApp.jsx`'s `ALL_MENUS`/`PAGE_MAP` and `Settings.jsx`'s
+   separate copy both changed `targets`'s **label** "Targets" → "Goals Status" (icon 🎯→🏆) and
+   `PAGE_MAP.targets` now points at `GoalsStatus` instead of the deleted `Targets`. The **id stays
+   `'targets'`** — per CLAUDE.md's own menu convention ("internal id stable, label can be renamed
+   freely without breaking `roles.menus` permission data"), so **no Settings re-check is needed**:
+   any role that already had "Targets" enabled sees "Goals Status" immediately, same permission row.
+
+**Not done / explicitly out of scope for this pass:**
+- No period picker — see "Always this month" resolution above; revisit only if Admin/Manager
+  specifically ask to browse past months here (the existing `listRecentPeriods()`/`historicalCache`
+  pattern from Dashboard.jsx's old, now-removed tab system would be the model to follow).
+- No Org→Manager drill step for Admin (unlike `SalesSnapshot`'s Leaderboard→`ManagerLevelSheet`) —
+  this page's roster/podium/donut are flat across whatever scope (org for Admin, team for Manager),
+  one level only, straight to `MemberGoalDetail`. That manager-level drill already exists via
+  `SalesSnapshot`'s Manager Leaderboard on the main Dashboard; not duplicated here.
+
+**Real cross-cutting bug found via live testing (first browser look at this page), fixed same
+session:** `MeterGauge`'s `RadialBarChart` had no explicit angle-axis domain. Recharts auto-scales
+an unset radial/angle-axis domain to `[0, max(data value)]` — with only one data point in the
+gauge's `data` array, that max IS the value itself, so the arc always rendered as a **full circle**
+regardless of the real percent (screenshot showed "3%" text with a solid, fully-filled red ring, no
+gray "remaining" track visible at all). The percent **text** was always correct; only the ring
+was wrong. This is not new-to-this-session code — `MeterGauge` is reused everywhere (Dashboard's
+old drill sheets, `TeamSnapshot.jsx`, `SalesSnapshot.jsx`, `MemberGoalDetail.jsx`, and now
+`GoalsStatus.jsx`), so every gauge in the app had this bug; it just took this page's low starting
+percentage (3%) to make it visually obvious versus a coincidentally-near-100% value elsewhere.
+Fixed by adding `<PolarAngleAxis type="number" domain={[0, 100]} angleAxisId={0} tick={false} />`
+inside the `RadialBarChart`, pinning the domain so the arc always represents true percent-of-circle.
+`vite build` + scoped `eslint` clean after the fix.
+
+**Still open / not yet browser-tested (next thing to check in a new session):**
+- `vite build` and scoped `eslint` (on `GoalsStatus.jsx`, `GoalBarChart.jsx`,
+  `MemberGoalDetail.jsx`, `WebApp.jsx`, `Settings.jsx`) are clean — the only 4 lint errors reported
+  are pre-existing and already documented elsewhere in this file (`WebApp.jsx`'s `SideContent`
+  static-component warning + unused `Btn`, `Settings.jsx`'s unused `Inp`).
+- **Re-check the gauge visually after the `PolarAngleAxis` fix** — confirm the ring now shows a
+  partial arc proportional to percent (e.g. a small sliver at 3%, not a full circle), with the gray
+  track visible for the remaining portion, on this page AND spot-check one other page that uses
+  `MeterGauge` (e.g. `TeamSnapshot.jsx`'s Home tab) to confirm the same fix holds there too.
+- Sidebar shows "Goals Status" (not "Targets") for both an Admin and a Manager login without needing
+  any Settings change — confirmed via screenshot for Manager (Meera Iyer), not yet for Admin.
+  Admin's gauge/podium/stats/donut/breakdown/roster reflect the whole org; a Manager with team
+  members assigned (via `manager_id`) sees only their own team's numbers — confirmed for one Manager
+  (Meera Iyer, "My Team · August 2026" scope label rendered correctly, 1 team member "Arjun Nair"
+  shown in Top Performers). A Manager with zero assigned members still needs checking (empty states,
+  no crash). Clicking a podium entry or a roster row opens `MemberGoalDetail` correctly — not yet
+  confirmed. Category Breakdown bar showed real category rows immediately (Snacks/Lubricants/
+  Namkeens/Brake Fluids/Coolants, goal vs achieved) — confirms the aggregation wiring works
+  correctly (see the chart-type change right below — the bar itself didn't survive as the final
+  form, but the data feeding it was already right).
+
+**Follow-up same session: Category Breakdown changed from a bar chart to a "fuel meter" per
+category.** User's ask, after seeing the bar-chart version live. Per the `dataviz` skill's own form
+guidance ("a single ratio against a limit → Meter"; several such ratios side by side → small
+multiples of that Meter, not one wide bar list) — first pass swapped `GoalVsAchievedBreakdown` out
+for a `flex-wrap` grid of the existing `MeterGauge` component (full-circle radial ring), one per
+category.
+
+**Immediate second follow-up, same breath — user wanted an actual needle-pointer gauge (a
+semicircular "speedometer" style, per a Geckoboard reference screenshot) with a DIFFERENT color per
+category, not `MeterGauge`'s single red/amber/green severity ramp reused for every category.** Built
+a new component instead of trying to bend `MeterGauge` to a second visual style:
+1. **`NeedleGauge`** (new, `GoalBarChart.jsx`) — hand-drawn SVG semicircle: a background track arc
+   (0–180°, left-to-right over the top), a colored fill arc from 0 to the achieved percent, and a
+   needle line + pivot dot pointing at that percent. `color` is a required-ish prop (falls back to
+   blue) — the arc + needle carry the category's identity color; the percent/value TEXT stays
+   neutral ink (`#e2e8f0`/`#374151`), per the `dataviz` skill's own rule that text wears text
+   tokens, never the series color — a small colored dot next to the category name carries identity
+   there instead of coloring the label itself.
+2. **`src/lib/categoryColors.js`** (new) — `CATEGORY_PALETTE` (the same 8-color validated
+   categorical set `ContributionDonut` already used internally, now pulled out and exported so both
+   components draw from one source instead of two independently-cycling copies) and
+   `colorForEntity(id, allItems)` — looks up an entity's color by its index in a **stable master
+   list** (e.g. the full `categories` array from `useData()`), not its index in whatever
+   sorted/filtered subset is being rendered, so a category keeps the same color on this page no
+   matter how the goal-vs-achieved ranking reorders it between renders ("color follows the entity,
+   never its rank" — the skill's own non-negotiable). Pulled into its own file rather than left
+   inline in `GoalBarChart.jsx` because a plain constant export there triggered
+   `react-refresh/only-export-components` (component files must export only components) —
+   `GoalBarChart.jsx` and `GoalsStatus.jsx` both now import from this new shared module.
+   `ContributionDonut`'s own fallback-color line was repointed at the same `CATEGORY_PALETTE`
+   import instead of its old private copy — one less place a palette could drift.
+3. **`GoalsStatus.jsx`**'s Category Breakdown panel now renders `NeedleGauge` (not `MeterGauge`) per
+   category, colored via `colorForEntity(c.id, categories)`.
+
+`vite build` + scoped `eslint` (`GoalsStatus.jsx`, `GoalBarChart.jsx`, `categoryColors.js`) clean
+after both follow-ups. Net: `GoalVsAchievedBreakdown` itself is untouched and still used elsewhere
+(`MemberGoalDetail.jsx`'s Products/Categories/Distributors breakdowns) — only this one panel on
+this one page changed form, twice, in response to live feedback.
+
+**Third same-session follow-up: "Outlet Visits" renamed to "Retail Visits" and re-sourced from
+Distributor Secondary's raw `retail_visits` count, not the goal-gated/combined achievement figure.**
+Every prior number on this page for "visits" was `aggregateForMembers(...).visits.achieved` —
+`achievementEngine.js`'s `ach.visits`, which (a) sums BOTH `distributor_visits` (New Customer Visit)
+and `retail_visits` (Distributor Secondary beat-outlet visits) together, and (b) only counts once the
+member's Visits goal field is manager-approved for the period (`goal.visits_status === 'approved'`).
+User wanted the page's visit figures to instead read as a literal "how many retail outlets were
+visited" count, sourced specifically from Distributor Secondary. Fixed by computing a new,
+separate, ungated count directly off the raw `retailVisits` array (already loaded globally by
+`useData()`) filtered to the current period's calendar month (`monthRangeForPeriod(currentPeriod)`)
+and the in-scope member ids — same root-cause pattern as the 4 Aug 2026 fix that made the
+Distributors meter match "Distributor Created" everywhere by reading the raw pipeline event instead
+of a differently-scoped/gated aggregate. Applied consistently to all three places "visits" appeared
+on this page (not just the one stat tile asked about), since leaving them on the old mixed/gated
+definition would have shown three different numbers for the same person/scope/period on one screen:
+1. **Stat pair tile**: "Outlet Visits" → **"Retail Visits"**, value is now the raw scoped count
+   (goal fraction dropped — the old combined Visits goal target no longer describes what this
+   number measures, same reasoning the Distributors Created tile beside it already followed by
+   showing a bare count with no goal fraction).
+2. **Donut**: "Visits by Rep" → **"Retail Visits by Rep"**, each slice now `retailVisits` count per
+   member instead of `agg.visits.achieved`.
+3. **Roster table**: "Visits" column → **"Retail Visits"**, per-row value now each member's own
+   scoped `retailVisits` count.
+
+Confirmed in code before building this: `retail_visits.member_id` is filtered against `goals[mid]`
+inside `achievementEngine.js`'s own retailVisits loop using the SAME key space as `members.id` (not
+`users.id`, despite the column's schema comment literally saying `references users(id)` — the app
+inserts each Sales Team rep's `member_id`, i.e. their `members.id`, into that column in practice), so
+`String(v.member_id) === String(member.id)` is the correct, already-established matching pattern —
+reused here rather than re-derived. `vite build` + scoped `eslint` clean after this change too.
+The **Category Breakdown** meters and the **Sales Value** gauge/podium are untouched by this —
+only the three "visits" spots above changed source.
+
+**Fourth same-session follow-up: Distributors Created gained a target, and the Retail Visits number
+moved out of the stat-pair panel into the donut panel.**
+1. **Distributors Created** was a bare achieved count with no goal shown (unlike every other
+   figure on this page). Changed to the same `achieved / goal` format the page uses everywhere
+   else: `scopeAgg.acq.achieved` (the ungated, real "Distributor Created" pipeline count, unchanged
+   from before) **`/` `scopeAgg.acq.goal`** (the manager-approved Distributor Creation goal target
+   for the period — goal fraction only renders when `goal > 0`, same convention as the Sales Value
+   gauge and the old pre-this-session Outlet Visits tile).
+2. **The stat-pair panel that used to hold both "Distributors Created" and "Retail Visits" stacked
+   together now holds only Distributors Created** (single stat, panel simplified from a two-item
+   flex-column to one centered block). The Retail Visits total moved into the donut panel instead —
+   that panel's header is now "Retail Visits *by rep*" with the scoped total (`scopeRetailVisits`)
+   shown inline at the right of the header, the donut itself unchanged below it (same
+   `retailVisits`-per-member data from the third follow-up above). Net effect: each panel now holds
+   one coherent metric (Distributors Created alone; Retail Visits total + its by-rep breakdown
+   together) instead of two unrelated stats sharing one box.
+
+`vite build` + scoped `eslint` clean after this change too.
+
+**Fifth same-session follow-up: Sales Value promoted to a hero panel — biggest size, biggest
+font/graph, distinct "most attractive" color treatment, since it's this page's single most
+important figure.** User asked for a literal panel-size swap between Sales Value and Retail Visits
+first, then a stronger ask on top: Sales Value's graph and font should be the biggest/most prominent
+of every panel on the page, with the most attractive color combination — not just matching Retail
+Visits' old size.
+1. **`MeterGauge` (`GoalBarChart.jsx`) gained a `size` prop** (diameter in px, default `108` —
+   unchanged for every other call site: `TeamSnapshot.jsx`, `MemberGoalDetail.jsx`). Ring diameter,
+   ring thickness, and all three font sizes (percent/label/sub) scale together off this one number,
+   so a caller can promote one gauge to a hero figure (the `dataviz` skill's own figure contract:
+   "the one number a dashboard leads with... exactly one per view") without a second component.
+2. **`GoalsStatus.jsx`'s Sales Value panel** — no longer shares `panelBase`'s flat `#1e293b` with
+   every other panel on the page. Own gradient background
+   (`linear-gradient(135deg, #1e3a8a 0%, #4338ca 55%, #7c3aed 100%)` — blue → indigo → violet, built
+   from hues already in this app's palette, not new ones invented), a soft violet glow
+   (`box-shadow: 0 0 44px rgba(99,102,241,.35)`), and a bordered edge. `flex: '2 1 320px'` — the
+   largest basis of any panel on the page (bigger than Top Performers' `1.4`).
+3. **Retail Visits panel** took Sales Value's old size (`flex: '1 1 180px'`, back on the shared
+   `panelBase` styling) — the literal swap part of the ask, alongside the hero treatment above.
+
+**Immediate revert, same session — the `size={190}` enlarged gauge "looked odd."** User's very
+next message walked back just the font/ring-size piece, keeping everything else: panel size,
+gradient, and glow all stay; `MeterGauge`'s call in this panel dropped back to the default `size`
+(108, same as every other gauge on the page — Top Performers/Distributors Created/etc. never used
+the `size` prop to begin with). The `size` prop itself stays on `MeterGauge` (harmless, unused by
+any current call site) rather than being ripped back out, in case a future ask wants it again. The
+panel's larger flex-basis + distinct gradient/glow are what carry "most important" now, without
+also blowing up the numeral/ring past what read well.
+
+**Second immediate revert, same session — the gradient/glow itself was called "improper," and
+Distributors Created was missing a graph.** Two more corrections in the same breath:
+1. **Sales Value panel's gradient background, border, and glow all removed** — back to plain
+   `panelBase` (flat `#1e293b`, no border/shadow), same as every other panel on the page. Emphasis
+   now carries through size alone: `flex: '2 1 320px'` is still the largest basis on the page, just
+   no longer visually distinct in color from its neighbors.
+2. **Distributors Created panel gained a graph** — it was the one stat-pair panel left as bare
+   text (`achieved / goal` numerals, no chart), inconsistent with Sales Value and (before this
+   session's edits) the old Outlet Visits tile, which both showed a ring. Replaced the text block
+   with `<MeterGauge label="Distributors Created" value={scopeAgg.acq.achieved}
+   goal={scopeAgg.acq.goal} dark />` — same component, default size, same red/amber/green severity
+   convention as Sales Value's own gauge right next to it, so every scalar-goal panel on this page
+   now renders the same way.
+
+Net result: the top row is back to a uniform look across all four panels (same flat dark background,
+same panelBase styling), with only relative panel width — not color — signaling which one matters
+most. `vite build` + scoped `eslint` clean after this change.
+
+## Distributor Presence Map gains district + state boundary lines (5 Aug 2026 session) — BUILT,
+## NOT YET BROWSER-TESTED
+
+**User's ask:** on the existing "Geographical Business View" map (`DistributorPresenceMap.jsx`),
+draw actual district-level boundaries within Odisha, plus a distinct/deeper-colored border for the
+state outline itself — previously the page only had a fixed center+zoom framing a bounding box
+(`ODISHA_BOUNDS`), no real boundary geometry at all (explicitly flagged as deferred when that page
+was first built, see the entry above this one).
+
+**Resolved via AskUserQuestion before building:**
+- **Data source — CC BY 4.0 licensed, not the faster unlicensed option.** Two candidate sources
+  were found: `udit-001/india-maps-data` (ready-to-use GeoJSON/TopoJSON, but no LICENSE file and its
+  own README admits data was "curated from publicly available sources... no specific original
+  sources cited" — real risk given this repo's own already-flagged public-IP concern) vs. DataMeet's
+  `datameet/maps` (the standard reference for Indian open geodata, explicit **CC BY 4.0** license:
+  *"Unless explicitly stated, all datasets in this repository is shared under CC BY 4.0 license"* —
+  verified verbatim from the repo's own README, not just a paraphrase). User picked DataMeet
+  despite the extra conversion work it required (their data is Shapefile-only, not GeoJSON).
+- **Static outlines only, no interactivity** — no click-to-filter-by-district, no hover tooltips.
+  Simplest version to start; district polygons are non-interactive (`interactive: false`) so they
+  never intercept clicks meant for the map/markers underneath.
+
+**Data pipeline (one-time, offline — not part of the app's runtime or build):**
+1. Downloaded `Districts/Census_2011/2011_Dist.shp` (+`.dbf`/`.shx`/`.prj`) from `datameet/maps` —
+   all-India, 641 districts, ~10MB shapefile.
+2. Converted to GeoJSON via the lightweight `shapefile` npm package (pure JS, no native deps —
+   deliberately NOT `mapshaper`, whose install pulled in a huge unrelated dependency tree —
+   `better-sqlite3` native bindings, `geopackage`, `geotiff`, `flatgeobuf`, `ol` — and repeatedly
+   timed out/`ECOMPROMISED` mid-install in this environment).
+3. Filtered to Odisha's 30 districts via the `ST_NM` field (all present and correctly named,
+   Census-transliterated spellings e.g. "Anugul"/"Baleshwar" rather than "Angul"/"Balasore").
+4. Simplified each district independently via `@turf/simplify` (Douglas-Peucker, ~800m tolerance)
+   for the districts file — fine for thin individually-drawn reference lines.
+5. **State outline required a different approach, found via trial and error:** dissolving the
+   *simplified* districts via `@turf/union` produced a 14-fragment MultiPolygon (simplifying each
+   district independently breaks shared-edge alignment at their borders, leaving thin gaps that
+   don't merge cleanly). Fixed by dissolving the **raw, unsimplified** geometries first — this
+   still produced 204 rings (1 real ~156,279 km² outer boundary + ~200 sub-12km² interior "holes,"
+   union-seam digitization artifacts, not real geography — Odisha's actual area is ~155,700 km²,
+   confirming ring 0 alone was the real boundary). Kept only the single largest ring, simplified
+   *that* (1km tolerance → 540 points), dissolve-then-simplify rather than simplify-then-dissolve
+   being the actual fix.
+6. Output: `public/data/odisha-districts.geojson` (126KB, 30 features) and
+   `public/data/odisha-state.geojson` (21KB, 1 feature) — served as static assets (Vite's
+   `public/` convention), fetched at runtime via `fetch()`, NOT bundled into the JS chunk (confirmed:
+   `dist/` bundle sizes unchanged before/after).
+7. `public/data/ATTRIBUTION.txt` — full provenance (source repo, CC BY 4.0 link, exact processing
+   applied) — satisfies the license's attribution requirement as a durable record, independent of
+   the in-app attribution below.
+
+**App changes (`DistributorPresenceMap.jsx`):**
+- Map-init effect now also fetches both GeoJSON files (`Promise.all`, soft-fail like every other
+  fetch in this app — if this 404s or fails to parse, the core map/markers still work fine, just
+  without boundary lines) and renders them via `L.geoJSON()`: districts as subtle slate-gray hairlines
+  (`#64748b`, weight 1), state outline as a **deep, saturated navy-blue** (`#0c4a6e`, weight 3,
+  added after the district layer so it draws over any coincident edge segments) — user's explicit
+  follow-up ask, after a first pass in a lighter sky-blue (`#38bdf8`) read as not prominent enough.
+  Both layers `interactive: false` per the static-only decision above.
+- **In-app attribution**: `map.attributionControl.addAttribution(...)` adds "District boundaries ©
+  DataMeet (CC BY 4.0)" with a link back to `github.com/datameet/maps`, alongside the existing
+  OpenStreetMap attribution — same mechanism, so it appears in the same on-map attribution control
+  a user would already expect to check. **Still open**: DataMeet's suggested attribution format
+  links the *specific dataset* path, not just the repo root — current link is to the repo root;
+  tightening it to point at `Districts/Census_2011` specifically was flagged as a nice-to-have, not
+  yet done.
+
+**Explicitly NOT used anywhere in the shipped app:** the unlicensed `udit-001/india-maps-data`
+source — it was only ever downloaded into the session's scratchpad (outside the repo) to compare
+file size/structure before the licensing AskUserQuestion; nothing derived from it was written to
+`public/data/` or committed.
+
+**Still open / not done yet:**
+- **Not browser-tested** — same constraint as most work this session (no chromium-cli/Playwright by
+  default; the `run-workforce` skill can drive a real verification pass but needs a test Admin
+  login, which wasn't available to finish this round). Need to visually confirm: the state border
+  reads as clearly deeper/more prominent than the district lines, district boundaries look
+  geographically sane (no spikes/self-intersections from the simplification), and distributor
+  markers still render correctly on top of both boundary layers (Leaflet's marker pane is above its
+  overlay pane by default, so this should hold, but hasn't been visually confirmed).
+- DataMeet attribution link could point at the specific dataset path instead of the repo root (minor,
+  flagged above).
+
+`vite build` + scoped `eslint` (`GoalsStatus.jsx`, `GoalBarChart.jsx`) clean after this change.
+
+## Distributor Secondary: Distributor is now the first-level selection (5 Aug 2026 session) — BUILT,
+## NOT YET BROWSER-TESTED
+
+**User's ask:** in `DistributorSecondary.jsx` (Sales Team's Beats/Retail Outlets flow), the rep
+should pick a **Distributor first**, then see/create beats scoped to that distributor — previously
+the "Beats" tab listed every beat from every assigned distributor mixed together in one flat list,
+and distributor was only chosen buried inside the "Create Beat" sheet as one of three fields (name,
+distributor, coverage days), with no way to filter the list itself by distributor.
+
+**Built:** new `selectedDistributor` state in `DistributorSecondary.jsx`, persists across
+`beats`/`visit`/`summary` tab switches (only the explicit "← Distributors" link clears it, so
+backing out of a beat/outlet mid-visit doesn't lose your place). The "Beats" tab now has two
+states:
+- **No distributor selected** — a card list of `myDistributors` (unchanged eligibility filter:
+  `assignedTo` includes this rep + `type === 'Distributor'`), each showing its existing beat count.
+  Tap one → `setSelectedDistributor`.
+- **Distributor selected** — "← Distributors" back link + the distributor's name as a header, "+
+  Create Beat" (now scoped, no distributor field needed), and the beat list filtered to
+  `b.distributor_id === selectedDistributor.id` (dropped the now-redundant per-row distributor name
+  line, since the screen's header already establishes it).
+
+`CreateBeatSheet` simplified to match — takes a `distributor` object (display-only, shown in the
+Sheet's subtitle) instead of a `distributors` list + its own dropdown/local `distributorId` state;
+`db.createBeat` is now called with `selectedDistributor.id` directly from the parent. No `db.js`
+changes — `fetchMyBeats`/`createBeat` signatures unchanged, this was purely a UI restructuring.
+
+**Still open:**
+- **Not browser-tested** — `vite build` + scoped `eslint` clean, zero errors. Full flow to verify:
+  Beats tab now opens on a distributor list (not beats), tapping a distributor shows only that
+  distributor's beats + correct beat count on the card, "+ Create Beat" saves under the right
+  distributor without asking again, "← Distributors" returns to the picker, and switching to
+  Visit/Summary and back to Beats doesn't lose the selected distributor.
+
+## Generic Activity Log + vein diagram for Attendance Stage 2 (5 Aug 2026 session) — BUILT,
+## SCHEMA APPLIED (user confirmed), NOT YET BROWSER-TESTED
+
+Closes a gap flagged as deliberate (not fragile) when the Attendance system shipped: Stage 2
+("Activity Approval") was only ever rich for Drivers — every other role saw a plain placeholder,
+*"Detailed activity tracking isn't available for this role yet — approve based on other context."*
+Full plan approved via plan-mode before building (large cross-cutting change — new table, new
+shared component, instrumentation across several screens).
+
+**User's ask, condensed:** every meaningful action a user takes (add/edit/save/approve/reject/
+etc.) should be logged with a timestamp, attributed to that user, and shown under "Activity
+Details" on Attendance's Stage 2 approval screen as a **vein diagram** — connected-dot vertical
+timeline, same visual language as the driver journey timeline — spanning **Punch-In → every
+logged activity, in order → Last Activity of the day**.
+
+**Resolved via AskUserQuestion before building:**
+- **Non-driver roles only** (Admin/Manager/Accounts/HR/Sales Team) — Driver's existing Stage 2
+  (journey-based) is completely untouched by this change, no code changes to
+  `JourneyVeinTimeline.jsx`/`AllocationJourneyTile.jsx`/`JourneyApprovals.jsx`.
+- **Meaningful business actions only** (create/edit/save/approve/reject/submit) — not raw UI
+  interactions (opening a sheet, changing a filter).
+- **Phased rollout** — build the full system, then instrument the highest-value screens first
+  (Goal/Invoice/Expense approvals, Products/Distributors/Settings master-data edits). Remaining
+  screens (orders, picking, other masters) are an explicit follow-up, not this pass.
+
+**Real finding from exploration, before writing any code:** `Attendance.jsx`'s existing driver
+branch does **not** actually use the `JourneyVeinTimeline.jsx` component at all — it calls
+`buildJourneyEvents()` directly and renders flat text rows, no vein diagram. So this session is
+the **first real vein-diagram rendering inside Attendance.jsx**, not a reuse of an existing one.
+`JourneyVeinTimeline.jsx`'s own diagram-rendering loop is fused with driver-specific header/route/
+footer and isn't importable as a bare renderer — rather than refactor it (touching driver code,
+against the confirmed scope), a fresh small component was built instead. Some visual-pattern
+duplication between the two is accepted as a result; unifying them into one shared renderer is a
+reasonable follow-up, not attempted now.
+
+**Built:**
+1. **`activity_log` table** (schema below) — `user_id` is explicitly `users.id` (matching
+   `currentUser.id`), **not** `members.id`. Exploration found `approved_by`-style columns are
+   genuinely inconsistent across this app already (invoices/journey approvals store `members.id`;
+   punches/product-issue-resolution store `users.id`, with no naming convention distinguishing
+   them) — `users.id` is right here because it's always available regardless of whether the actor
+   has a `members` row (Manager/Accounts/HR approving something often don't), and matches
+   `attendance_punches.user_id` itself, the table this log directly feeds into. A plain `date`
+   column (not just `occurred_at`) mirrors `attendance_punches` exactly, populated via `db.js`'s
+   existing `todayStr()` — the same already-battle-tested local-calendar-date helper (fixed once
+   before for an IST/UTC-midnight bug) — so fetching by day is a plain `.eq('date', ...)`, not
+   timezone-sensitive range math on a `timestamptz` column.
+2. **`db.logActivity(userId, action, entity, label, entityId)`** (new, `db.js`) — soft-fail,
+   non-blocking by design: called *after* the real write already succeeded, wrapped in try/catch,
+   its own failure only `console.error`'d, never surfacing to the user or reading as if the actual
+   action failed — matching this app's established convention for auxiliary writes (notifications,
+   geolocation). **`db.fetchActivityLog(userId, date)`** (new) — mirrors `fetchTodayPunch`/
+   `fetchMyAttendance`'s exact pattern. **Not** added to `useData.jsx`'s global `loadAll()`
+   deliberately — exploration confirmed every existing ever-growing/per-event table in this app
+   (`notifications`, `vehicle_locations`, `attendance_punches` itself) is fetched on-demand, scoped
+   by user + date, never globally preloaded; this follows the same convention.
+3. **`src/lib/activityTimeline.js`** (new) — `buildActivityEvents(punch, logRows)`: prepends a
+   `{ label: 'Punched In', ts: punch.punch_in_at, category: 'punch_in' }` node, maps each
+   `activity_log` row to `{ label, ts: occurred_at, category: entity }`, sorts ascending — same
+   shape/sort convention as `journeyTimeline.js`'s `buildJourneyEvents`. Re-exports `fmtTs`/
+   `fmtDur` from there rather than duplicating formatters (already source-agnostic).
+4. **`journeyTimeline.js`'s exported `CATEGORY_COLOR`** gained new keys (`punch_in`, `create`,
+   `update`, `approve`, `reject`, `submit`) — purely additive, every existing driver key/value
+   unchanged; the shared color-lookup table both timelines now draw from one source instead of
+   forking a duplicate map.
+5. **`src/components/VeinTimeline.jsx`** (new) — the actual vein-diagram renderer: takes
+   `{ events: {label, ts, category, tag}[] }`, renders the connected-dot vertical timeline (dot +
+   line + label + "+Xh Ym since previous activity"). A fresh, independent component (see the
+   exploration finding above for why), not extracted from `JourneyVeinTimeline.jsx`.
+6. **`Attendance.jsx`'s `DayDetailSheet`** — the existing `isDriver` branch point
+   (`user.role_id === 'r7'`) gained a sibling: non-driver users fetch
+   `db.fetchActivityLog(user.id, date)` in the same `useEffect` shape the driver branch already
+   uses, build events via `buildActivityEvents(punch, logRows)`, and render
+   `<VeinTimeline events={activityEvents} />` in place of the old placeholder text. A user with
+   zero logged activity still shows the one "Punched In" node — an honest result, not a
+   placeholder message anymore.
+7. **Phase 1 instrumentation** — one-line `db.logActivity(...)` call added right after each site's
+   real write already succeeds:
+   - `InvoiceApprovalTile.jsx`'s approve handler (built first, as the reference implementation —
+     `currentUser` was already in scope there).
+   - `GoalApprovals.jsx`'s `handleAction` (per-field approve/reject review) — needed `currentUser`
+     added to its `useAuth()` destructure (previously only pulled `can`/`role`). Logs one activity
+     per review submission (a review can approve/reject several fields at once), action is
+     `'reject'` if any field was rejected else `'approve'`, label includes the approved/rejected
+     counts.
+   - `ExpApprovals.jsx`'s `action` handler — same `currentUser` gap, fixed. Refactored to take the
+     whole expense row (not just its id) since the log label needs member/amount/category context
+     that wasn't otherwise in scope at the call site.
+   - `Products.jsx` and `Distributors.jsx` — their existing `save()` handlers, both the create and
+     update branches (two log calls each, distinct action `'create'`/`'update'`).
+   - `Settings.jsx` — `togMenu`/`togAction` (every menu/action-permission checkbox toggle already
+     persists immediately, so each toggle is its own logged activity), plus `saveRole`/`delRole`.
+
+**Schema — NOT yet applied, user must run:**
+```sql
+create table activity_log (
+  id bigserial primary key,
+  user_id bigint not null references users(id),
+  date date not null,
+  action text not null,        -- 'create' | 'update' | 'approve' | 'reject' | 'submit'
+  entity text not null,        -- 'goal' | 'invoice' | 'expense' | 'product' | 'distributor' | 'settings' | ...
+  label text not null,         -- human-readable, shown directly on the vein diagram
+  entity_id text,
+  occurred_at timestamptz not null default now()
+);
+create index activity_log_user_date_idx on activity_log(user_id, date);
+```
+
+**Still open / not done yet:**
+- ~~Schema not yet applied~~ — done, user confirmed the `activity_log` table + index ran
+  successfully (5 Aug 2026, same session).
+- **Not browser-tested** — `vite build` clean; scoped `eslint` on every touched/new file shows only
+  4 pre-existing issues, confirmed via `git stash` diff to be byte-identical before/after this
+  session's changes (`InvoiceApprovalTile.jsx`'s pre-existing `set-state-in-effect` on its
+  unrelated `loadData` effect, `Settings.jsx`'s unused `Inp` import, `Attendance.jsx`'s
+  `month`/`year` exhaustive-deps warning, `ExpApprovals.jsx`'s unused `SBadge` import) — zero new
+  issues introduced.
+- ~~Follow-up rollout, explicitly deferred~~ — order creation/picking/allocation actions were
+  instrumented in the same-day Phase 2 follow-up below. Master screens beyond Products/
+  Distributors/Settings (Vehicles, Warehouses, Categories, Employees) remain unstarted.
+- Full flow to verify now that schema is applied: perform a couple of instrumented actions (approve a
+  goal, approve an invoice, save a product) as a non-driver user, then as HR/Admin open that user's
+  Stage 2 queue item and confirm the vein diagram shows Punched In followed by each action in the
+  right order with correct time deltas; confirm a user with zero non-punch activity still renders
+  cleanly (just the one node); confirm Driver's Stage 2 view is pixel-identical to before.
+
+### Activity Log Phase 2 — orders/picking/allocation instrumentation (5 Aug 2026 session, same day
+### follow-up, "continue next phase") — BUILT, same schema as Phase 1, SCHEMA APPLIED, NOT YET
+### BROWSER-TESTED
+
+Closes the explicit Phase 1 follow-up: order creation/approval/picking/allocation actions are now
+logged via `db.logActivity(...)`, same one-line-after-successful-write pattern as Phase 1, no
+architecture changes — the log table, `VeinTimeline`, and Attendance wiring already exist. Master
+screens beyond Products/Distributors/Settings (Vehicles, Warehouses, Categories, Employees) remain
+unstarted, a further follow-up if wanted.
+
+**Instrumented, one call per meaningful action (not every keystroke/tap):**
+- `DistributorOrder.jsx` — order submit (`'submit'`) and edit (`'update'`) for Sales Team.
+- `OrderApproval.jsx` — `managerApprove` (`'approve'`), `adminConfirmOrder` (`'approve'`), and
+  `advanceToPicking` (`'update'`, sends to Warehouse).
+- `OrderPickingDetail.jsx` — `confirmAndSend` ("Confirm & Send to Warehouse"). Needed adding
+  `useAuth`/`currentUser` — this component didn't have it in scope at all before (it's handed
+  everything via props, no hook usage previously).
+- `PickingEditSheet.jsx` — `submitPicking`. Same `useAuth` gap, same fix.
+- `LoadCreatedList.jsx` — `confirmAllocate`/`deallocate` (vehicle allocation lifecycle). Same
+  `useAuth` gap, same fix.
+- `LoadingScreen.jsx` — **only** the `markLoadingComplete` milestone inside the driver-confirmation
+  polling loop, not the per-item Lift Stack button taps or pause/resume — those are exactly the
+  "raw UI interaction" class this session's own granularity decision excludes, logging them would
+  flood the vein diagram with noise instead of showing meaningful stops. Same `useAuth` gap, same
+  fix.
+- `JourneyApprovals.jsx` — `approve` (Admin approving Journey Complete). `currentUser` was already
+  in scope here (used for `approveJourneyComplete`'s own `approved_by` param, which passes
+  `member_id` — `logActivity` still uses `currentUser?.id`, the two are intentionally different
+  columns with different id conventions, per the Phase 1 design note).
+- `AwaitingInvoiceTile.jsx` — `submit` ("Create Invoice From Load").
+
+**Same landmine handled the same way as Phase 1**: several of these call sites pass
+`currentUser?.member_id` to their own domain-specific `approved_by`/`created_by` column (invoices,
+journey approvals) while `logActivity` always uses `currentUser?.id` — intentional, not a copy-paste
+slip, per Phase 1's documented reasoning (`activity_log.user_id` must always resolve even for
+actors with no `members` row).
+
+**Verification same as Phase 1:** `vite build` clean. Scoped `eslint` on all 8 touched files shows
+only pre-existing issues, confirmed via `git stash` diff — `LoadingScreen.jsx`'s unused `Inp`
+import and two pre-existing `exhaustive-deps` warnings (one of which now additionally lists
+`currentUser?.id` as a missing dep, a natural side effect of using it inside that already-flagged
+effect — not a new distinct warning), `OrderPickingDetail.jsx`'s unused `categories`/`onChanged`
+props. Zero new lint errors.
+
+**Still open:** ~~schema not yet applied~~ — done, user confirmed (5 Aug 2026, same session as
+Phase 1's confirmation — one single `activity_log` table serves both phases). Not yet
+browser-tested. Vehicles/Warehouses/Categories/Employees master screens and any other remaining
+write paths are an explicit further follow-up, not done this pass.
+
+## Distributor Secondary goal category + dashboard entries (5 Aug 2026 session) — BUILT, SCHEMA
+## CONFIRMED APPLIED (verified via live REST probe, 8 Aug 2026), NOT YET BROWSER-TESTED
+
+**User's ask, condensed:** a dashboard entry for Distributor Secondary showing Outlets Created,
+Outlets Visited (framed as a real goal), and Secondary Value. Clarified via AskUserQuestion into a
+much bigger scope than a single tile: a whole new **"Distributor Secondary" goal category** — four
+scalar fields (**New Outlets**, **Productive Outlets**, **Total No. of Orders**, **Value**), each
+following the exact scope→submit→approve handshake every existing scalar field (Sales Value/
+Visits/Distributor Acquisition) already goes through — plus renaming the general "Visits" goal to
+**"New Customer Visits"** and reverting its achievement to `distributor_visits`-only (the
+`retail_visits` contribution added in the 4 Aug 2026 session is removed, since Distributor
+Secondary now has its own dedicated fields instead of sharing the general one). Full plan approved
+via plan-mode before building — comparable in scope to the original Monthly Goals architecture.
+
+**Resolved via AskUserQuestion + follow-up clarification before building:**
+- Dashboard placement: **both** Admin's `Dashboard.jsx` (org-wide, new section alongside Warehouse/
+  Driver/HR/Accounts) and each Sales Team member's own `TeamSnapshot.jsx`.
+- Time scope: **Today/Month/Year tabs** for raw activity counts — but the goal-vs-achieved figures
+  stay **always "this month"** regardless of the tab, same reasoning every other goal figure in
+  this app already follows (SalesSnapshot's Manager Leaderboard, GoalsStatus's Sales Value gauge).
+- The "outlets visited... is a goal" framing resolved into: **Productive Outlets** (outlets with a
+  real order) gets a genuine goal field, same as the other three — not a raw count, and not folded
+  into the general Visits goal.
+
+**Field naming** (matches this app's exact existing `{field}_goal`/`_status`/`_note` +
+`enable_{field}` convention):
+
+| Field key | Label | Achievement source |
+|---|---|---|
+| `new_outlets` | New Outlets | count of `retail_outlets` created in period, attributed via `created_by` (stores `members.id`) |
+| `productive_outlets` | Productive Outlets | distinct `outlet_id` with ≥1 `retail_visits` row where `outcome='order'` in period |
+| `secondary_orders` | Total No. of Orders | count of `retail_visits` rows where `outcome='order'` in period — derived from data already available, no new source needed (1:1 with a real `secondary_orders` row) |
+| `secondary_value` | Value | sum of `secondary_order_items.qty * rate` for that period's orders |
+
+**Built:**
+1. **`db.js`** — `fetchRetailOutlets(dateRange)` / `fetchSecondaryOrders(dateRange)` (with joined
+   `items`), both mirroring `fetchRetailVisits`'s exact existing global/optional-range pattern.
+2. **`useData.jsx`** — `retailOutlets`/`secondaryOrders` added to global context, fetched
+   unfiltered in `loadAll()`'s existing `Promise.all` (same as `retailVisits`), threaded into
+   `computeAchievements(...)`'s call site.
+3. **`achievementEngine.js`** — removed the `retailVisits.forEach` loop that added to `ach.visits`
+   (the un-mixing described above); `computeAchievements` gained `retailOutlets`/`secondaryOrders`
+   params; `result[mid]` init gained the 4 new fields; 4 new gated loops (New Outlets from
+   `retailOutlets`, Productive Outlets as a per-member `Set` of order-outcome outlet ids from
+   `retailVisits`, Total No. of Orders as a count of the same order-outcome `retailVisits` rows,
+   Value summed from `secondaryOrders`' joined items) — each independently gated on its own
+   `goal.<field>_status === 'approved'`, same convention as every other field.
+   `getGoalOverallStatus` gained 4 more `enableX`/status-push lines.
+4. **`goalAggregation.js`** — 4 new `emptyTotal()` totals + gating blocks (`param.enable_x &&
+   goal.x_status === 'approved'`), included in `aggregateForMembers`'s returned object — this is
+   what makes the 4 new fields "just work" everywhere `aggregateForMembers` is already called
+   (`Dashboard.jsx`, `MemberGoalDetail.jsx`, `TeamApp.jsx`'s `myAgg`) without those call sites
+   needing any change themselves.
+5. **The 3-way handshake**, one new "Distributor Secondary" section in each:
+   - **`Parameters.jsx`** (Manager scopes) — 4 new `<Toggle>`s, 4 new `enable_*` keys in `save()`'s
+     `upsertParameter` payload and the summary-chip list.
+   - **`TeamApp.jsx`'s `GoalEntrySheet`** (member sets value + submits) — 4 new `<StableInp>`s
+     (gated on `param.enable_x`), 4 new lines in `handleSubmit`'s `draft` object and `submitGoal`'s
+     `updated` object (the `Number(draft.x?.goal) || existing.x_goal` + status-diff pattern, copied
+     from the existing `visits_goal` lines). The read-only "My Goals" status tab gained 4 more
+     status `<Card>`s, same shape as the existing Distributor Created/Visits ones.
+   - **`GoalApprovals.jsx`** (Manager approves) — 4 new `<FieldRow>`s, 4 new
+     `if (decisions['x']) {...}` blocks in `handleAction`.
+6. **"Visits" → "New Customer Visits" label rename** (display-only, `visits_goal`/`visits_status`/
+   `enable_visits` field names all unchanged) across `TeamSnapshot.jsx`, `MemberGoalDetail.jsx`,
+   `Dashboard.jsx` (both `ManagerLevelSheet` and the module-level gauge rows), `TeamApp.jsx` (status
+   card + `StableInp` label), `Parameters.jsx` (`Toggle` label), `GoalApprovals.jsx` (`FieldRow`
+   label).
+7. **`MemberGoalDetail.jsx` and `Dashboard.jsx`'s `ManagerLevelSheet`** — both gained 4 more
+   `MeterGauge`s (New Outlets/Productive Outlets/Total Orders/Value) in their existing goal-meter
+   row, and their `hasMeters`/`hasAny` checks were extended so a member/team with ONLY Distributor
+   Secondary goals approved (no Value/Visits/Acq) still renders the meters instead of showing "No
+   approved goals."
+8. **`Dashboard.jsx`'s new `DistributorSecondarySection`** — Admin-only (`role?.id === 'r1'`),
+   placed first in the rollup block (before Warehouse). Unlike Warehouse/Driver/HR/Accounts (which
+   self-fetch locally), this section consumes `retailOutlets`/`secondaryOrders`/`retailVisits`
+   directly from `useData()` context (already globally loaded per the `useData.jsx` change above —
+   no duplicate fetch). Two blocks: a Today/Month/Year tab row of raw `DarkStat` counts (own local
+   tab state, `rangeForTab`), and a fixed "This Month" `MeterGauge` row (goal vs achieved, via
+   `aggregateForMembers` over all members) — same tab-scoped-raw-numbers + always-monthly-goal
+   duality established elsewhere in this app (e.g. `GoalsStatus.jsx`).
+9. **`TeamSnapshot.jsx`'s new panel** — same duality, scoped to one member: a
+   `StatTile` row of raw Today/Month/Year counts (reusing the file's own existing `tab`/`range`
+   state) plus the 4 new `MeterGauge`s already added to the existing always-monthly Goal Progress
+   block (point 7). `TeamApp.jsx` threads `myOutlets`/`mySecondaryOrders`/`myRetailVisits` down as
+   new props, mirroring exactly how `myVisits`/`myLeads` are already threaded.
+
+**Schema — NOT yet applied, user must run:**
+```sql
+alter table parameters
+  add column enable_new_outlets boolean not null default false,
+  add column enable_productive_outlets boolean not null default false,
+  add column enable_secondary_orders boolean not null default false,
+  add column enable_secondary_value boolean not null default false;
+
+alter table goals
+  add column new_outlets_goal numeric,
+  add column new_outlets_status text,
+  add column new_outlets_note text,
+  add column productive_outlets_goal numeric,
+  add column productive_outlets_status text,
+  add column productive_outlets_note text,
+  add column secondary_orders_goal numeric,
+  add column secondary_orders_status text,
+  add column secondary_orders_note text,
+  add column secondary_value_goal numeric,
+  add column secondary_value_status text,
+  add column secondary_value_note text;
+```
+
+**Verification done this session:** `vite build` clean. Scoped `eslint` across all 10 touched/new
+files — confirmed via `git stash` diff that only 3 files had any pre-existing lint issues at all
+(`useData.jsx`, `Parameters.jsx`, `TeamApp.jsx`), same rule categories before/after, zero new files
+picked up issues; the only count change is `react-hooks/static-components` going from 12→20 (+8),
+exactly matching the 8 new `<Toggle>`/`<StableInp>` lines added — these reuse an already-broken
+pre-existing inline-component-in-render pattern (`Toggle` in `Parameters.jsx`, `StableInp` in
+`TeamApp.jsx`, both defined inside their parent's render function long before this session), not a
+new bug introduced now.
+
+**Still open / not done yet:**
+- ~~Schema not yet applied~~ — confirmed applied via a live REST probe against `parameters`/`goals`
+  (8 Aug 2026): all 4 `enable_*` columns and all 12 goal-field columns exist and return real rows.
+- **Not browser-tested** — same constraint as most work this session. Full flow to verify now that
+  schema is live: enable the 4 toggles in Parameters for a Sales Team member → submit goal values
+  as that member → approve as Manager → create beats/outlets/orders via the existing Distributor
+  Secondary flow → confirm achievement numbers move on both `TeamSnapshot.jsx` and
+  `Dashboard.jsx`'s new section, and that the "New Customer Visits" rename reads correctly
+  everywhere with its achievement no longer including retail-visit activity.
+
+**Same-day follow-up: Manager also gets the Distributor Secondary section, scoped to their own
+team.** The section was originally Admin-only (org-wide, all members). Added a sibling
+`role?.id === 'r2'` block right after the Admin block — same `DistributorSecondarySection`
+component, reused as-is, just given a different `memberIds` scope:
+`membersByManager(currentUser?.id)` (the same helper `ManagerLevelSheet`'s drill-down already uses
+elsewhere in this file) instead of every member. Header relabeled "Distributor Secondary — My Team"
+for this branch to distinguish it from Admin's org-wide version. `useAuth()`'s destructure in
+`Dashboard()` gained `currentUser` (previously only pulled `role`). The component already handles
+an empty `memberIds` array gracefully (all-zero stats, "No approved goals" message) — relevant for
+a Manager with no team members assigned yet, no new empty-state code needed.
+
+`vite build` + scoped `eslint` (`Dashboard.jsx`) clean after this change.
+
+**Real bug found via live testing, fixed same day: `Parameters.jsx`'s `save()` wrote the wrong
+shape into local `params` state.** After a successful `db.upsertParameter(...)` call, `save()` did
+`setParams(prev => ({...prev, [memberId]: {...draft, member_id, period}}))` — but `draft` is the
+`ParamSheet`'s local camelCase form state (`enableValue`, `enableNewOutlets`, ...), not the
+snake_case DB row shape (`enable_value`, `enable_new_outlets`, ...) every consumer actually reads
+(`GoalEntrySheet`'s `param.enable_x` gates, `GoalApprovals.jsx`, `achievementEngine.js`,
+`goalAggregation.js`). So immediately after clicking "Save parameters," the in-memory `params`
+entry had zero snake_case keys — every `param.enable_x` check anywhere in the app read
+undefined/falsy until the next full page reload re-fetched the real row from Supabase
+(`fetchParameters` does `select('*')`, which is correct — the bug was purely in what `save()` wrote
+locally, not the DB round-trip). This is a **pre-existing bug affecting every toggle field**, not
+specific to the 4 new Distributor Secondary ones — it surfaced now because testing the new fields
+happened to hit the no-reload-in-between case that earlier testing of the older fields apparently
+never had. Fixed by using the actual `data` row `db.upsertParameter` already returns (real
+snake_case columns, `.select().single()`) instead of reconstructing from `draft`. Bonus: this also
+resolved a pre-existing `no-unused-vars` lint error on `data` (it's genuinely used now). `vite
+build` + scoped `eslint` clean — remaining 13 `Parameters.jsx` lint errors are all the same
+pre-existing `Toggle`/`Chips` inline-component-in-render pattern, unrelated to this fix.
+
+**Two more real bugs found via live testing (same day), both fixed — diagnosed via a direct
+read-only REST probe against the live `goals`/`parameters`/`users` tables (same technique used
+elsewhere in this app's history for exactly this kind of "what does the DB actually have" check),
+not guessing from the UI alone:**
+
+1. **The actual blocker for "new parameters not showing in goal screen": `TeamApp.jsx`'s
+   `hasNewParam` check was never updated for the 4 new fields.** `hasNewParam` is what unlocks the
+   "Set/Revise goals" button when a Manager enables a field the member hasn't addressed yet for a
+   goal that's already been submitted this month (`canEnter = overallStatus === 'draft' ||
+   hasRejected || hasNewParam`). Since it only checked `enable_value`/`enable_visits`/`enable_acq`
+   (+ the per-item fields), a member whose overall status was already `'pending'`/`'approved'` had
+   **no way to even open the entry screen** to see the 4 new Distributor Secondary fields, even
+   though `enable_new_outlets` etc. were correctly `true` in the database. Fixed by adding the same
+   `p.enable_x && !g.x_status` check for all 4 new fields.
+2. **A separate, more consequential pre-existing bug, found while investigating why one test
+   member's overall goal status showed "Pending" despite every visible field reading Approved**:
+   the read-only status card list only renders a field's card when `goal > 0`
+   (`{p.enable_visits && g.visits_goal > 0 && <Card>...}`), but `getGoalOverallStatus` counts a
+   field toward overall status based on `status` truthiness alone, with no `goal > 0` requirement —
+   so a field sitting at `goal: 0, status: 'pending'` contributes an invisible, un-explainable
+   "pending" to the badge/banner. Root cause: `submitGoal`'s scalar-field status diff used
+   `Number(draft.x?.goal) !== Number(existing.x_goal)` directly — when a field is left untouched in
+   the entry sheet, `draft.x?.goal` is `undefined`, `Number(undefined)` is `NaN`, and `NaN !==`
+   anything is **always true** in JS, so resubmitting the form (even just to touch a *different*
+   field) silently reset every OTHER untouched scalar field's status back to `'pending'`, wiping
+   out its real approval — not limited to zero-value fields; any untouched field with a real
+   existing value got the same treatment. A correct, NaN-safe version of this exact comparison
+   already existed in the same function (`mergeFieldStatus`, used for the per-item
+   customers/products/categories fields) — the scalar fields (`value`/`visits`/`acq`) just never
+   used it, and the 4 new Distributor Secondary fields I added this session copied the broken inline
+   pattern instead of the correct helper. Fixed by extracting a `scalarStatus(newGoal, existingGoal,
+   existingStatus)` helper (same NaN-safe shape as `mergeFieldStatus`) and using it for all 7 scalar
+   fields — the 3 pre-existing ones and the 4 new ones alike, so the bug doesn't linger for
+   whichever fields didn't get fixed.
+   - **Not fixed (a data cleanup, not a code fix):** the already-corrupted `visits_status: 'pending'`
+     row sitting in the live DB for the member tested (Arjun Nair, `goals.id=3`, period `2026-08`)
+     stays stuck until a Manager explicitly reviews that specific field via Goal Approvals (approve
+     or reject it) — the code fix prevents this from happening again, it doesn't retroactively
+     un-corrupt data already written before the fix. Flagged rather than silently patched via a
+     direct DB write.
+
+`vite build` + scoped `eslint` (`TeamApp.jsx`) clean after both fixes — the only count change is
+`react-hooks/static-components` going from 3→7 (+4), matching the 4 new `<StableInp>` lines added
+this session, same pre-existing broken inline-component pattern as `Parameters.jsx`'s `Toggle`.
+
+**Same-day follow-up: split the Distributor Secondary dashboard content — goal-vs-achieved moved to
+Goals Status, raw activity stays under Distributor Secondary.** User's ask: "the goal part should
+move to Goals Status and other things stay under Distributor Secondary as earlier." The
+`DistributorSecondarySection` on `Dashboard.jsx` (both the Admin org-wide and Manager team-scoped
+instances) had grown to hold two different concepts stacked together — a Today/Month/Year raw
+activity row, and a fixed "This Month" goal-vs-achieved gauge row underneath it. Split apart:
+1. **`Dashboard.jsx`'s `DistributorSecondarySection`** — the goal-gauge block (and its now-unused
+   `slices`/`aggregateForMembers` usage) removed entirely; the component is now purely the
+   Today/Month/Year tab-scoped `DarkStat` row (New Outlets/Productive Outlets/Total No. of Orders/
+   Value), same as it was before the goal-gauge block was added. Both call sites (Admin, Manager)
+   dropped the now-unneeded `slices` prop.
+2. **`GoalsStatus.jsx`** — new panel, same visual pattern as the existing "Category Breakdown"
+   panel right above it: "Distributor Secondary — Goal vs Achieved (This Month)", 4 `MeterGauge`s
+   (New Outlets/Productive Outlets/Total No. of Orders/Value) sourced from `scopeAgg` (already
+   computed on this page via `aggregateForMembers`, already includes these 4 fields since
+   `goalAggregation.js` was updated earlier this session — no new aggregation logic needed, purely
+   a rendering addition). Same scope as everything else on this page: org-wide for Admin, own team
+   for Manager. Empty state ("No approved Distributor Secondary goals for this month yet") when all
+   4 goals are 0, matching the pattern the removed Dashboard.jsx block used.
+
+`vite build` + scoped `eslint` (`Dashboard.jsx`, `GoalsStatus.jsx`) clean after this change.
+
+## Distributor Secondary checkout rework: confirm dialog → ongoing orders → Retailing Complete lock
+## (5 Aug 2026 session) — BUILT, SCHEMA NOT YET APPLIED, NOT YET BROWSER-TESTED
+
+**User's ask, condensed:** reported checkout "not saving," plus a real multi-step flow request.
+Read through `ItemOrderSheet.checkout()`/`db.createSecondaryOrder`/`db.createRetailVisit` and found
+no obvious static bug — since the whole flow was being rebuilt anyway, the rebuild's real error
+surfacing should resolve whatever was silently failing rather than patching the exact code path
+being removed. New flow: Cart → **Checkout** → **Confirm dialog** (order id, item count, total
+value; Edit or Confirm) → Confirm → **Ongoing Orders sheet** (today's not-yet-locked orders, Edit
+or Cancel each) → **Retailing Complete** button → **summary dialog** (Confirm or Cancel) → Confirm
+**locks every one of today's orders**, whole day, across every beat/distributor.
+
+**Resolved via AskUserQuestion before building:**
+- Ongoing Orders sheet is a **one-off popup right after each Confirm**, not a persistent
+  always-visible section. Known limitation: if a rep closes it without hitting Retailing Complete,
+  the only way back in today is confirming another order — flagged, not built, since the user
+  explicitly picked this scope over the persistent-section alternative.
+  ~~Superseded same session~~ — see the immediate follow-up entry below: the user reversed this
+  specific answer right after seeing it built, asking for a persistent tab instead.
+- **Cancel** on an ongoing order = **soft-cancel** (`cancelled` flag, matches this app's existing
+  convention elsewhere, e.g. `distributor_order_items.cancelled`), and also reverts the outlet to
+  "Not Visited" so it can be revisited/reordered same day.
+- **Edit** changes items/quantities only — outlet/beat/distributor stay fixed.
+- Retailing Complete's own summary dialog: **Cancel there just dismisses it, no data change** — the
+  rep backs out of finalizing, nothing gets locked (clarified after an initial ambiguous answer that
+  conflated it with per-order Cancel).
+
+**Built:**
+1. **Schema** — `secondary_orders` gains `locked`/`cancelled` booleans (both default `false`).
+2. **`db.js`** — `updateSecondaryOrderItems(orderId, items)` (delete-then-reinsert
+   `secondary_order_items`, simplest correct approach since the cart is always rebuilt fresh, no
+   incremental diffing needed unlike `OrderPickingDetail.jsx`'s pattern for the primary order
+   pipeline); `cancelSecondaryOrder(orderId)` (sets `cancelled=true`, deletes the matching
+   `retail_visits` row by `order_id` so the outlet reverts to unvisited);
+   `fetchOngoingSecondaryOrders(memberId, date)` (same shape as the existing
+   `fetchSecondaryOrdersForDate`, filtered to `locked=false AND cancelled=false`);
+   `lockSecondaryOrdersForDate(memberId, date)` (batch-sets `locked=true` on all that member's
+   that-day non-cancelled, non-locked orders — the Retailing Complete confirm action).
+   `fetchSecondaryOrdersForDate` (existing, feeds Day Summary) gained `.eq('cancelled', false)` so
+   a cancelled order's value no longer pollutes Day Summary's outlet-wise/product-wise totals.
+3. **`ItemOrderSheet`** — gained an `existingOrder` prop (pre-fills `cart` from its items when
+   reopened via Edit) and a `savedOrderId` local-state tracker: the first successful `checkout()`
+   still does the exact same `createSecondaryOrder`+`createRetailVisit` call as before, but no
+   longer closes/auto-advances on success — instead shows a new inline confirm dialog (order id,
+   item count, total). Re-checking-out from that dialog's "Edit" path now correctly calls the new
+   `updateSecondaryOrderItems` (since `savedOrderId` is already set) instead of creating a
+   duplicate order — this distinction (create vs. update) didn't exist at all before this session.
+   "Confirm" in the dialog calls the existing `onDone` (unchanged auto-advance-to-next-outlet
+   behavior) and a new `onConfirmed` callback that tells the parent to open the Ongoing Orders
+   sheet. The "No Order" button is hidden once an order's been saved for this visit (doesn't make
+   sense once a real order exists).
+4. **New `OngoingOrdersSheet`** — fetches `fetchOngoingSecondaryOrders` on open, lists each
+   order (outlet, item count, value) with Edit/Cancel, and a "Retailing Complete" button
+   (disabled when the list is empty) that opens `RetailingCompleteDialog`. Rendered at `zIndex=340`
+   — above `ItemOrderSheet`'s `320` — specifically so it still renders on top even when auto-advance
+   has already reopened the sheet underneath it for the next outlet.
+5. **New `RetailingCompleteDialog`** — summary (order count + total value across today's ongoing
+   orders), Cancel just closes it, Confirm calls `lockSecondaryOrdersForDate` and tells the parent
+   to close everything and refresh (outlet statuses + `loadAll()`).
+6. **Parent `DistributorSecondary` component** — new `showOngoingOrders`/`editingOrder` state.
+   Edit from the Ongoing Orders sheet derives the order's beat (looked up from the already-loaded
+   `beats` list by `beat_id`) and outlet (from the order's joined `outlet` object), sets them as the
+   active beat/outlet, and passes the order in as `existingOrder` — reusing the exact same
+   `ItemOrderSheet` render path a fresh visit uses, just pre-filled. Known rough edge, not fixed:
+   editing an order from a different beat than the one currently being walked temporarily shifts
+   "the active beat" context for auto-advance purposes — minor, and the rep can just navigate back
+   to Beats afterward; not worth the complexity of tracking "beat being walked" separately from
+   "beat of the order being edited" for this pass.
+
+**Schema — CONFIRMED APPLIED (verified via live REST probe, 8 Aug 2026):**
+```sql
+alter table secondary_orders
+  add column locked boolean not null default false,
+  add column cancelled boolean not null default false;
+```
+
+**Still open / not done yet:**
+- ~~Schema not yet applied~~ — confirmed applied via REST probe against `secondary_orders` (8 Aug
+  2026): both columns exist and return real values on live rows.
+- **Not browser-tested** — same constraint as most work this session. `vite build` clean; scoped
+  `eslint` (`db.js`, `DistributorSecondary.jsx`) clean — the one new lint hit
+  (`react-hooks/set-state-in-effect` on `OngoingOrdersSheet`'s load-on-mount effect) is explicitly
+  suppressed via `eslint-disable-next-line`, matching an already-accepted pre-existing pattern
+  elsewhere in this app (e.g. `InvoiceApprovalTile.jsx`'s identical `useEffect(() => {
+  loadData() }, [])` shape carries the same untouched error today).
+- Full flow to verify once schema is applied: build a cart → Checkout → confirm dialog shows the
+  right id/items/total → Edit → adjust qty → Checkout again → confirm it updated in place (not
+  duplicated, check `secondary_orders`/`secondary_order_items` row counts) → Confirm → Ongoing
+  Orders sheet appears → Cancel one order → confirm that outlet reverts to "Not Visited" in the
+  beat list → confirm a second order → Retailing Complete → summary dialog → Cancel (verify nothing
+  locked) → Retailing Complete again → Confirm → verify every one of today's orders is locked
+  (no longer editable) and Day Summary's totals exclude the cancelled order.
+- **Original "checkout not saving" report never independently reproduced** — no obvious bug found
+  in the old code path via static reading; if it resurfaces after this rebuild (i.e. the NEW
+  checkout also silently fails to save), that would need real browser-console error output to
+  chase further, not more guessing from the code alone.
+
+### Immediate follow-up, same session: Ongoing Orders moved from a popup to its own tab
+
+User's very next ask reversed the earlier AskUserQuestion answer: Ongoing Orders should be a
+**persistent tab, positioned right before Day Summary** (not a one-off popup shown only right
+after confirming an order), listing all of today's not-yet-locked orders with Edit/Delete, plus the
+one-time "Retailing Complete" button at the bottom of that same tab screen.
+
+**Changed:**
+- **`TABS`** gained `['ongoing', 'Ongoing Orders']`, inserted right before `['summary', 'Day
+  Summary']` (after the beat's own `visit` tab, when one is active).
+- **`OngoingOrdersSheet` → `OngoingOrdersTab`** — same Edit/Cancel/Retailing-Complete logic, but no
+  longer wrapped in a `<Sheet>` popup and no longer self-fetches on mount; it now renders as plain
+  tab content and receives `orders` as a prop, fetched by a new parent-level `loadOngoing()` +
+  `openOngoing()` pair — exactly mirroring the existing `loadSummary`/`openSummary` pattern this
+  file already used for the Day Summary tab, so switching to the tab always shows a fresh list
+  rather than a stale mount-time snapshot.
+- **The per-order "Cancel" button is now labeled "Delete"** (matching the user's wording) but still
+  soft-cancels underneath via the same `db.cancelSecondaryOrder` — no behavior change, this session
+  already confirmed soft-cancel (not hard delete) via AskUserQuestion, this is a label-only change.
+- **`ItemOrderSheet`'s confirm dialog no longer opens Ongoing Orders on Confirm** — since it's a
+  real tab now, Confirm just does the same auto-advance-to-next-outlet (`onDone()`) the original
+  pre-rework flow already did; the rep reaches Ongoing Orders by tapping the tab whenever they want,
+  not automatically. The now-unused `onConfirmed` prop was removed from `ItemOrderSheet` entirely.
+- Row styling switched from plain divs to the shared `Card` component, matching every other list in
+  this file (Beats/Outlets).
+
+`vite build` + scoped `eslint` (`DistributorSecondary.jsx`) clean — zero errors, including the
+`react-hooks/set-state-in-effect` suppression from the previous version (removed entirely, since
+the tab no longer self-fetches in a `useEffect` at all — the parent-driven `loadOngoing()` pattern
+sidesteps that lint class the same way `loadSummary`/`DaySummary` already did).
+
+### Second immediate follow-up, same session: auto-advance replaced with a nearest-outlet suggestion
+
+User's next report: after saving an order, the app was auto-reopening an outlet automatically
+("again showing the same outlet automatically") — the old `afterVisitRecorded` picked "the next
+un-visited outlet in list order" and opened it immediately with no chance to choose. Replaced
+entirely with an explicit pick step: after a visit is recorded (order or no-order), show a new
+**`NextOutletSheet`** listing every remaining outlet in the beat, **nearest-first by straight-line
+distance** from the outlet just completed, each with a tentative on-foot ETA — tapping one opens
+it for ordering; closing without picking returns to the beat's own outlet list, which stays fully
+browsable ("choose any other outlet" — nothing is filtered out, only ranked).
+
+**Built:**
+- **`sortOutletsByDistance(from, outlets)`** (new, local to this file) — reuses the existing
+  `haversineMeters` from `src/lib/geo.js` (already used elsewhere in this app for
+  `LoadCreatedList.jsx`'s direction-conflict check) rather than adding a new distance function.
+  Outlets missing `lat`/`lng` (geolocation was denied when they were added — a known soft-fail
+  path already documented for `AddOutletSheet`) sort to the end with distance/ETA shown as
+  "Distance unknown" rather than being dropped from the list.
+- **ETA is a tentative walking estimate** (~4 km/h, straight-line distance ÷ assumed speed) — no
+  real routing between retail outlets exists or was asked for, same "tentative" framing the user
+  used themselves; this mirrors the existing precedent of `RouteMapSheet`'s OSRM estimate being an
+  estimate, not a promise.
+- **`afterVisitRecorded`** no longer auto-selects and opens the next outlet — it captures the
+  just-completed outlet (`activeOutlet` at call time, before it's cleared), computes the remaining
+  un-visited outlets the same way as before, and instead of picking one, sets
+  `nextOutletChoice = { from, options: sortOutletsByDistance(from, remaining) }`, which renders the
+  new sheet. If zero outlets remain, the existing "All outlets in this beat are done for today"
+  toast still fires, unchanged.
+
+`vite build` + scoped `eslint` (`DistributorSecondary.jsx`) clean, zero errors.
+
+### Third same-session follow-up: "Ongoing Orders rendering blank" — a real date bug, not a UI bug
+
+**Diagnosed via a direct read-only REST probe against the live `secondary_orders` table** (same
+technique used earlier this session for the goal-parameters bug) rather than guessing from the
+code. Confirmed the schema (`locked`/`cancelled`) was already applied and the query itself was
+correct — the bug was upstream: **`db.createSecondaryOrder` stamped `order_date` using
+`today.toISOString().slice(0, 10)` (UTC) while the order's own `id` prefix on the very same line
+above it used local date components** (`today.getDate()`/`getMonth()`/`getFullYear()`) — for IST
+(UTC+5:30), any order placed between ~12:00–5:29am local time got an `order_date` one day behind
+its own ID's date, and behind every query that filters "today" via this file's local `todayStr()`.
+Same bug class already fixed elsewhere in this app (`attendance_punches`, `period.js`) — this call
+site had never been touched by those fixes. Live evidence: 10 orders existed with real IDs like
+`SO-08082026-12` (correctly local-dated) but `order_date: "2026-08-07"` — one day off, invisible
+to any "today" query despite being real, valid, unlocked orders.
+
+**Fixed:**
+- `db.createSecondaryOrder` — `order_date` now built from the same local `yyyy`/`mm`/`dd` values
+  already computed for the ID prefix, not `toISOString()`.
+- `DistributorSecondary.jsx`'s two `db.createRetailVisit(...)` call sites (order outcome and
+  no-order outcome) — both now pass `visit_date: todayStr()` explicitly instead of relying on the
+  `retail_visits` table's `default current_date`, which resolves in the database session's own
+  timezone (commonly UTC) and carries the identical risk.
+- **User ran a one-time data fix** (`update secondary_orders set order_date = '2026-08-08' where
+  order_date = '2026-08-07'`) to correct the 14 already-mis-dated rows — re-verified via REST
+  afterward: all 14 now read `order_date: "2026-08-08"`, unlocked, uncancelled, so Ongoing Orders
+  should show them all now.
+
+`vite build` + scoped `eslint` (`db.js`, `DistributorSecondary.jsx`) clean after this fix.
+
+**Nothing else outstanding from this session's Distributor Secondary checkout rework** — schema
+applied, the date bug is fixed going forward and the existing data corrected, Ongoing Orders/Day
+Summary should now show real data for "today" reliably. Still not driven through a full browser
+session end-to-end (create → edit → delete → Retailing Complete → lock verified) — worth a real
+pass next time this area comes up.
+
+## Day Summary record + PDF download, created on Retailing Complete (5 Aug 2026 session) — BUILT,
+## SCHEMA NOT YET APPLIED, NOT YET BROWSER-TESTED
+
+**User's ask:** a real Day Summary — with its own id and timestamp, like every other entity in this
+app (Beat/Outlet/Order/Load) — created specifically when Retailing Complete is confirmed, and
+downloadable as a single PDF. The existing "Day Summary" tab was (and stays) a live,
+always-recomputed rollup with no identity of its own; this is additive, a permanent "receipt"
+stamped once retailing is actually finished for the day, not a replacement for that live view.
+
+**Built:**
+1. **Schema** — new `day_summaries` table. `id` format `DS-{memberId}-DDMMYYYY` — naturally unique
+   per member+day without a count-query race (unlike `SO-DDMMYYYY-NN`'s sequence), since Retailing
+   Complete only ever fires once per member per day; backstopped by a `unique(member_id,
+   summary_date)` constraint.
+2. **`db.js`** — `createDaySummary(memberId, date, totals)` (inserts one row: outlets visited,
+   orders, value) and `fetchDaySummaryForDate(memberId, date)` (single-row lookup).
+3. **`src/lib/printDaySummary.js`** (new) — same `jsPDF` text/line-call pattern as
+   `printSecondaryOrder.js` (this app's established print-module shape, no library beyond jsPDF
+   itself): header (Summary ID, Date, Generated timestamp), outlet-wise table (orders + no-order
+   visits with reasons), product-wise table, totals footer.
+4. **`RetailingCompleteDialog`** — on Confirm, after `lockSecondaryOrdersForDate` succeeds, also
+   fetches today's visits (for the outlets-visited count) and calls `createDaySummary`. The dialog
+   then switches to a success state showing the real id + timestamp with a "Download Summary"
+   button, instead of immediately closing — the rep sees the receipt right where they completed
+   the day, then taps "Done" to close everything (same `onConfirmed` callback as before).
+5. **`DaySummary` tab** — the parent's existing `loadSummary()` now also fetches
+   `fetchDaySummaryForDate`, and if a record exists for today, the tab shows a green "✓ Retailing
+   Complete — DS-..." banner with its own re-download button, above the untouched live rollup
+   content — so the receipt stays reachable later in the day too, not just in the one-off dialog.
+   `onRetailingComplete`'s callback (fired from the Ongoing Orders tab) also re-fetches this record
+   immediately, so switching to Day Summary right after completing shows the banner with no manual
+   refresh needed.
+6. **Data-consistency choice**: the PDF and the banner both read from the exact same
+   `visits`/`orders`/`products` already in scope wherever they're triggered (the dialog's own
+   `orders` prop + a fresh visits fetch; the tab's existing `summaryVisits`/`summaryOrders`) — no
+   separate "stored summary contents," only the lightweight totals row is persisted. The full
+   breakdown is always regenerated from the real underlying data, which is safe here since the
+   orders are already locked by the time a summary exists.
+
+**Schema — CONFIRMED APPLIED (verified via live REST probe, 8 Aug 2026 — table already holds at
+least one real row, `DS-3-08082026`, meaning a full Retailing Complete flow has already run
+successfully end-to-end):**
+```sql
+create table day_summaries (
+  id text primary key,
+  member_id bigint not null references users(id),
+  summary_date date not null,
+  created_at timestamptz not null default now(),
+  total_outlets_visited integer not null default 0,
+  total_orders integer not null default 0,
+  total_value numeric not null default 0,
+  unique (member_id, summary_date)
+);
+```
+
+**Still open:**
+- ~~Schema not yet applied~~ — confirmed applied, see above.
+- **Not fully browser-verified by this session directly** — a real `day_summaries` row exists in
+  the live DB, which is strong evidence the flow works, but this was discovered via a REST probe,
+  not a driven browser pass. `vite build` + scoped `eslint` (`db.js`, `printDaySummary.js`,
+  `DistributorSecondary.jsx`) clean, zero new errors. Full flow to verify once schema is applied:
+  Retailing Complete → confirm the success dialog shows a real id/timestamp and the downloaded PDF
+  matches the day's actual orders → reopen the Day Summary tab → confirm the same banner + a
+  working re-download appears there too.

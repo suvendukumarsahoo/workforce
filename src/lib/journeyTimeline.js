@@ -25,6 +25,14 @@ export const CATEGORY_COLOR = {
   return_base: '#f97316',
   submitted: '#6b7280',
   approved: '#10b981',
+  // Generic activity-log categories (5 Aug 2026 — Attendance Stage 2's non-driver vein diagram,
+  // see activityTimeline.js) — additive only, none of the driver keys above changed.
+  punch_in: '#0ea5e9',
+  create: '#3b82f6',
+  update: '#6366f1',
+  approve: '#10b981',
+  reject: '#ef4444',
+  submit: '#f59e0b',
 }
 
 // Orders in delivery (stop) order — route_plan.stops carries the optimized sequence;

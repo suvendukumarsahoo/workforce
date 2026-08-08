@@ -100,7 +100,7 @@ function StatTile({ label, value, bg }) {
 
 const IN_PROGRESS_STAGES = ['final_pending', 'registration_pending', 'documents_submitted', 'documentation_verification', 'payment_pending', 'payment_verification']
 
-export default function TeamSnapshot({ mid, invoices, customers, myAgg, periodTab, setPeriodTab, currentPeriod, myVisits, myLeads, onSelectStage }) {
+export default function TeamSnapshot({ mid, invoices, customers, myAgg, periodTab, setPeriodTab, currentPeriod, myVisits, myLeads, onSelectStage, myOutlets, mySecondaryOrders, myRetailVisits }) {
   const [tab, setTab] = useState('month')
 
   const now = new Date()
@@ -160,7 +160,18 @@ export default function TeamSnapshot({ mid, invoices, customers, myAgg, periodTa
     return d2 >= monthStart && d2 <= monthEnd
   }).length
 
-  const myHasMeters = myAgg.value.goal > 0 || myAgg.visits.goal > 0 || myAgg.acq.goal > 0
+  const myHasMeters = myAgg.value.goal > 0 || myAgg.visits.goal > 0 || myAgg.acq.goal > 0 ||
+    myAgg.new_outlets.goal > 0 || myAgg.productive_outlets.goal > 0 || myAgg.secondary_orders.goal > 0 || myAgg.secondary_value.goal > 0
+
+  // Distributor Secondary raw activity, tab-scoped (Today/Month/Year) — separate from the always-
+  // monthly Goal Progress gauges below, same duality every other tab-scoped panel in this app uses.
+  const newOutletsCount = (myOutlets || []).filter(o => { const d = new Date(o.created_at); return d >= range.from && d <= range.to }).length
+  const myOrderVisits = (myRetailVisits || []).filter(v => v.outcome === 'order' && (() => { const d = new Date(v.visit_date); return d >= range.from && d <= range.to })())
+  const productiveOutletsCount = new Set(myOrderVisits.map(v => v.outlet_id)).size
+  const totalOrdersCount = myOrderVisits.length
+  const secondaryValueSum = (mySecondaryOrders || [])
+    .filter(o => { const d = new Date(o.order_date); return d >= range.from && d <= range.to })
+    .reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0), 0)
 
   return (
     <div style={{ background: '#f8fafc', borderRadius: 16, padding: 16, marginBottom: 20, border: '1px solid #eef2f7' }}>
@@ -176,6 +187,14 @@ export default function TeamSnapshot({ mid, invoices, customers, myAgg, periodTa
         <StatTile label="Win Rate" value={`${winRate}%`} bg="#0ea5e9" />
         <StatTile label="Open Leads" value={openLeadCount} bg="#0d9488" />
         <StatTile label="Avg Open Lead Age" value={`${avgOpenAgeDays}d`} bg="#0d9488" />
+      </div>
+
+      <div style={labelStyle}>Distributor Secondary — {tabLabel}</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 12 }}>
+        <StatTile label="New Outlets" value={newOutletsCount} bg="#0ea5e9" />
+        <StatTile label="Productive Outlets" value={productiveOutletsCount} bg="#10b981" />
+        <StatTile label="Total No. of Orders" value={totalOrdersCount} bg="#f59e0b" />
+        <StatTile label="Value" value={Fk(secondaryValueSum)} bg="#7c3aed" />
       </div>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
@@ -224,8 +243,12 @@ export default function TeamSnapshot({ mid, invoices, customers, myAgg, periodTa
           {myHasMeters && (
             <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-around' }}>
               {myAgg.value.goal > 0 && <MeterGauge label="Sales Value" value={myAgg.value.achieved} goal={myAgg.value.goal} formatValue={F} />}
-              {myAgg.visits.goal > 0 && <MeterGauge label="Outlet Visits" value={myAgg.visits.achieved} goal={myAgg.visits.goal} />}
+              {myAgg.visits.goal > 0 && <MeterGauge label="New Customer Visits" value={myAgg.visits.achieved} goal={myAgg.visits.goal} />}
               {myAgg.acq.goal > 0 && <MeterGauge label="Distributors" value={distributorsThisMonth} goal={myAgg.acq.goal} />}
+              {myAgg.new_outlets.goal > 0 && <MeterGauge label="New Outlets" value={myAgg.new_outlets.achieved} goal={myAgg.new_outlets.goal} />}
+              {myAgg.productive_outlets.goal > 0 && <MeterGauge label="Productive Outlets" value={myAgg.productive_outlets.achieved} goal={myAgg.productive_outlets.goal} />}
+              {myAgg.secondary_orders.goal > 0 && <MeterGauge label="Total No. of Orders" value={myAgg.secondary_orders.achieved} goal={myAgg.secondary_orders.goal} />}
+              {myAgg.secondary_value.goal > 0 && <MeterGauge label="Secondary Value" value={myAgg.secondary_value.achieved} goal={myAgg.secondary_value.goal} formatValue={F} />}
             </div>
           )}
         </div>

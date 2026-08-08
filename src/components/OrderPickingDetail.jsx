@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useAuth } from '../hooks/useAuth.jsx'
 import { Card, CH, Btn, Sheet, F, Inp } from './ui.jsx'
 import * as db from '../lib/db.js'
 
@@ -15,6 +16,7 @@ const timeAgo = (isoDate) => {
 }
 
 export default function OrderPickingDetail({ order, products, categories, payment, isAdmin, showToast, onClose, onChanged }) {
+  const { currentUser } = useAuth()
   const [addingItem, setAddingItem] = useState(false)
   const [pickProduct, setPickProduct] = useState('')
   const [pickQty, setPickQty] = useState('')
@@ -112,6 +114,7 @@ export default function OrderPickingDetail({ order, products, categories, paymen
     }
 
     await db.returnToWarehouseManager(order.id)
+    db.logActivity(currentUser?.id, 'update', 'order', `Confirmed & sent order #${order.id} to warehouse — ${order.distributor?.name || order.distributor_id}`, order.id)
     setBusy(false)
     showToast && showToast('Order sent to Warehouse for picking')
     onClose()
