@@ -1178,32 +1178,69 @@ export async function approveWaiverStage2(punchId, approverUserId) {
   return { data, error }
 }
 
-// Admin oversight — per-employee waiver counts granted by Manager vs HR within an arbitrary date
-// range (browsable by month, not just "this month"). Uses the exact same counting rule the cap
-// enforcement itself uses (countMonthlyWaivers, above) — a Manager-granted waiver is any row where
-// rule_approver1_by is set and that rule's approver1_role='manager'; an HR-granted waiver is either
-// a direct single-stage approval (approver1_role='hr') or a stage-2 sign-off (rule_approver2_by
-// set) — just aggregated across every employee for the range instead of scoped to one.
+// Admin oversight — waiver counts within an arbitrary date range (browsable by month, not just
+// "this month"), returned two ways: per employee (Manager vs HR count each received) and per
+// approver (which specific person granted how many, and to whom). Both use the exact same counting
+// rule the cap enforcement itself uses (countMonthlyWaivers, above) — a Manager-granted waiver is
+// any row where rule_approver1_by is set and that rule's approver1_role='manager'; an HR-granted
+// one is either a direct single-stage approval (approver1_role='hr') or a stage-2 sign-off
+// (rule_approver2_by set). attendance_punches has multiple FKs to users (user_id, approved_by,
+// activity_approved_by, rule_approver1_by, rule_approver2_by) — each embed below names its
+// constraint explicitly, same Recurring Bug Pattern #3 workaround used everywhere else this
+// session.
 export async function fetchWaiverCountsForPeriod(fromDate, toDate) {
   const { data, error } = await supabase
     .from('attendance_punches')
-    .select('user_id, rule_approver1_by, rule_approver2_by, user:users!attendance_punches_user_id_fkey(id, name), rule:attendance_rules(approver1_role)')
+    .select(`
+      user_id, rule_approver1_by, rule_approver2_by,
+      user:users!attendance_punches_user_id_fkey(id, name),
+      approver1:users!attendance_punches_rule_approver1_by_fkey(id, name),
+      approver2:users!attendance_punches_rule_approver2_by_fkey(id, name),
+      rule:attendance_rules(approver1_role)
+    `)
     .gte('date', fromDate)
     .lte('date', toDate)
     .not('rule_status', 'is', null)
   if (error) return { data: null, error }
 
-  const byUser = {}
+  const byEmployee = {}
+  const byApprover = {}
+  const bumpApprover = (id, name, employeeName) => {
+    if (!id) return
+    if (!byApprover[id]) byApprover[id] = { approverId: id, name: name || `User #${id}`, count: 0, employees: [] }
+    byApprover[id].count++
+    byApprover[id].employees.push(employeeName)
+  }
+
   ;(data || []).forEach(p => {
     const uid = p.user_id
-    if (!byUser[uid]) byUser[uid] = { userId: uid, name: p.user?.name || `User #${uid}`, managerWaivers: 0, hrWaivers: 0 }
-    if (p.rule_approver1_by && p.rule?.approver1_role === 'manager') byUser[uid].managerWaivers++
-    if ((p.rule?.approver1_role === 'hr' && p.rule_approver1_by) || p.rule_approver2_by) byUser[uid].hrWaivers++
+    const employeeName = p.user?.name || `User #${uid}`
+    if (!byEmployee[uid]) byEmployee[uid] = { userId: uid, name: employeeName, managerWaivers: 0, hrWaivers: 0 }
+
+    const managerGranted = p.rule_approver1_by && p.rule?.approver1_role === 'manager'
+    const hrGrantedStage1 = p.rule?.approver1_role === 'hr' && p.rule_approver1_by
+    const hrGrantedStage2 = !!p.rule_approver2_by
+
+    if (managerGranted) {
+      byEmployee[uid].managerWaivers++
+      bumpApprover(p.rule_approver1_by, p.approver1?.name, employeeName)
+    }
+    if (hrGrantedStage1) {
+      byEmployee[uid].hrWaivers++
+      bumpApprover(p.rule_approver1_by, p.approver1?.name, employeeName)
+    }
+    if (hrGrantedStage2) {
+      byEmployee[uid].hrWaivers++
+      bumpApprover(p.rule_approver2_by, p.approver2?.name, employeeName)
+    }
   })
-  const rows = Object.values(byUser)
+
+  const byEmployeeRows = Object.values(byEmployee)
     .filter(r => r.managerWaivers > 0 || r.hrWaivers > 0)
     .sort((a, b) => (b.managerWaivers + b.hrWaivers) - (a.managerWaivers + a.hrWaivers))
-  return { data: rows, error: null }
+  const byApproverRows = Object.values(byApprover).sort((a, b) => b.count - a.count)
+
+  return { data: { byEmployee: byEmployeeRows, byApprover: byApproverRows }, error: null }
 }
 
 // ─── ACTIVITY LOG (generic, feeds Attendance Stage 2's non-driver vein diagram) ────────────────

@@ -3592,3 +3592,30 @@ switching the month picker to a period with no activity correctly shows the empt
 
 **Still open:** none — schema-free (reads existing columns only), built and confirmed working in
 the same pass.
+
+### Third immediate follow-up, same session: "By Approver" tab added to Waiver Counts
+
+User's next ask: "waiver count by employees should also have a tab by approver." The card was
+"By Employee" only, grouping by Manager-vs-HR *role* class; this adds a second axis grouping by the
+*specific person* who granted each waiver (there can be more than one Manager, and in principle
+more than one HR user).
+
+**Built:**
+1. **`db.js`'s `fetchWaiverCountsForPeriod`** — extended its select to also embed the two specific-
+   approver identities: `approver1:users!attendance_punches_rule_approver1_by_fkey(id, name)` and
+   `approver2:users!attendance_punches_rule_approver2_by_fkey(id, name)` (verified both constraint
+   names resolve correctly via a REST probe before wiring them in). Return shape changed from a
+   flat array to `{ byEmployee, byApprover }` — `byApprover` is keyed by the actual approver's user
+   id, each entry holding a running `count` and an `employees` array (names) of who they waived for
+   that period, built alongside the existing per-employee aggregation in the same single pass over
+   the fetched rows (no second query). A two-stage waiver correctly credits **both** people their
+   own stage (the Manager who did stage 1, the HR user who did stage 2) rather than only one.
+2. **UI** — the card (retitled "Waiver Counts", the "by Employee" specificity moved into a proper
+   sub-tab) gained a `['employee','approver']` pill-button toggle, same visual pattern as the page's
+   existing Late Present/Half Day tabs. "By Approver" lists each approver with a `{count} waivers`
+   badge and the comma-joined list of employee names they waived, sorted by count descending.
+
+`vite build` + scoped `eslint` clean (same 3 already-accepted `set-state-in-effect` mount-fetch
+effects on this page, nothing new). Confirmed live via headless Playwright: "By Approver" tab
+correctly showed "HR Manager — 2 waivers — Arjun Nair, Ravi Kumar" matching the real DB state for
+the selected month.

@@ -28,6 +28,7 @@ function RuleManagement() {
   const [busyId, setBusyId] = useState(null)
   const [loadError, setLoadError] = useState(null)
   const [waiverCountPeriod, setWaiverCountPeriod] = useState(getCurrentPeriod())
+  const [waiverCountView, setWaiverCountView] = useState('employee')
   const [waiverCounts, setWaiverCounts] = useState(null)
   const [waiverCountsError, setWaiverCountsError] = useState(null)
 
@@ -50,7 +51,7 @@ function RuleManagement() {
   const loadWaiverCounts = async (period) => {
     const { from, to } = monthRangeForPeriod(period)
     const { data, error } = await db.fetchWaiverCountsForPeriod(from, to)
-    setWaiverCounts(data || [])
+    setWaiverCounts(data || { byEmployee: [], byApprover: [] })
     setWaiverCountsError(error?.message || null)
   }
 
@@ -212,8 +213,8 @@ function RuleManagement() {
       {isAdmin && (
         <Card>
           <CH
-            title="Waiver Counts by Employee"
-            sub={`How many waivers each employee received from Manager / HR — ${formatPeriodLabel(waiverCountPeriod)}`}
+            title="Waiver Counts"
+            sub={formatPeriodLabel(waiverCountPeriod)}
             right={
               <select
                 value={waiverCountPeriod}
@@ -224,22 +225,58 @@ function RuleManagement() {
               </select>
             }
           />
+          <div style={{ display: 'flex', gap: 6, padding: '10px 14px 0' }}>
+            {[['employee', 'By Employee'], ['approver', 'By Approver']].map(([v, label]) => (
+              <button
+                key={v}
+                onClick={() => setWaiverCountView(v)}
+                style={{
+                  padding: '5px 12px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                  fontSize: 12, fontWeight: 600,
+                  background: waiverCountView === v ? '#2563eb' : '#f3f4f6',
+                  color: waiverCountView === v ? '#fff' : '#374151',
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
           {waiverCountsError && (
-            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 10px', margin: '0 14px 10px', fontSize: 11, color: '#991b1b' }}>
+            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 10px', margin: '10px 14px 0', fontSize: 11, color: '#991b1b' }}>
               {waiverCountsError}
             </div>
           )}
           {waiverCounts === null && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>Loading...</div>}
-          {waiverCounts?.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No waivers granted this period</div>}
-          {waiverCounts?.map(r => (
-            <div key={r.userId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '1px solid #f3f4f6' }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</div>
-              <div style={{ display: 'flex', gap: 14, fontSize: 12 }}>
-                <span style={{ color: '#06b6d4', fontWeight: 600 }}>Manager: {r.managerWaivers}</span>
-                <span style={{ color: '#10b981', fontWeight: 600 }}>HR: {r.hrWaivers}</span>
-              </div>
-            </div>
-          ))}
+
+          {waiverCounts && waiverCountView === 'employee' && (
+            <>
+              {waiverCounts.byEmployee.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No waivers granted this period</div>}
+              {waiverCounts.byEmployee.map(r => (
+                <div key={r.userId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '1px solid #f3f4f6', marginTop: 4 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</div>
+                  <div style={{ display: 'flex', gap: 14, fontSize: 12 }}>
+                    <span style={{ color: '#06b6d4', fontWeight: 600 }}>Manager: {r.managerWaivers}</span>
+                    <span style={{ color: '#10b981', fontWeight: 600 }}>HR: {r.hrWaivers}</span>
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+
+          {waiverCounts && waiverCountView === 'approver' && (
+            <>
+              {waiverCounts.byApprover.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No waivers granted this period</div>}
+              {waiverCounts.byApprover.map(r => (
+                <div key={r.approverId} style={{ padding: '10px 14px', borderBottom: '1px solid #f3f4f6', marginTop: 4 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>{r.name}</div>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#2563eb' }}>{r.count} waiver{r.count > 1 ? 's' : ''}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{r.employees.join(', ')}</div>
+                </div>
+              ))}
+            </>
+          )}
         </Card>
       )}
 
