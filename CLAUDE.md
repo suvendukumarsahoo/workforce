@@ -3979,4 +3979,29 @@ Confirmed live via headless Playwright (Warehouse Manager login) against real da
 by hand against a raw REST dump of `distributor_order_items` — AlphaMax 1L showed "Total Picked: 20"
 breaking down to Order #4 → 10 + Order #1 → 10, an exact match to the underlying rows.
 
+**Immediate follow-up, same session: fixed a real "does it exclude loaded items?" gap the user
+caught right after the first version shipped.** It didn't — `db.fetchPickingOrders()` filters on
+`distributor_orders.status = 'submitted_for_picking'`, and that status **never actually advances**
+once an order enters picking: `db.confirmPicking` (the only function that would ever set
+`status: 'picking_confirmed'`) has **zero call sites anywhere in this app** — confirmed via a
+codebase-wide search, not an assumption. So the original version was an unbounded all-time total
+across every order ever picked, not a live "currently sitting picked" snapshot — Load creation,
+vehicle allocation, physical loading, delivery, none of it removed an order from the total.
+
+Resolved via AskUserQuestion into 3 candidate cutoffs (Load created / physically loaded onto the
+vehicle / vehicle departed) — user picked **physically loaded** (`loading_stage` reaching
+`'wm_loaded'`, later `'driver_confirmed'`, both set by `LoadingScreen.jsx`'s per-item Lift Stack
+flow) as the correct line: an order that merely has a Load created or a vehicle allocated is still
+"picked and sitting," only actual loading removes it. **Caught a second real gotcha before shipping
+this fix**, via a live REST probe rather than assuming: `loading_stage` defaults to the **string**
+`'pending'`, not `null` — a naive `!o.loading_stage` falsy check would have excluded every
+not-yet-loaded order (the opposite of correct) instead of none. Fixed with an explicit
+`LOADED_STAGES = ['wm_loaded', 'driver_confirmed']` allow-list instead.
+
+Verified live: recomputed every product's expected total independently via a fresh REST query
+applying the same filter, compared against the live page's rendered numbers — exact match across
+all 9 non-zero products, including the two whose totals visibly changed once the fix landed
+(BrakeFluid X 20→0, fully excluded since its only contributing order was already loaded; AlphaMax
+5L 12→10, partially excluded).
+
 **Nothing outstanding** — schema-free, single-file change, confirmed working live in the same pass.
