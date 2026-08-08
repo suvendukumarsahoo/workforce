@@ -4073,3 +4073,104 @@ punch-through of the UI, not just code review. Test data left in the live DB fro
 real orders (Ret1/Ret2) and two day_summaries batches for Arjun Nair, 9 Aug 2026 — safe to leave
 (realistic-looking, harmless) or clean up via the UI, user's call, not cleaned up automatically per
 this session's established convention.
+
+## Distributor Secondary Order Report — Summary/Detail, filters, PDF/Excel export (9 Aug 2026
+## session) — BUILT, SCHEMA-FREE, BROWSER-TESTED & CONFIRMED WORKING
+
+**User's ask, condensed:** a report for Distributor Secondary with a Summary tab (date, batch id,
+distributor name, beat name, total orders, total items, total value of the batch) drilling down to
+order-no-wise → open each order, plus a Detail tab (itemwise rows), both filterable (Distributor,
+Beat, date range) and exportable to PDF and Excel. Follow-up asks in the same breath: the Detail
+tab needs the same filters and its own PDF/Excel export; and the report should be reachable by
+clicking through from the Distributor Secondary dashboard panels — if reached from the Goals
+dashboard specifically, the date range should be **locked to that period's month only**.
+
+**Resolved via AskUserQuestion before building:**
+- **Audience: both.** One shared component. Sales Team see their own activity (no Rep filter).
+  Admin (org-wide) and Manager (own team) get an oversight version with an added **Sales Rep**
+  filter — a batch belongs to one rep, but Retailing Complete locks *all* that rep's orders for the
+  day regardless of beat/distributor, so multi-rep viewing needs a rep dimension.
+- **A batch spanning multiple beats/distributors splits into multiple Summary rows** — one row per
+  distinct (batch, distributor, beat) combination actually present in that batch, each scoped to
+  just that slice.
+- **Report scope is completed batches only** (`secondary_orders.batch_id is not null`) — still-
+  ongoing orders aren't part of any batch; `DaySummary`'s existing live rollup already covers those.
+- **xlsx security** — the `xlsx` npm package carries 2 known high-severity CVEs (prototype
+  pollution, ReDoS) that SheetJS no longer patches on the npm registry. Proceeded anyway since this
+  feature only *writes* exports (`json_to_sheet`+`writeFile`), never parses an uploaded/untrusted
+  file — the vulnerable code paths are in the read/parse functions, so real exploitability here is
+  low. Flagged explicitly to the user before installing, same tolerance this app already extends to
+  the pre-existing react-router advisory.
+
+**New dependencies:** `jspdf-autotable` (official jsPDF plugin — every existing PDF in this app
+hand-positions a small bounded number of rows via manual `text()`/`line()` calls; a filtered report
+can run to many rows, so this is the first use of jsPDF's own pagination plugin) and `xlsx`
+(SheetJS community edition — this app's first Excel export of any kind). Bundle grew ~330kB gzipped
+— same disclosure as every other "first X dependency" this session (recharts/jspdf/jszip).
+
+**Built:**
+1. **`db.js`'s `fetchSecondaryOrdersForReport({ memberIds, distributorId, beatId, from, to })`** —
+   single fetch feeding both tabs (`secondary_orders` + joined `items`/`outlet`/`beat`/
+   `distributor`, filtered to `batch_id is not null`, `cancelled=false`, `order_date` range,
+   `member_id in (...)`). Distributor/Beat filters apply client-side on the already-fetched set
+   (cheap re-render, no re-query) — only date range/Rep changes trigger a re-fetch.
+2. **`src/lib/printSecondaryReport.js`** (new) — `buildReportPdf`/`downloadReportPdf` (generic
+   `{columns, rows}` → `jspdf-autotable` table, landscape when >6 columns), `downloadReportExcel`
+   (same shape → `xlsx` sheet). Reused identically by both Summary and Detail tabs.
+3. **`src/pages/shared/DistributorSecondaryReport.jsx`** (new) — self-routes on role (same
+   convention as `Attendance.jsx`/`AttendanceRules.jsx`): `r5` → own view, no Rep filter; `r2` →
+   own team (`members.manager_id`); `r1` → every Sales Team member. Summary groups fetched orders
+   by `(batch_id, distributor_id, beat_id[, member_id])`, row click → order-no-wise Sheet → row
+   click → `SecondaryOrderDetailSheet` (read-only order header + items + total + a "⬇ PDF" button
+   reusing the existing `downloadSecondaryOrderPdf` from `printSecondaryOrder.js` as-is). Detail tab
+   flattens to one row per item. Both tabs share the filter bar and export buttons for whichever
+   tab is active. `initialParams.locked` renders the date range as plain disabled text instead of
+   `<input type="date">`.
+4. **Three click-through entry points**, each computing `{from, to}` and calling
+   `onNavigate('distributorSecondaryReport', params)`:
+   - **`WebApp.jsx`'s `goTo`** gains an optional `params` arg (`goTo(id, params=null)`), threaded as
+     a new `navParams` prop alongside the existing `onNavigate` to every `PageComponent` —
+     backward-compatible, every existing single-arg `onNavigate('id')` call is unaffected.
+   - **`Dashboard.jsx`'s `DistributorSecondarySection`** — new `onNavigate` prop, "View Report"
+     `DarkFooterLinks` entry using its own active Today/Month/Year tab's range — unlocked.
+   - **`GoalsStatus.jsx`** — previously didn't accept `onNavigate` at all despite `WebApp.jsx`
+     already passing it to every page; added the prop + a link using `monthRangeForPeriod
+     (currentPeriod)` (already computed in this file as `visitRange`) with `locked: true`.
+   - **`TeamApp.jsx`** (Sales Team shell, no generic `onNavigate`) — mirrors the same concept
+     locally: new `reportParams` state + a callback prop into `TeamSnapshot`, which computes its own
+     active-tab range and calls it — unlocked. `TeamSnapshot` passes `navParams={reportParams}`,
+     same prop name `WebApp.jsx` uses, for one canonical name across both shells.
+5. **Menu id `distributorSecondaryReport`** ("Distributor Secondary Report", 📈) registered in
+   `WebApp.jsx`'s `ALL_MENUS`/`PAGE_MAP` (Distributor Functions section, r1/r2) + `Settings.jsx`'s
+   mirrored copy + `TeamApp.jsx`'s `MORE_ITEMS` (r5) — Recurring Bug Pattern #6.
+
+**Real bug found and fixed via live testing:** the report initially showed zero rows for every
+scope. Root cause: `fetchSecondaryOrdersForReport`'s `member:members(id,name)` PostgREST embed
+400'd — `secondary_orders.member_id`'s FK constraint actually points to `users(id)`, not
+`members(id)`, even though the app stores `members.id` values in it in practice (the exact same
+quirk already documented for `retail_visits.member_id` in an earlier session's entry above).
+PostgREST can't embed a relationship that doesn't exist at the constraint level. Fixed by dropping
+the embed entirely and resolving the Sales Rep name client-side against the already-loaded
+`members` list from `useData()` instead — same workaround pattern already used elsewhere in this
+app for this exact FK mismatch.
+
+**Second real bug found via live testing:** the `GoalsStatus.jsx`/`Dashboard.jsx` "View Report"
+links landed on the report but never actually locked/pre-filled anything. Root cause: a prop-name
+mismatch — `WebApp.jsx` passes every page's click-through payload as `navParams`, but the report
+component was written to read `initialParams`. Fixed by standardizing on `navParams` everywhere
+(including `TeamApp.jsx`'s local mirror), so both shells now feed the same prop name.
+
+**Verified live end-to-end** (headless Playwright, real Supabase data — Arjun Nair's existing
+2-batch test data from the multi-batch Retailing Complete session entry above): Summary tab showed
+both batches with exactly correct totals (1 order/1 item/₹850 each, matching distributor "New
+DB1-CTC"/beat "Cuttack-Bt1"); drilling a Summary row → order list → full order detail all matched
+the underlying data exactly (product line, qty, total); Detail tab's 2 itemwise rows matched;
+PDF and Excel both triggered real downloads with correct filenames
+(`SecondaryReport-Detail-2026-08-01_to_2026-08-31.pdf`/`.xlsx`); Admin's view correctly showed the
+Sales Rep filter + column resolving "Arjun Nair" and the same 2 batches org-wide; all three
+click-through entry points landed with the right pre-filled range, and Goals Status's specifically
+arrived with disabled date inputs + a visible "🔒 Locked to this month" notice while Dashboard's
+arrived editable as intended.
+
+**Nothing outstanding** — schema-free, fully tested end-to-end across every audience (own/Manager/
+Admin) and all three entry points, both bugs found during testing fixed and re-verified.
