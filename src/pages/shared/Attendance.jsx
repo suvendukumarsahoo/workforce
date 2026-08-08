@@ -1,47 +1,49 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
-import { Card, CH, Av, Btn, Sheet, AttCal } from '../../components/ui.jsx'
+import { Card, CH, Av, Tile, AttCal, Sheet } from '../../components/ui.jsx'
 import MyAttendanceCalendar from '../../components/MyAttendanceCalendar.jsx'
-import { buildJourneyEvents, fmtTs } from '../../lib/journeyTimeline.js'
-import { buildActivityEvents } from '../../lib/activityTimeline.js'
-import VeinTimeline from '../../components/VeinTimeline.jsx'
+import AttendanceDayDetailSheet from '../../components/AttendanceDayDetailSheet.jsx'
+import AttendanceTrendChart from '../../components/charts/AttendanceTrendChart.jsx'
+import { ContributionDonut } from '../../components/charts/GoalBarChart.jsx'
+import { fmtTs } from '../../lib/journeyTimeline.js'
 import { ISSUE_CATEGORIES, hasManpowerIssue } from '../../lib/productionIssues.js'
-import { APPROVER_ROLE_LABEL, computeAttendanceStats, eligibleForWaiverStage } from '../../lib/attendanceRules.js'
+import { computeAttendanceStats } from '../../lib/attendanceRules.js'
 import * as db from '../../lib/db.js'
 
 const MANPOWER_REASONS = ISSUE_CATEGORIES.find(c => c.key === 'Manpower').reasons
 
-const ALLOCATION_DATE_FIELDS = [
-  'driver_accepted_at', 'vehicle_parked_at', 'loading_started_at', 'loading_completed_at',
-  'journey_started_at', 'returning_to_base_at', 'journey_complete_submitted_at', 'journey_complete_approved_at',
-]
+const pad = n => String(n).padStart(2, '0')
 
-// Local calendar date, NOT toISOString()'s UTC date — keeps this in sync with how `date` columns
-// are written in db.js (see todayStr() there) so late-night/early-morning events land on the same
-// day here as they do in the roster/self-view calendars.
-const dateOf = iso => {
-  if (!iso) return null
-  const d = new Date(iso)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
-
-export default function Attendance() {
+export default function Attendance({ onNavigate }) {
   const { role } = useAuth()
-  if (role?.id === 'r4' || role?.id === 'r1') return <AttendanceHR />
+  if (role?.id === 'r4' || role?.id === 'r1') return <AttendanceHR onNavigate={onNavigate} />
   return <MyAttendanceCalendar />
 }
 
-function AttendanceHR() {
-  const { currentUser, role } = useAuth()
-  const { users, products, categories } = useData()
+// Per-punch status, shared by the tiles/trend-chart/recent-attendance-table below — same
+// Present/Pending/Absent semantics computeAttendanceStats already establishes for the monthly
+// roster (fully-approved = Present, punched-but-not-fully-approved = Pending, no punch = Absent).
+function statusOf(punch) {
+  if (!punch) return 'absent'
+  if (punch.punch_approval_status === 'approved' && punch.activity_approval_status === 'approved') return 'present'
+  return 'pending'
+}
+const STATUS_COLOR = { present: '#10b981', pending: '#7c3aed', absent: '#ef4444' }
+const STATUS_LABEL = { present: 'Present', pending: 'Pending', absent: 'Absent' }
+
+// HR/Admin's Attendance page — an at-a-glance dashboard (tiles, trend, role breakdown, recent
+// activity, roster) rather than a workspace for approving things. Approval actions live entirely
+// on the standalone Attendance Approval page (src/pages/shared/AttendanceApprovals.jsx) now; the
+// Roster's day-drill-down below is deliberately view-only (readOnly on AttendanceDayDetailSheet).
+function AttendanceHR({ onNavigate }) {
+  const { users, products, categories, roles } = useData()
   const categoryName = cid => (categories || []).find(c => c.id === cid)?.name || 'Uncategorized'
   const manpowerFlagged = (products || []).filter(hasManpowerIssue)
   const [punchQueue, setPunchQueue] = useState([])
   const [activityQueue, setActivityQueue] = useState([])
   const [roster, setRoster] = useState([])
   const [ruleSettings, setRuleSettings] = useState(null)
-  const [busyId, setBusyId] = useState(null)
   const [dayDetail, setDayDetail] = useState(null)
   const [rosterOpen, setRosterOpen] = useState(null) // { user, punches } — the employee whose calendar Sheet is open
   const [loadError, setLoadError] = useState(null)
@@ -51,6 +53,7 @@ function AttendanceHR() {
   const year = now.getFullYear()
   const today = now.getDate()
   const daysInMonth = new Date(year, month, 0).getDate()
+  const todayDateStr = `${year}-${pad(month)}-${pad(today)}`
 
   const load = async () => {
     const [
@@ -71,60 +74,41 @@ function AttendanceHR() {
 
   useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const approveStage1 = async (id) => {
-    setBusyId(id)
-    const { data, error } = await db.approvePunchStage1(id, currentUser?.id)
-    setBusyId(null)
-    // the day-detail Sheet (if open on this row) holds its own snapshot of `punch` — refresh it
-    // in place so Stage 2 shows up immediately instead of only after closing and reopening.
-    setDayDetail(d => d && d.punch?.id === id ? { ...d, punch: data || d.punch } : d)
-    if (error) { setLoadError('Stage 1 approval failed — ' + error.message); return { error } }
-    await load()
-    return { error: null }
-  }
-
-  const approveStage2 = async (id) => {
-    setBusyId(id)
-    const { data, error } = await db.approveActivityStage2(id, currentUser?.id)
-    setBusyId(null)
-    setDayDetail(d => d && d.punch?.id === id ? { ...d, punch: data || d.punch } : d)
-    if (error) { setLoadError('Stage 2 approval failed — ' + error.message); return { error } }
-    await load()
-    return { error: null }
-  }
-
-  // Rule authoring/approval, mapping, and the waiver-approval queue all live on the standalone
-  // "Daily Attendance Rules" page now (src/pages/shared/AttendanceRules.jsx) — the day-detail
-  // Sheet below still shows a punch's rule status + a waive button directly (display/drill-down,
-  // not rule management), so it still needs this one action.
-  const approveWaiver = async (id) => {
-    setBusyId(id)
-    const punch = dayDetail?.punch
-    const fn = punch?.rule_waiver_status === 'stage1_approved'
-      ? () => db.approveWaiverStage2(id, currentUser?.id)
-      : () => db.approveWaiverStage1(id, currentUser?.id, punch?.rule?.approver1_role)
-    const { data, error } = await fn()
-    setBusyId(null)
-    setDayDetail(d => d && d.punch?.id === id ? { ...d, punch: data || d.punch } : d)
-    if (error) { setLoadError('Waiver approval failed — ' + error.message); return { error } }
-    await load()
-    return { error: null }
-  }
-
   // String() guards against Supabase returning bigint columns as strings while `users.id` (if a
   // plain int4) comes back as a number — a strict === would silently never match.
   const punchesFor = userId => roster.filter(p => String(p.user_id) === String(userId))
 
   const openDay = (user, dayNum, punches) => {
-    const date = `${year}-${String(month).padStart(2, '0')}-${String(dayNum).padStart(2, '0')}`
+    const date = `${year}-${pad(month)}-${pad(dayNum)}`
     const punch = punches.find(p => p.date === date)
     setDayDetail({ user, date, punch })
   }
 
-  const openQueueItem = (p) => {
-    const user = (users || []).find(u => String(u.id) === String(p.user_id)) || p.user
-    setDayDetail({ user, date: p.date, punch: p })
+  // ── Today's tiles ──────────────────────────────────────────────────────────
+  const todaysPunches = roster.filter(p => p.date === todayDateStr)
+  const presentToday = todaysPunches.filter(p => statusOf(p) === 'present').length
+  const absentToday = (users || []).length - todaysPunches.length
+  const lateToday = todaysPunches.filter(p => p.duty_status === 'late').length
+  const pendingApprovals = punchQueue.length + activityQueue.length
+
+  // ── Attendance Overview trend — Present/Absent/Late per day, this month up to today ─────────
+  const trendData = []
+  for (let d = 1; d <= today; d++) {
+    const dateStr = `${year}-${pad(month)}-${pad(d)}`
+    const dayPunches = roster.filter(p => p.date === dateStr)
+    trendData.push({
+      day: d,
+      Present: dayPunches.filter(p => statusOf(p) === 'present').length,
+      Absent: (users || []).length - dayPunches.length,
+      Late: dayPunches.filter(p => p.duty_status === 'late').length,
+    })
   }
+
+  // ── Employees by Role donut ───────────────────────────────────────────────
+  const roleRows = (roles || []).map(r => ({ name: r.name, value: (users || []).filter(u => u.role_id === r.id).length }))
+
+  // ── Recent Attendance ─────────────────────────────────────────────────────
+  const recent = [...roster].sort((a, b) => new Date(b.punch_in_at) - new Date(a.punch_in_at)).slice(0, 8)
 
   return (
     <div>
@@ -133,6 +117,47 @@ function AttendanceHR() {
           Could not load attendance data — {loadError}
         </div>
       )}
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 14 }}>
+        <Tile icon="👥" label="Total Employees" value={(users || []).length} />
+        <Tile icon="✅" label="Present Today" value={presentToday} color={STATUS_COLOR.present} />
+        <Tile icon="❌" label="Absent Today" value={absentToday} color={STATUS_COLOR.absent} />
+        <Tile icon="⏰" label="Late Today" value={lateToday} color="#f59e0b" />
+        <Tile icon="🕓" label="Pending Approvals" value={pendingApprovals} color={STATUS_COLOR.pending} onClick={() => onNavigate?.('attendanceApprovals')} />
+      </div>
+
+      <Card>
+        <CH title="Attendance Overview" sub={now.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })} />
+        <div style={{ padding: '8px 12px' }}>
+          <AttendanceTrendChart data={trendData} />
+        </div>
+      </Card>
+
+      <Card>
+        <CH title="Employees by Role" />
+        <div style={{ padding: '8px 12px' }}>
+          <ContributionDonut rows={roleRows} formatValue={n => `${n} employee${n === 1 ? '' : 's'}`} emptyLabel="No employees yet" />
+        </div>
+      </Card>
+
+      <Card>
+        <CH title="Recent Attendance" sub={`Last ${recent.length} punch-in(s)`} />
+        {recent.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No punches recorded yet</div>}
+        {recent.map(p => {
+          const st = statusOf(p)
+          return (
+            <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '10px 14px', borderBottom: '1px solid #f3f4f6' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{p.user?.name || '—'}</div>
+                <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{p.date} · {fmtTs(p.punch_in_at)}{p.duty_status === 'late' ? ' · Late' : ''}</div>
+              </div>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 12, background: `${STATUS_COLOR[st]}22`, color: STATUS_COLOR[st], flexShrink: 0 }}>
+                {STATUS_LABEL[st]}
+              </span>
+            </div>
+          )
+        })}
+      </Card>
 
       <Card>
         <CH title="Manpower Production Issues" sub={`${manpowerFlagged.length} product(s) flagged — from Warehouse Manager's Daily Stock Update`} />
@@ -145,38 +170,6 @@ function AttendanceHR() {
                 <span key={r.field} style={{ fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 12, background: '#fee2e2', color: '#b91c1c' }}>{r.label}</span>
               ))}
             </div>
-          </div>
-        ))}
-      </Card>
-
-      <Card>
-        <CH title="Stage 1 — Punch-In Approvals" sub={`${punchQueue.length} punch(es)`} />
-        {punchQueue.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>Nothing waiting on stage 1</div>}
-        {punchQueue.map(p => (
-          <div key={p.id} onClick={() => openQueueItem(p)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{p.user?.name || '—'}</div>
-              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
-                {p.date} · {fmtTs(p.punch_in_at)}{p.location_flag ? ` · ⚠ ${p.flag_reason || 'location deviation'}` : ''}
-              </div>
-            </div>
-            <Btn sm v="pri" disabled={busyId === p.id} onClick={(e) => { e.stopPropagation(); approveStage1(p.id) }} style={{ flexShrink: 0 }}>
-              {busyId === p.id ? 'Approving...' : 'Approve'}
-            </Btn>
-          </div>
-        ))}
-      </Card>
-
-      <Card>
-        <CH title="Stage 2 — Activity Approvals" sub={`${activityQueue.length} day(s)`} />
-        {activityQueue.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>Nothing waiting on stage 2</div>}
-        {activityQueue.map(p => (
-          <div key={p.id} onClick={() => openQueueItem(p)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{p.user?.name || '—'}</div>
-              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{p.date} · Punch-in already approved — review activity to complete</div>
-            </div>
-            <div style={{ fontSize: 12, color: '#9ca3af', flexShrink: 0 }}>›</div>
           </div>
         ))}
       </Card>
@@ -226,26 +219,20 @@ function AttendanceHR() {
       )}
 
       {dayDetail && (
-        <DayDetailSheet
+        <AttendanceDayDetailSheet
           detail={dayDetail}
           onClose={() => setDayDetail(null)}
-          onApproveStage1={approveStage1}
-          onApproveStage2={approveStage2}
-          onApproveWaiver={approveWaiver}
-          viewerRoleId={role?.id}
-          viewerUserId={currentUser?.id}
-          busyId={busyId}
           zIndex={320}
+          readOnly
         />
       )}
-
     </div>
   )
 }
 
 // Opened from tapping an employee row on the roster — the summary row itself no longer renders a
-// calendar inline (per the user's ask: roster shows employee-wise summary only, calendar on tap).
-// zIndex stays at Sheet's default (300); DayDetailSheet opens on top of this one at 320.
+// calendar inline (roster shows employee-wise summary only, calendar on tap). zIndex stays at
+// Sheet's default (300); the day-detail Sheet opens on top of this one at 320.
 function RosterCalendarSheet({ user, punches, today, daysInMonth, ruleSettings, monthLabel, onClose, onDayClick }) {
   const stats = computeAttendanceStats(punches, today, daysInMonth, ruleSettings)
   return (
@@ -263,162 +250,6 @@ function RosterCalendarSheet({ user, punches, today, daysInMonth, ruleSettings, 
         </div>
       )}
       <AttCal days={stats.days} flags={stats.flags} onDayClick={onDayClick} />
-    </Sheet>
-  )
-}
-
-function DayDetailSheet({ detail, onClose, onApproveStage1, onApproveStage2, onApproveWaiver, viewerRoleId, viewerUserId, busyId, zIndex }) {
-  const { user, date, punch } = detail
-  const isDriver = user.role_id === 'r7'
-  const [driverEvents, setDriverEvents] = useState(null)
-  const [activityEvents, setActivityEvents] = useState(null)
-  const [actionError, setActionError] = useState(null)
-
-  const runApprove = async (fn, id) => {
-    setActionError(null)
-    const { error } = await fn(id)
-    if (error) setActionError(error.message)
-  }
-
-  useEffect(() => {
-    if (!isDriver) return
-
-    const fetchAllocations = user.member_id ? db.fetchDriverAllocations(user.member_id) : Promise.resolve({ data: [] })
-
-    fetchAllocations
-      .then(({ data: allocations }) => {
-        const sameDayAllocations = (allocations || []).filter(a => {
-          if (ALLOCATION_DATE_FIELDS.some(f => dateOf(a[f]) === date)) return true
-          // Multi-day journeys: catch dates that fall inside the start→submitted/return window
-          // even when no single top-level timestamp lands exactly on this date.
-          if (a.journey_started_at) {
-            const startDate = dateOf(a.journey_started_at)
-            const endDate = dateOf(a.journey_complete_submitted_at || a.returning_to_base_at) || dateOf(new Date().toISOString())
-            return date >= startDate && date <= endDate
-          }
-          return false
-        })
-        return Promise.all(sameDayAllocations.map(async a => {
-          const { data: orders } = await db.fetchAllocationOrders(a.id)
-          return buildJourneyEvents(a, orders || [])
-        }))
-      })
-      .then(withOrders => {
-        const events = withOrders.flat().filter(ev => dateOf(ev.ts) === date).sort((a, b) => new Date(a.ts) - new Date(b.ts))
-        setDriverEvents(events)
-      })
-  }, [isDriver, user.member_id, date])
-
-  useEffect(() => {
-    if (isDriver) return
-    db.fetchActivityLog(user.id, date).then(({ data }) => {
-      setActivityEvents(buildActivityEvents(punch, data || []))
-    })
-  }, [isDriver, user.id, date, punch])
-
-  const waiverEligible = punch && punch.rule_status ? eligibleForWaiverStage(punch, user, viewerRoleId, viewerUserId) : false
-
-  return (
-    <Sheet title={user.name} sub={date} onClose={onClose} zIndex={zIndex}>
-      {punch ? (
-        <>
-          <div style={{ background: '#f9fafb', borderRadius: 10, padding: 12, marginBottom: 14, fontSize: 12 }}>
-            <div style={{ fontWeight: 700, color: '#374151', marginBottom: 4 }}>Punched in {fmtTs(punch.punch_in_at)}</div>
-            <div>Distance from HQ: {punch.distance_from_hq_m != null ? `${punch.distance_from_hq_m}m` : '—'}</div>
-            {punch.duty_status && (
-              <div style={{ color: punch.duty_status === 'late' ? '#ef4444' : '#10b981', fontWeight: 600, marginTop: 2 }}>
-                {punch.duty_status === 'late' ? `Late by ${punch.minutes_late}m` : 'On Time'}
-              </div>
-            )}
-            {punch.location_flag && (
-              <div style={{ marginTop: 6, color: '#92400e' }}>⚠ {punch.flag_reason || 'location deviation'}</div>
-            )}
-          </div>
-
-          {punch.rule_status && (
-            <div style={{ border: '1px solid #fde68a', background: '#fffbeb', borderRadius: 10, padding: 12, marginBottom: 14 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: punch.rule_status === 'half_day' ? '#b91c1c' : '#92400e', marginBottom: 4 }}>
-                {punch.rule_status === 'half_day' ? '🟡 Half Day' : '🟠 Late Present'}
-                {punch.rule?.threshold_minutes != null ? ` — over by ${punch.minutes_late - punch.rule.threshold_minutes}m` : ''}
-              </div>
-              {punch.rule_waiver_status === 'approved' ? (
-                <div style={{ fontSize: 12, color: '#10b981', fontWeight: 600 }}>✓ Waived</div>
-              ) : (
-                <>
-                  <div style={{ fontSize: 11, color: '#78350f', marginBottom: 6 }}>
-                    {punch.rule_waiver_status === 'stage1_approved' ? 'Awaiting Stage 2 (HR)' : `Awaiting ${APPROVER_ROLE_LABEL[punch.rule?.approver1_role] || 'review'}`}
-                  </div>
-                  {waiverEligible ? (
-                    <Btn sm v="pri" disabled={busyId === punch.id} onClick={() => runApprove(onApproveWaiver, punch.id)}>
-                      {busyId === punch.id ? 'Approving...' : punch.rule_waiver_status === 'stage1_approved' ? 'Approve (Stage 2)' : 'Waive'}
-                    </Btn>
-                  ) : (
-                    <div style={{ fontSize: 11, color: '#9ca3af' }}>Not yours to approve</div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Stage 1 */}
-          <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, marginBottom: 10 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Stage 1 — Punch-In Approval</div>
-            {punch.punch_approval_status === 'approved' ? (
-              <div style={{ fontSize: 12, color: '#10b981', fontWeight: 600 }}>✓ Approved</div>
-            ) : (
-              <Btn sm v="pri" disabled={busyId === punch.id} onClick={() => runApprove(onApproveStage1, punch.id)}>
-                {busyId === punch.id ? 'Approving...' : 'Approve Punch-In'}
-              </Btn>
-            )}
-          </div>
-
-          {actionError && (
-            <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 10px', marginBottom: 10, fontSize: 11, color: '#991b1b' }}>
-              {actionError}
-            </div>
-          )}
-
-          {/* Stage 2 */}
-          <div style={{ border: '1px solid #e5e7eb', borderRadius: 10, padding: 12, marginBottom: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 4 }}>Stage 2 — Activity Approval</div>
-            {punch.activity_approval_status === 'approved' ? (
-              <div style={{ fontSize: 12, color: '#10b981', fontWeight: 600 }}>✓ Approved — marked Present</div>
-            ) : punch.punch_approval_status !== 'approved' ? (
-              <div style={{ fontSize: 12, color: '#9ca3af' }}>Complete Stage 1 first</div>
-            ) : (
-              <Btn sm v="pri" disabled={busyId === punch.id} onClick={() => runApprove(onApproveStage2, punch.id)}>
-                {busyId === punch.id ? 'Approving...' : 'Approve Activity'}
-              </Btn>
-            )}
-          </div>
-        </>
-      ) : (
-        <div style={{ background: '#fef2f2', borderRadius: 10, padding: 12, marginBottom: 14, fontSize: 12, color: '#991b1b', fontWeight: 600 }}>
-          Absent — no punch-in recorded
-        </div>
-      )}
-
-      {punch && (
-        <>
-          <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 8 }}>Activity — {date}</div>
-          {isDriver ? (
-            <>
-              {driverEvents === null && <div style={{ fontSize: 12, color: '#9ca3af' }}>Loading...</div>}
-              {driverEvents?.length === 0 && <div style={{ fontSize: 12, color: '#9ca3af' }}>No load/journey activity recorded this day</div>}
-              {driverEvents?.map((ev, i) => (
-                <div key={i} style={{ padding: '8px 0', borderBottom: '1px solid #f3f4f6', fontSize: 12 }}>
-                  <div style={{ fontWeight: 600 }}>{ev.label}{ev.tag ? ` — ${ev.tag}` : ''}</div>
-                  <div style={{ color: '#6b7280', marginTop: 1 }}>{fmtTs(ev.ts)}</div>
-                </div>
-              ))}
-            </>
-          ) : activityEvents === null ? (
-            <div style={{ fontSize: 12, color: '#9ca3af' }}>Loading...</div>
-          ) : (
-            <VeinTimeline events={activityEvents} />
-          )}
-        </>
-      )}
     </Sheet>
   )
 }

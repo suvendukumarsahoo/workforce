@@ -15,6 +15,7 @@ const ALL_MENUS = [
   { id:'products',      label:'Products'         },
   { id:'categories',    label:'Categories'       },
   { id:'attendance',    label:'Attendance'       },
+  { id:'attendanceApprovals', label:'Attendance Approval' },
   { id:'attendanceRules', label:'Daily Attendance Rules' },
   { id:'employees',     label:'Employees'        },
   { id:'payroll',       label:'Payroll'          },
