@@ -225,24 +225,29 @@ export const Confirm = ({ msg, onYes, onNo }) => (
 // legitimacy vs. arrival-time-rule-compliance can co-occur on the same day). Values: null | 'late'
 // | 'half_day'. A waived instance simply has no flag by the time it's read back.
 export const AttCal = ({ days = [], onDayClick, flags = [] }) => {
-  const BG = { P: '#d1fae5', A: '#fee2e2', H: '#fef3c7', W: '#f9fafb', T: '#dbeafe', X: '#ede9fe' }
-  const TC = { P: '#065f46', A: '#991b1b', H: '#92400e', W: '#d1d5db', T: '#1d4ed8', X: '#6d28d9' }
-  const FLAG_DOT = { late: '#f97316', half_day: '#dc2626' }
+  // Solid, saturated backgrounds with white text — the previous pastel-on-near-white palette
+  // (e.g. #d1fae5 bg / #065f46 text for Present, #f9fafb bg / #d1d5db text for future days) had
+  // too little contrast to read at a glance across a roster of many small calendars. `W` (future/
+  // not-yet-happened) deliberately stays a plain neutral gray, not a saturated color, since it
+  // isn't real data yet — everything else is now unambiguous at a glance.
+  const BG = { P: '#059669', A: '#dc2626', H: '#f59e0b', W: '#e2e8f0', T: '#2563eb', X: '#7c3aed' }
+  const TC = { P: '#ffffff', A: '#ffffff', H: '#ffffff', W: '#64748b', T: '#ffffff', X: '#ffffff' }
+  const FLAG_DOT = { late: '#f97316', half_day: '#facc15' }
   return (
     <div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 2, marginBottom: 2 }}>
-        {['M','T','W','T','F','S','S'].map((d, i) => <div key={i} style={{ textAlign: 'center', fontSize: 9, color: '#9ca3af' }}>{d}</div>)}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 3, marginBottom: 3 }}>
+        {['M','T','W','T','F','S','S'].map((d, i) => <div key={i} style={{ textAlign: 'center', fontSize: 9, fontWeight: 600, color: '#6b7280' }}>{d}</div>)}
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 2 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 3 }}>
         {days.map((d, i) => (
           <div
             key={i}
             onClick={onDayClick ? () => onDayClick(i + 1) : undefined}
-            style={{ position: 'relative', textAlign: 'center', fontSize: 9, padding: '4px 1px', borderRadius: 4, background: BG[d] || '#f9fafb', color: TC[d] || '#9ca3af', fontWeight: d === 'T' ? 700 : 400, cursor: onDayClick ? 'pointer' : undefined }}
+            style={{ position: 'relative', textAlign: 'center', fontSize: 10, padding: '5px 1px', borderRadius: 5, background: BG[d] || '#e2e8f0', color: TC[d] || '#64748b', fontWeight: 700, cursor: onDayClick ? 'pointer' : undefined }}
           >
             {i + 1}
             {flags[i] && (
-              <span style={{ position: 'absolute', top: 1, right: 1, width: 5, height: 5, borderRadius: '50%', background: FLAG_DOT[flags[i]] }} />
+              <span style={{ position: 'absolute', top: -2, right: -2, width: 8, height: 8, borderRadius: '50%', background: FLAG_DOT[flags[i]], boxShadow: '0 0 0 1.5px #fff' }} />
             )}
           </div>
         ))}

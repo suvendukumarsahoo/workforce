@@ -3662,3 +3662,39 @@ activity"** — the exact gap the user reported, now closed and visually verifie
 **Still open:** `DistributorApproval.jsx`'s remaining un-instrumented write paths, if any, and any
 other master/detail screens beyond what Phase 1/2/3 have covered so far, remain an explicit
 further follow-up — not attempted proactively beyond what was reported broken this round.
+
+## Attendance Calendar (`AttCal`) contrast redesign (8 Aug 2026 session) — BUILT, SCHEMA-FREE,
+## BROWSER-TESTED & CONFIRMED WORKING
+
+User's report: "the attendance calendar has a very light look — the background is white, the dates
+are light colour and the attendance marks are also light coloured — looks visually very painful."
+Confirmed by inspecting the shared `AttCal` component (`src/components/ui.jsx`, used by both
+`Attendance.jsx`'s HR roster — many small per-employee calendars — and `MyAttendanceCalendar.jsx`'s
+larger self-view) — it used a pastel-background/muted-text palette throughout (e.g. Present:
+`#d1fae5` bg / `#065f46` text; future/not-yet-happened days: `#f9fafb` bg / `#d1d5db` text — the
+latter pair barely distinguishable from white-on-white).
+
+**Built:** switched every real-data state (Present/Absent/Pending/Holiday/Today) to a solid,
+saturated background (`#059669` green / `#dc2626` red / `#7c3aed` violet / `#f59e0b` amber /
+`#2563eb` blue respectively) with bold white text — unambiguous at a glance, including across a
+roster of many small calendars at once. `W` (future/not-yet-happened) deliberately stays a plain
+neutral gray (`#e2e8f0` bg / `#64748b` text) rather than another saturated color, since it isn't
+real attendance data yet — but bumped from the old near-invisible pairing to an actually legible
+one. Weekday header labels (M/T/W/T/F/S/S) darkened from `#9ca3af` to `#6b7280` and given
+`fontWeight: 600`. Day-cell font bumped 9→10px, padding/gap slightly increased, and every day
+number is now bold (`fontWeight: 700`) rather than only "today" being bold. The Late/Half-Day flag
+dot (small corner indicator, independent of the cell's own background) got a white ring
+(`boxShadow: '0 0 0 1.5px #fff'`) so it still reads clearly against the new saturated backgrounds,
+and its own colors were also bumped for a self-contained visual identity (`#f97316` late unchanged,
+half-day switched `#dc2626`→`#facc15` since red was now identical to the Absent cell background it
+could sit on top of).
+
+`vite build` clean. Scoped `eslint` on `ui.jsx` — same 2 pre-existing `react-refresh/only-export-
+components` errors as always (this file's long-documented baseline), nothing new. Confirmed live
+via headless Playwright screenshots in both consumers: the HR roster (multiple employees' calendars
+stacked, e.g. a fully-absent employee now reads as an unmistakable solid red block instead of a
+pale pink one) and the self-view "My Attendance" card (Present/Absent/Pending days all now
+immediately legible, future days no longer look blank/broken).
+
+**Still open:** none — this was a pure style change to one shared component, no schema, no logic
+change, confirmed rendering correctly in both places it's used.
