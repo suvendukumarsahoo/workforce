@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Btn, Sheet } from '../../components/ui.jsx'
@@ -16,8 +16,26 @@ export default function StockUpdate() {
   const { products, setProducts, categories, showToast } = useData()
   const [saving, setSaving] = useState({})
   const [issuesFor, setIssuesFor] = useState(null)
+  const [pickingOrders, setPickingOrders] = useState([])
+  const [pickedFor, setPickedFor] = useState(null)
 
   const categoryName = cid => (categories || []).find(c => c.id === cid)?.name || 'Uncategorized'
+
+  // All orders currently in the picking pipeline (status stays 'submitted_for_picking' through the
+  // whole pending_picking → picking_done → ready_for_load sub-flow, only moving on once picking is
+  // confirmed) — a running total until each order moves past picking, not scoped to "today".
+  useEffect(() => {
+    db.fetchPickingOrders().then(({ data }) => setPickingOrders(data || []))
+  }, [])
+
+  // Only items WM has actually marked Available count as "picked" — Wait/Unavailable items
+  // contributed 0 toward a product's picked quantity (they weren't successfully picked).
+  const pickedRowsFor = productId => pickingOrders.flatMap(o =>
+    (o.items || [])
+      .filter(it => it.product_id === productId && it.availability === 'Available' && !it.cancelled)
+      .map(it => ({ orderId: o.id, distributorName: o.distributor?.name || o.distributor_id, qty: it.final_qty }))
+  )
+  const pickedQtyFor = productId => pickedRowsFor(productId).reduce((s, r) => s + (r.qty || 0), 0)
 
   const groups = {}
   ;(products || []).forEach(p => {
@@ -71,7 +89,7 @@ export default function StockUpdate() {
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
               <thead>
                 <tr style={{ background: '#f9fafb' }}>
-                  {['Product', 'Status', 'Last Updated', 'Issues'].map(h => (
+                  {['Product', 'Status', 'Total Picked Qty', 'Last Updated', 'Issues'].map(h => (
                     <th key={h} style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>{h}</th>
                   ))}
                 </tr>
@@ -79,6 +97,7 @@ export default function StockUpdate() {
               <tbody>
                 {items.map(p => {
                   const status = p.stock_status || 'Available'
+                  const pickedQty = pickedQtyFor(p.id)
                   return (
                     <tr key={p.id} style={{ background: STATUS_BG[status], borderBottom: '1px solid #f3f4f6' }}>
                       <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{p.name}</td>
@@ -92,6 +111,18 @@ export default function StockUpdate() {
                           {STATUSES.map(o => <option key={o} value={o}>{o}</option>)}
                         </select>
                         {saving[p.id] && <span style={{ fontSize: 10, color: '#9ca3af', marginLeft: 6 }}>Saving...</span>}
+                      </td>
+                      <td style={{ padding: '8px 10px' }}>
+                        {pickedQty > 0 ? (
+                          <button
+                            onClick={() => setPickedFor(p)}
+                            style={{ background: 'none', border: 'none', padding: 0, fontSize: 12, fontWeight: 700, color: '#2563eb', cursor: 'pointer', textDecoration: 'underline' }}
+                          >
+                            {pickedQty}
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: 12, color: '#9ca3af' }}>0</span>
+                        )}
                       </td>
                       <td style={{ padding: '8px 10px', fontSize: 11, color: '#9ca3af' }}>{fmtTs(p.stock_status_updated_at)}</td>
                       <td style={{ padding: '8px 10px' }}>
@@ -131,6 +162,23 @@ export default function StockUpdate() {
             </div>
           ))}
           <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>Last updated: {fmtTs(issuesFor.issue_updated_at)}</div>
+        </Sheet>
+      )}
+
+      {pickedFor && (
+        <Sheet title={pickedFor.name} sub="Picked quantity by distributor, across orders currently in picking" onClose={() => setPickedFor(null)}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 10 }}>
+            Total Picked: {pickedQtyFor(pickedFor.id)}
+          </div>
+          {pickedRowsFor(pickedFor.id).map((r, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 4px', borderBottom: '1px solid #f3f4f6' }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{r.distributorName}</div>
+                <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 2 }}>Order #{r.orderId}</div>
+              </div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#15803d', flexShrink: 0 }}>{r.qty}</div>
+            </div>
+          ))}
         </Sheet>
       )}
     </div>
