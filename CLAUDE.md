@@ -3619,3 +3619,46 @@ more than one HR user).
 effects on this page, nothing new). Confirmed live via headless Playwright: "By Approver" tab
 correctly showed "HR Manager — 2 waivers — Arjun Nair, Ravi Kumar" matching the real DB state for
 the selected month.
+
+## Activity Log Phase 3 — New Customer Visit + Distributor Approval pipeline instrumented (8 Aug
+## 2026 session) — BUILT, SCHEMA-FREE, BROWSER-TESTED & CONFIRMED WORKING
+
+User's report: "yesterday we did a design of activities to show in the activity approval page —
+[a Sales Team member] created one customer visit, did pending visit, changed status to
+interested — all these are activities with time stamp — but the same is not showing in activity
+approval report." Investigated and confirmed real: `NewCustomerVisit.jsx` — the exact screen doing
+everything described (create/update a lead, change `lead_stage` to Interested/Not
+Interested/Final, log the visit) — had **zero** `db.logActivity` calls anywhere, despite Activity
+Log Phase 1/2 (documented earlier in this file) explicitly flagging "orders/picking/allocation
+screens... master screens beyond Products/Distributors/Settings... remain unstarted" as a known
+gap. This is that gap, closed.
+
+**Built (one `db.logActivity` call per meaningful action, matching the established Phase 1/2
+pattern — after the real write already succeeded, non-blocking):**
+1. **`NewCustomerVisit.jsx`**'s `submitVisit()` — one call covering the whole submission (not one
+   per underlying write, since create-distributor-or-update-stage + create-visit together represent
+   a single user action): `action: 'create'`/`'update'` (new vs. existing customer), `entity:
+   'visit'`, label e.g. `"Visit logged — {name} — Interested"`.
+2. **`DistributorApproval.jsx`** (Manager's adjacent pipeline stage — approving Final leads through
+   registration/payment/document verification into a real Distributor) — same gap, same fix,
+   instrumented while in the area since it's the direct continuation of the same activity a Sales
+   Team member's visit feeds into. Needed adding `currentUser` to this file's `useAuth()`
+   destructure (previously only pulled `role`). One call per stage-transition function: `approve`,
+   `reject`, `notReceivedYet`, `markPaymentReceived`, `acknowledgeReceipt`, `resendForRevision`,
+   `approveForPayment` — each `entity: 'distributor'`, action `'approve'`/`'reject'`/`'update'`
+   matching the nature of that specific transition.
+
+`vite build` clean. Scoped `eslint` on both files — `git stash` diff confirms the only issue
+(`NewCustomerVisit.jsx`'s pre-existing `loadDue` exhaustive-deps warning) is byte-identical
+before/after; `DistributorApproval.jsx` has zero issues, before and after.
+
+**Confirmed live via headless Playwright**: submitted a real visit (existing customer, Interested
+outcome) as a Sales Team test account — `activity_log` gained a real row (`action: 'update',
+entity: 'visit', label: "Visit logged — {distributor name} — Interested"`) — then, as HR, opened
+that same user's day-detail Sheet on the Attendance page and confirmed the vein diagram now shows
+**"Punched In → Visit logged — {distributor name} — Interested, +1h 15m since previous
+activity"** — the exact gap the user reported, now closed and visually verified end to end.
+
+**Still open:** `DistributorApproval.jsx`'s remaining un-instrumented write paths, if any, and any
+other master/detail screens beyond what Phase 1/2/3 have covered so far, remain an explicit
+further follow-up — not attempted proactively beyond what was reported broken this round.

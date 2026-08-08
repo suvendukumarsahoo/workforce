@@ -96,6 +96,11 @@ export default function NewCustomerVisit() {
     })
     if (visitError) { showToast('Error logging visit'); setSaving(false); return }
 
+    const outcomeLabel = outcome === 'interested' ? 'Interested' : outcome === 'not_interested' ? 'Not Interested' : 'Final'
+    const distName = mode === 'new' ? name : ((distributors || []).find(d => d.id === distributorId)?.name || distributorId)
+    db.logActivity(currentUser?.id, mode === 'new' ? 'create' : 'update', 'visit',
+      `${mode === 'new' ? 'New Customer Visit' : 'Visit logged'} — ${distName} — ${outcomeLabel}`, distributorId)
+
     await loadAll()
     await loadDue()
     resetForm()

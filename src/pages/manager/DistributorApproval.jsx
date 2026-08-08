@@ -29,7 +29,7 @@ const timeAgo = (isoDate) => {
 }
 
 export default function DistributorApproval() {
-  const { role } = useAuth()
+  const { role, currentUser } = useAuth()
   const { distributors, visits, members, showToast, loadAll } = useData()
   const [selected, setSelected] = useState(null)
   const [note, setNote] = useState('')
@@ -48,6 +48,7 @@ const isManager = role?.name === 'Manager'
     if (regError) { showToast('Error creating registration'); return }
     const { error } = await db.updateDistributorLeadStage(lead.id, { lead_stage: 'registration_pending' })
     if (error) { showToast('Error updating lead'); return }
+    db.logActivity(currentUser?.id, 'approve', 'distributor', `Approved for registration — ${lead.name}`, lead.id)
     await loadAll()
     setSelected(null); setNote('')
     showToast('Approved — registration form sent to team member')
@@ -60,6 +61,7 @@ const isManager = role?.name === 'Manager'
       distributor_id: lead.id, member_id: (lead.assignedTo || [])[0],
       outcome: 'interested', notes: `Final rejected by manager: ${note}`,
     })
+    db.logActivity(currentUser?.id, 'reject', 'distributor', `Rejected final lead, sent back to Interested — ${lead.name}`, lead.id)
     await loadAll()
     setSelected(null); setNote('')
     showToast('Rejected — sent back to Interested')
@@ -75,6 +77,7 @@ const isManager = role?.name === 'Manager'
   const notReceivedYet = async (lead) => {
     const { error } = await db.updateDistributorLeadStage(lead.id, { lead_stage: 'payment_verification' })
     if (error) { showToast('Error updating'); return }
+    db.logActivity(currentUser?.id, 'update', 'distributor', `Marked payment not yet received — ${lead.name}`, lead.id)
     await loadAll()
     showToast('Marked as checked — still awaiting payment')
   }
@@ -102,6 +105,7 @@ const isManager = role?.name === 'Manager'
   })
   if (error) { showToast('Error updating'); return }
   if (payment) await db.verifyPayment(payment.id)
+  db.logActivity(currentUser?.id, 'approve', 'distributor', `Payment received — Distributor Created — ${lead.name}`, lead.id)
   await loadAll()
   setSelected(null)
   showToast('Payment received — Distributor Created')
@@ -110,6 +114,7 @@ const isManager = role?.name === 'Manager'
   const acknowledgeReceipt = async (lead) => {
     const { error } = await db.updateDistributorLeadStage(lead.id, { lead_stage: 'documentation_verification' })
     if (error) { showToast('Error updating'); return }
+    db.logActivity(currentUser?.id, 'update', 'distributor', `Acknowledged document receipt — ${lead.name}`, lead.id)
     await loadAll()
     setSelected(null)
     showToast('Acknowledged — under process')
@@ -119,6 +124,7 @@ const isManager = role?.name === 'Manager'
     if (!resendNote.trim()) { showToast('Add a comment before resending'); return }
     const { error } = await db.updateDistributorLeadStage(lead.id, { lead_stage: 'registration_pending', resend_note: resendNote })
     if (error) { showToast('Error updating'); return }
+    db.logActivity(currentUser?.id, 'reject', 'distributor', `Sent back for revision — ${lead.name}`, lead.id)
     await loadAll()
     setSelected(null); setResendNote('')
     showToast('Sent back to team member for resubmission')
@@ -127,6 +133,7 @@ const isManager = role?.name === 'Manager'
   const approveForPayment = async (lead) => {
     const { error } = await db.updateDistributorLeadStage(lead.id, { lead_stage: 'payment_pending' })
     if (error) { showToast('Error updating'); return }
+    db.logActivity(currentUser?.id, 'approve', 'distributor', `Approved for payment — ${lead.name}`, lead.id)
     await loadAll()
     setSelected(null)
     showToast('Approved — payment window opened')
