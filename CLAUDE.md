@@ -3838,3 +3838,36 @@ Employees.jsx whenever his actual HQ/duty time is known.
 **Nothing outstanding** — schema applied, full gating logic (both rule types, all three actions
 each, plus the combined-both-stages case) confirmed working live via real punch attempts, not just
 code review.
+
+## Attendance Roster: employee summary only, calendar on tap (8 Aug 2026 session) — BUILT,
+## SCHEMA-FREE, BROWSER-TESTED & CONFIRMED WORKING
+
+User's ask: "the attendance roster should show employeewise summary only...on tap should show the
+attendance calendar." The HR/Admin Attendance Roster (`Attendance.jsx`'s `AttendanceHR`) previously
+rendered a full `AttCal` calendar grid inline for every single employee row all at once — with a
+roster of 10+ employees this meant 10+ full month-grids stacked on one screen just to see who's
+Present/Absent today.
+
+**Built:**
+- Roster rows now show only the summary line (avatar, name, P/X/A/Rate + Late/Half Day badges) with
+  a trailing "›" chevron, matching this app's existing click-to-drill row convention elsewhere.
+- Tapping a row opens a new **`RosterCalendarSheet`** — employee name + month as the Sheet
+  title/sub, the same summary stats repeated at the top, then the full `AttCal` calendar.
+- Tapping a day cell inside that calendar still opens the existing `DayDetailSheet` exactly as
+  before (Stage 1/2 approval actions, rule/waiver status, activity vein diagram) — now passed an
+  explicit `zIndex={320}` so it correctly stacks *above* the new `RosterCalendarSheet` (which stays
+  at `Sheet`'s default 300), same nested-Sheet pattern already established in `Dashboard.jsx`'s
+  Manager→Member drill-down (and the exact z-index class of bug fixed there back on 2 Aug 2026 —
+  applied proactively here rather than rediscovered).
+- The Stage 1/Stage 2 approval queues above the roster (`openQueueItem`) are unaffected — they
+  already opened `DayDetailSheet` directly and still do, unchanged.
+
+**Verification:** `vite build` clean. Scoped `eslint` on `Attendance.jsx` — the one pre-existing
+`react-hooks/set-state-in-effect` error (the `load()` mount effect) confirmed byte-identical via
+`git stash` diff, nothing new. Confirmed live via headless Playwright (HR login): roster rows
+confirmed to no longer contain any inline calendar grid (`hasInlineCalendar: false`, checked via a
+DOM child-count probe), tapping a row opens `RosterCalendarSheet` with correct name/stats/calendar,
+and tapping a day cell inside it correctly opens `DayDetailSheet` visually on top (screenshot
+confirmed both Sheets stacked, day detail readable).
+
+**Nothing outstanding** — schema-free UI change, confirmed working live in the same pass.
