@@ -43,6 +43,7 @@ function AttendanceHR() {
   const [ruleSettings, setRuleSettings] = useState(null)
   const [busyId, setBusyId] = useState(null)
   const [dayDetail, setDayDetail] = useState(null)
+  const [rosterOpen, setRosterOpen] = useState(null) // { user, punches } — the employee whose calendar Sheet is open
   const [loadError, setLoadError] = useState(null)
 
   const now = new Date()
@@ -186,30 +187,43 @@ function AttendanceHR() {
           const punches = punchesFor(u.id)
           const stats = computeAttendanceStats(punches, today, daysInMonth, ruleSettings)
           return (
-            <div key={u.id} style={{ padding: '12px 14px', borderBottom: '1px solid #f3f4f6' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+            <div key={u.id} onClick={() => setRosterOpen({ user: u, punches })} style={{ padding: '12px 14px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <Av av={u.avatar || '?'} color={u.color || '#6b7280'} sz={30} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600 }}>{u.name}</div>
                 </div>
-                <div style={{ display: 'flex', gap: 10, fontSize: 12 }}>
+                <div style={{ display: 'flex', gap: 10, fontSize: 12, flexShrink: 0 }}>
                   <span style={{ color: '#10b981', fontWeight: 600 }}>{stats.present}P</span>
                   <span style={{ color: '#7c3aed', fontWeight: 600 }}>{stats.pendingApproval}X</span>
                   <span style={{ color: '#ef4444', fontWeight: 600 }}>{stats.effectiveAbsent}A</span>
                   <span style={{ color: stats.rate >= 90 ? '#10b981' : stats.rate >= 75 ? '#f59e0b' : '#ef4444', fontWeight: 700 }}>{stats.rate}%</span>
                 </div>
+                <div style={{ fontSize: 12, color: '#9ca3af', flexShrink: 0 }}>›</div>
               </div>
               {(stats.unapprovedLate > 0 || stats.unapprovedHalfDay > 0) && (
-                <div style={{ display: 'flex', gap: 8, marginBottom: 8, fontSize: 11 }}>
+                <div style={{ display: 'flex', gap: 8, marginTop: 6, fontSize: 11, paddingLeft: 40 }}>
                   {stats.unapprovedLate > 0 && <span style={{ color: '#f97316', fontWeight: 600 }}>🟠 Late: {stats.unapprovedLate}</span>}
                   {stats.unapprovedHalfDay > 0 && <span style={{ color: '#dc2626', fontWeight: 600 }}>🟡 Half Day: {stats.unapprovedHalfDay}</span>}
                 </div>
               )}
-              <AttCal days={stats.days} flags={stats.flags} onDayClick={dayNum => openDay(u, dayNum, punches)} />
             </div>
           )
         })}
       </Card>
+
+      {rosterOpen && (
+        <RosterCalendarSheet
+          user={rosterOpen.user}
+          punches={rosterOpen.punches}
+          today={today}
+          daysInMonth={daysInMonth}
+          ruleSettings={ruleSettings}
+          monthLabel={now.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })}
+          onClose={() => setRosterOpen(null)}
+          onDayClick={dayNum => openDay(rosterOpen.user, dayNum, rosterOpen.punches)}
+        />
+      )}
 
       {dayDetail && (
         <DayDetailSheet
@@ -221,6 +235,7 @@ function AttendanceHR() {
           viewerRoleId={role?.id}
           viewerUserId={currentUser?.id}
           busyId={busyId}
+          zIndex={320}
         />
       )}
 
@@ -228,7 +243,31 @@ function AttendanceHR() {
   )
 }
 
-function DayDetailSheet({ detail, onClose, onApproveStage1, onApproveStage2, onApproveWaiver, viewerRoleId, viewerUserId, busyId }) {
+// Opened from tapping an employee row on the roster — the summary row itself no longer renders a
+// calendar inline (per the user's ask: roster shows employee-wise summary only, calendar on tap).
+// zIndex stays at Sheet's default (300); DayDetailSheet opens on top of this one at 320.
+function RosterCalendarSheet({ user, punches, today, daysInMonth, ruleSettings, monthLabel, onClose, onDayClick }) {
+  const stats = computeAttendanceStats(punches, today, daysInMonth, ruleSettings)
+  return (
+    <Sheet title={user.name} sub={monthLabel} onClose={onClose}>
+      <div style={{ display: 'flex', gap: 14, fontSize: 13, marginBottom: 14 }}>
+        <span style={{ color: '#10b981', fontWeight: 700 }}>{stats.present}P</span>
+        <span style={{ color: '#7c3aed', fontWeight: 700 }}>{stats.pendingApproval}X</span>
+        <span style={{ color: '#ef4444', fontWeight: 700 }}>{stats.effectiveAbsent}A</span>
+        <span style={{ color: stats.rate >= 90 ? '#10b981' : stats.rate >= 75 ? '#f59e0b' : '#ef4444', fontWeight: 700 }}>{stats.rate}%</span>
+      </div>
+      {(stats.unapprovedLate > 0 || stats.unapprovedHalfDay > 0) && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14, fontSize: 12 }}>
+          {stats.unapprovedLate > 0 && <span style={{ color: '#f97316', fontWeight: 600 }}>🟠 Late: {stats.unapprovedLate}</span>}
+          {stats.unapprovedHalfDay > 0 && <span style={{ color: '#dc2626', fontWeight: 600 }}>🟡 Half Day: {stats.unapprovedHalfDay}</span>}
+        </div>
+      )}
+      <AttCal days={stats.days} flags={stats.flags} onDayClick={onDayClick} />
+    </Sheet>
+  )
+}
+
+function DayDetailSheet({ detail, onClose, onApproveStage1, onApproveStage2, onApproveWaiver, viewerRoleId, viewerUserId, busyId, zIndex }) {
   const { user, date, punch } = detail
   const isDriver = user.role_id === 'r7'
   const [driverEvents, setDriverEvents] = useState(null)
@@ -280,7 +319,7 @@ function DayDetailSheet({ detail, onClose, onApproveStage1, onApproveStage2, onA
   const waiverEligible = punch && punch.rule_status ? eligibleForWaiverStage(punch, user, viewerRoleId, viewerUserId) : false
 
   return (
-    <Sheet title={user.name} sub={date} onClose={onClose}>
+    <Sheet title={user.name} sub={date} onClose={onClose} zIndex={zIndex}>
       {punch ? (
         <>
           <div style={{ background: '#f9fafb', borderRadius: 10, padding: 12, marginBottom: 14, fontSize: 12 }}>
