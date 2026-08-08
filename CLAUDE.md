@@ -3949,3 +3949,34 @@ here in case a future `fullPage` screenshot on this app shows a similarly "blank
 specifically (Line/Bar charts were unaffected in this same test).
 
 **Nothing outstanding** — schema-free, fully tested end-to-end in the same pass.
+
+## Daily Stock Update: Total Picked Qty per item, distributor breakdown drill-down (8 Aug 2026
+## session) — BUILT, SCHEMA-FREE, BROWSER-TESTED & CONFIRMED WORKING
+
+**User's ask:** on the Warehouse Manager's Daily Stock Update page, show total picked quantity
+against each item; tapping an item shows a distributor-wise breakdown by order number.
+
+**Resolved via AskUserQuestion before building:**
+- Scope — **all orders currently in the picking pipeline**, not just today's activity. An order's
+  `status` stays `'submitted_for_picking'` through the whole `pending_picking → picking_done →
+  ready_for_load` sub-flow, only moving on once picking is confirmed — so `db.fetchPickingOrders()`
+  (already existing, filters exactly on that status) already returns precisely this scope with zero
+  new query needed.
+- Definition of "picked" — **only items marked Available** count toward the quantity. Wait/
+  Unavailable items contributed 0 (they weren't successfully picked, just processed).
+
+**Built (`StockUpdate.jsx` only, no other files touched):**
+- Fetches `db.fetchPickingOrders()` once on mount (`useEffect`, not the render-time
+  `if(!loaded)fetchX()` anti-pattern flagged elsewhere in this file — Recurring Bug Pattern #5).
+- New "Total Picked Qty" column between Status and Last Updated — sums `final_qty` across every
+  in-picking order's items matching that product where `availability === 'Available' && !cancelled`.
+  Zero renders as plain gray text; a positive total renders as a clickable blue underlined number.
+- Clicking it opens a Sheet: "Total Picked: N" header, then one row per contributing order —
+  distributor name + "Order #{id}" + qty.
+
+**Verification:** `vite build` + scoped `eslint` clean (baseline was already 0 errors, still 0 after).
+Confirmed live via headless Playwright (Warehouse Manager login) against real data: cross-checked
+by hand against a raw REST dump of `distributor_order_items` — AlphaMax 1L showed "Total Picked: 20"
+breaking down to Order #4 → 10 + Order #1 → 10, an exact match to the underlying rows.
+
+**Nothing outstanding** — schema-free, single-file change, confirmed working live in the same pass.
