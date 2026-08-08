@@ -3383,7 +3383,8 @@ attendance calendar.
   data, so this is low-risk, but a direct look (log in as Arjun, check his own attendance view)
 
 ## Daily Attendance Rules restructuring — decoupled mapping, own page, section rename (8 Aug 2026
-## session, same day as the feature above) — BUILT, SCHEMA NOT YET APPLIED, NOT YET BROWSER-TESTED
+## session, same day as the feature above) — BUILT, SCHEMA APPLIED, BROWSER-TESTED & CONFIRMED
+## WORKING (headless Playwright, 8 Aug 2026, same session)
 
 Restructures the Late Present / Half Day Rule feature above per user feedback right after it was
 tested: a rule was bundling "who it applies to" into the same row Admin approves, and the whole
@@ -3470,35 +3471,57 @@ where user_ids is not null and jsonb_array_length(user_ids) > 0;
 alter table attendance_rules drop column user_ids;
 ```
 
-**Verification done this session:** `vite build` clean. Scoped `eslint` on every new/touched file
-(`attendanceRules.js`, `db.js`, `Attendance.jsx`, `AttendanceRules.jsx`, `WebApp.jsx`,
-`Settings.jsx`) — `git stash` diff confirms the only pre-existing issues (`WebApp.jsx`'s
-`SideContent` static-component warning, `Settings.jsx`'s unused `Inp`) are byte-identical
-before/after. The 3 `react-hooks/set-state-in-effect` errors on this session's 3
-`useEffect(() => { load() }, [])` mount-fetch effects (one in `Attendance.jsx`, two in the new
-`AttendanceRules.jsx`) match the exact already-accepted pattern class documented earlier this
-session (`InvoiceApprovalTile.jsx`'s identical shape) — not new problems.
+**Schema confirmed applied via live REST probe (8 Aug 2026):** `attendance_rule_users` exists;
+the migration correctly carried both existing test rules' mappings across (rule 3 → Arjun, rule 4
+→ Arjun) plus a third rule (id 5) the user had created themselves while testing the pre-
+restructuring UI (2 users mapped); `attendance_rules.user_ids` confirmed gone from `select *`.
+
+**One real bug found and fixed via this session's live testing** — `fetchAttendanceRules()`'s
+embedded select (`mapped:attendance_rule_users(user_id, user:users(id, name, avatar, color))`)
+hit this app's own documented **Recurring Bug Pattern #3**: `attendance_rule_users` has two FKs to
+`users` (`user_id` and `added_by`), so PostgREST rejected the embed as ambiguous — the exact
+"Could not embed because more than one relationship was found for 'attendance_rule_users' and
+'users'" error, surfaced live as a real error banner on the new page rather than a silent failure.
+Fixed by naming the constraint explicitly:
+`user:users!attendance_rule_users_user_id_fkey(id, name, avatar, color)` — confirmed correct via a
+direct REST query (real names resolved) before re-testing in the browser. `vite build` + scoped
+`eslint` re-confirmed clean after the fix.
+
+**Full flow confirmed working live** (headless Playwright, same 4 test accounts as the feature
+above; the `attendanceRules` menu box was enabled directly via REST for r1/r2/r4 with the user's
+authorization, since it's purely additive; a punch was deleted/re-punched once more, again with
+authorization, specifically to confirm detection still fires through the new `mapped` join):
+1. HR's "Daily Attendance Rules" page: both tabs render, rule 5 (a pending rule the user had
+   created via the pre-restructuring UI) shows correctly on the Late Present tab, "+ Create Rule"
+   sheet confirmed to have **no user picker at all** (no "Select Users"/"Add user" text anywhere in
+   the sheet), HR correctly does **not** see the Attendance Rule Settings card (Admin-only), HR
+   correctly **does** see Pending Waiver Approvals.
+2. User Mapping card correctly shows **one sub-section per approved rule only** — rule 5 (pending)
+   had no mapping section at all until approved; rule 3 (already approved) showed its existing
+   Arjun Nair chip with a working ×-remove and "+ Add user..." dropdown for HR.
+3. As Admin: approved rule 5 → its mapping section (Sneha Menon, Ravi Kumar — the two users the
+   user had mapped pre-restructuring) appeared immediately, confirmed **read-only** (zero
+   "+ Add user..." dropdowns visible to Admin, no ×-remove buttons) — matches "no approval
+   required" but "should show...in the admin page." Admin's Attendance Rule Settings card also
+   confirmed showing the exact waiver-cap/escalation values set during the feature's own test round
+   earlier this session, carried through the restructuring untouched.
+4. Sidebar confirmed showing the renamed **"HR FUNCTIONS"** section header (was "HR") containing
+   Attendance, Daily Attendance Rules, Employees, Payroll, for both Admin and Manager logins.
+5. Admin's Attendance page confirmed reverted to exactly Manpower Production Issues + Stage 1
+   Punch-In Approvals + (further down, not re-screenshotted this round but unchanged in code)
+   Stage 2 + Attendance Roster — zero rule-authoring cards remain there.
+6. Meera's (Manager) "Daily Attendance Rules" page confirmed showing **only** "Team Waiver
+   Approvals" (0 pending) — no Create Rule button, no User Mapping card, no Attendance Rule
+   Settings — exactly the lightweight scope intended.
+7. **Detection re-confirmed end-to-end through the new mapping structure**: deleted Arjun's
+   already-resolved punch, had him punch in fresh — classified `rule_status: 'half_day', rule_id:
+   4` correctly (Half Day still supersedes Late Present), proving `resolveRuleClassification`'s
+   switch from `rule.user_ids.includes(...)` to `rule.mapped.some(...)` works against a real punch,
+   not just the REST-probed data shape. Waived via the new page's Pending Waiver Approvals card to
+   leave data clean.
 
 **Still open / not done yet:**
-- **Schema not yet applied** — `createAttendanceRule`/`addRuleUser`/`removeRuleUser` will error
-  until the `attendance_rule_users` table exists and `user_ids` is dropped; `resolveRuleClassification`
-  will read `rule.mapped` as `undefined` (harmless — no rule ever matches, same soft-fail-safe
-  behavior as before schema was first applied for this feature).
-- **Not browser-tested** — same constraint as most feature work in this project. Full flow to
-  verify once schema is applied: as HR, create a Late Present rule with no user picker in sight →
-  as Admin, confirm the rule shows on the new page with an Approve button and (once approved) a
-  mapping section appears → as HR, map 1-2 users via the chip picker, confirm Admin's view shows
-  the same mapping read-only → punch in as a mapped user, confirm detection still fires correctly
-  (now reading the `mapped` join instead of `user_ids`) → confirm Pending Waiver Approvals and
-  Attendance Rule Settings still work exactly as before, just on the new page → confirm Manager's
-  Team Waiver Approvals card appears there too, correctly scoped → confirm the Attendance page
-  itself is back to just Stage 1/2 + roster (badges/dots intact) with no rule-authoring cards left.
-- **Admin's `attendanceRules` menu box not yet checked** for Admin/HR/Manager roles in Settings —
-  the id is genuinely new (not a relabel like the earlier Targets→Goals Status rename), so it needs
-  a fresh checkbox per role before anyone sees it, even after schema is live.
-- **The two existing test rules' mapping migration hasn't been verified live** — the `insert ...
-  select` in the schema block above should carry Arjun's mapping on both test rules forward into
-  `attendance_rule_users` automatically, but this hasn't been confirmed via a REST probe after the
-  user runs it (worth a quick check the same way schema application was verified for the feature
-  above, given this migration reads from a column that gets dropped in the same script).
+- Nothing schema- or logic-related — fully applied, fully tested, the one bug found is fixed and
+  re-verified. `Employees.jsx`'s no-cycle-guard note and the no-reject-path design note from the
+  feature above still apply unchanged (this restructuring didn't touch either).
   would close the loop.

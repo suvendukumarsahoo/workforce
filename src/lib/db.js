@@ -1003,9 +1003,13 @@ export async function approveActivityStage2(id, approvedBy) {
 // mapping (attendance_rule_users), embedded here as `mapped` so both the mapping-editor UI and
 // resolveRuleClassification (attendanceRules.js) get everything from this one fetch.
 export async function fetchAttendanceRules() {
+  // attendance_rule_users has two FKs to users (user_id, added_by) — PostgREST can't disambiguate
+  // an embed without naming the constraint (Recurring Bug Pattern #3, this app's own documented
+  // gotcha; caught live via the exact "more than one relationship was found" error it always
+  // produces).
   const { data, error } = await supabase
     .from('attendance_rules')
-    .select('*, role:roles(id, name), mapped:attendance_rule_users(user_id, user:users(id, name, avatar, color))')
+    .select('*, role:roles(id, name), mapped:attendance_rule_users(user_id, user:users!attendance_rule_users_user_id_fkey(id, name, avatar, color))')
     .order('created_at', { ascending: false })
   return { data, error }
 }
