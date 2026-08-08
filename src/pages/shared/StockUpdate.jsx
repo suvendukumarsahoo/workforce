@@ -8,6 +8,10 @@ import * as db from '../../lib/db.js'
 const STATUS_BG = { Available: '#dcfce7', Wait: '#ffedd5', Unavailable: '#fee2e2' }
 const STATUS_TEXT = { Available: '#15803d', Wait: '#c2410c', Unavailable: '#b91c1c' }
 const STATUSES = ['Available', 'Wait', 'Unavailable']
+// `loading_stage` values that mean an order has already been physically loaded onto a vehicle —
+// see the comment at this constant's usage below for why this, not `load_id`/allocation status,
+// is the right cutoff for "Total Picked Qty".
+const LOADED_STAGES = ['wm_loaded', 'driver_confirmed']
 
 const fmtTs = ts => ts ? new Date(ts).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—'
 
@@ -22,10 +26,16 @@ export default function StockUpdate() {
   const categoryName = cid => (categories || []).find(c => c.id === cid)?.name || 'Uncategorized'
 
   // All orders currently in the picking pipeline (status stays 'submitted_for_picking' through the
-  // whole pending_picking → picking_done → ready_for_load sub-flow, only moving on once picking is
-  // confirmed) — a running total until each order moves past picking, not scoped to "today".
+  // whole pending_picking → picking_done → ready_for_load sub-flow — db.confirmPicking, the only
+  // function that would ever advance it further, has zero call sites anywhere in this app, so
+  // relying on `status` alone would make this an unbounded all-time total, not a live snapshot).
+  // Excludes orders already physically loaded onto a vehicle — `loading_stage` starts 'pending'
+  // (the column's default, NOT null — confirmed via a live REST probe before relying on it) and
+  // only becomes 'wm_loaded' once LoadingScreen.jsx's per-item Lift Stack flow completes it, later
+  // 'driver_confirmed'. Load creation and vehicle allocation alone don't exclude an order, only
+  // actual loading does.
   useEffect(() => {
-    db.fetchPickingOrders().then(({ data }) => setPickingOrders(data || []))
+    db.fetchPickingOrders().then(({ data }) => setPickingOrders((data || []).filter(o => !LOADED_STAGES.includes(o.loading_stage))))
   }, [])
 
   // Only items WM has actually marked Available count as "picked" — Wait/Unavailable items
@@ -166,7 +176,7 @@ export default function StockUpdate() {
       )}
 
       {pickedFor && (
-        <Sheet title={pickedFor.name} sub="Picked quantity by distributor, across orders currently in picking" onClose={() => setPickedFor(null)}>
+        <Sheet title={pickedFor.name} sub="Picked quantity by distributor, not yet loaded onto a vehicle" onClose={() => setPickedFor(null)}>
           <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 10 }}>
             Total Picked: {pickedQtyFor(pickedFor.id)}
           </div>
