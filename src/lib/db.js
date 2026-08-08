@@ -1765,10 +1765,14 @@ export async function fetchOngoingSecondaryOrders(memberId, date) {
   return { data, error }
 }
 
-export async function lockSecondaryOrdersForDate(memberId, date) {
+// Retailing Complete can now run more than once per day (see createDaySummary below) — each run is
+// its own batch, `batchId` is that batch's day_summaries.id. The `locked=false` filter already
+// guarantees this only ever touches orders that are still ongoing at the moment of THIS call, never
+// a previous batch's already-locked/already-tagged orders.
+export async function lockSecondaryOrdersForDate(memberId, date, batchId) {
   const { error } = await supabase
     .from('secondary_orders')
-    .update({ locked: true })
+    .update({ locked: true, batch_id: batchId })
     .eq('member_id', memberId)
     .eq('order_date', date)
     .eq('cancelled', false)
@@ -1776,14 +1780,22 @@ export async function lockSecondaryOrdersForDate(memberId, date) {
   return { error }
 }
 
-// Day Summary — a permanent "receipt" created once Retailing Complete is confirmed (not the live,
-// always-recomputable rollup the Day Summary tab already shows any time of day). id is
-// DS-{memberId}-DDMMYYYY — naturally unique per member+day without a count-query race, since this
-// only ever fires once per member per day (backstopped by the unique(member_id, summary_date)
-// constraint).
+// Day Summary — a permanent "receipt" created each time Retailing Complete is confirmed (not the
+// live, always-recomputable rollup the Day Summary tab already shows any time of day). A member can
+// complete retailing more than once per day if further orders come in after an earlier batch
+// locked — each confirm is its own batch, so id is sequence-suffixed
+// (DS-{memberId}-DDMMYYYY-{seq}, same count-then-pad pattern as createSecondaryOrder's
+// SO-DDMMYYYY-NN/createLoad's LD-DDMMYYYY-NN) rather than the old fixed one-per-day id.
 export async function createDaySummary(memberId, date, totals) {
   const [y, m, d] = date.split('-')
-  const id = `DS-${memberId}-${d}${m}${y}`
+  const dateStr = `${d}${m}${y}`
+  const { count } = await supabase
+    .from('day_summaries')
+    .select('id', { count: 'exact', head: true })
+    .eq('member_id', memberId)
+    .eq('summary_date', date)
+  const seq = (count || 0) + 1
+  const id = `DS-${memberId}-${dateStr}-${seq}`
   const { data, error } = await supabase
     .from('day_summaries')
     .insert({
@@ -1797,13 +1809,15 @@ export async function createDaySummary(memberId, date, totals) {
   return { data, error }
 }
 
-export async function fetchDaySummaryForDate(memberId, date) {
+// Every batch (day_summaries row) for this member+day, newest first — a day can now hold more than
+// one once Retailing Complete has run more than once (see createDaySummary above).
+export async function fetchDaySummariesForDate(memberId, date) {
   const { data, error } = await supabase
     .from('day_summaries')
     .select('*')
     .eq('member_id', memberId)
     .eq('summary_date', date)
-    .maybeSingle()
+    .order('created_at', { ascending: false })
   return { data, error }
 }
 

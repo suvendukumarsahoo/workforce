@@ -77,7 +77,7 @@ export default function DistributorSecondary() {
 
   const [summaryVisits, setSummaryVisits] = useState(null)
   const [summaryOrders, setSummaryOrders] = useState(null)
-  const [daySummaryRecord, setDaySummaryRecord] = useState(null)
+  const [daySummaryRecords, setDaySummaryRecords] = useState([])
 
   // Ongoing Orders — its own tab (before Day Summary), not a popup: today's not-yet-locked orders,
   // Edit/Delete each, Retailing Complete at the bottom. editingOrder tracks an order reopened via
@@ -114,14 +114,14 @@ export default function DistributorSecondary() {
 
   const loadSummary = async () => {
     setSummaryVisits(null); setSummaryOrders(null)
-    const [{ data: vis }, { data: ord }, { data: rec }] = await Promise.all([
+    const [{ data: vis }, { data: ord }, { data: recs }] = await Promise.all([
       db.fetchRetailVisitsForDate(mid, todayStr()),
       db.fetchSecondaryOrdersForDate(mid, todayStr()),
-      db.fetchDaySummaryForDate(mid, todayStr()),
+      db.fetchDaySummariesForDate(mid, todayStr()),
     ])
     setSummaryVisits(vis || [])
     setSummaryOrders(ord || [])
-    setDaySummaryRecord(rec || null)
+    setDaySummaryRecords(recs || [])
   }
 
   const openSummary = () => { setTab('summary'); loadSummary() }
@@ -300,15 +300,15 @@ export default function DistributorSecondary() {
             await loadOngoing()
             if (activeBeat) await loadOutletsAndStatus(activeBeat)
             await loadAll()
-            const { data: rec } = await db.fetchDaySummaryForDate(mid, todayStr())
-            setDaySummaryRecord(rec || null)
+            const { data: recs } = await db.fetchDaySummariesForDate(mid, todayStr())
+            setDaySummaryRecords(recs || [])
           }}
         />
       )}
 
       {tab === 'summary' && (
         <DaySummary
-          daySummaryRecord={daySummaryRecord}
+          daySummaryRecords={daySummaryRecords}
           visits={summaryVisits}
           orders={summaryOrders}
           products={products}
@@ -625,19 +625,26 @@ function RetailingCompleteDialog({ mid, orders, products, showToast, onCancel, o
   const total = orders.reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0), 0)
   const productName = pid => (products || []).find(p => p.id === pid)?.name || pid
 
+  // `orders` (prop) is already exactly this batch's set — the Ongoing Orders list at the moment
+  // Retailing Complete was clicked. Visits are scoped to just this batch's own orders (a no-order
+  // visit has no order_id and so never belongs to any batch, per the resolved "each batch shows
+  // only its own orders" design) rather than every visit recorded today.
   const confirm = async () => {
     setSubmitting(true)
-    const { error } = await db.lockSecondaryOrdersForDate(mid, todayStr())
-    if (error) { setSubmitting(false); showToast('Error completing retailing'); return }
-    const { data: visits } = await db.fetchRetailVisitsForDate(mid, todayStr())
-    const outletsVisited = new Set((visits || []).map(v => v.outlet_id)).size
+    const orderIdSet = new Set(orders.map(o => o.id))
+    const { data: allVisits } = await db.fetchRetailVisitsForDate(mid, todayStr())
+    const batchVisits = (allVisits || []).filter(v => v.order_id && orderIdSet.has(v.order_id))
+    const outletsVisited = new Set(batchVisits.map(v => v.outlet_id)).size
+    // Created first so its generated id exists before orders are locked+tagged with it.
     const { data: daySummary, error: summaryError } = await db.createDaySummary(mid, todayStr(), {
       outletsVisited, orders: orders.length, value: total,
     })
+    if (summaryError) { setSubmitting(false); showToast('Error completing retailing'); return }
+    const { error: lockError } = await db.lockSecondaryOrdersForDate(mid, todayStr(), daySummary.id)
     setSubmitting(false)
-    if (summaryError) { showToast('Retailing complete, but summary record failed'); onConfirmed(); return }
+    if (lockError) { showToast('Summary created, but locking orders failed'); onConfirmed(); return }
     showToast('Retailing complete — orders locked')
-    setSummary({ record: daySummary, visits: visits || [] })
+    setSummary({ record: daySummary, visits: batchVisits })
   }
 
   const download = () => {
@@ -676,11 +683,18 @@ function RetailingCompleteDialog({ mid, orders, products, showToast, onCancel, o
   )
 }
 
-function DaySummary({ daySummaryRecord, visits, orders, products, onRefresh, showToast }) {
+function DaySummary({ daySummaryRecords, visits, orders, products, onRefresh, showToast }) {
   const productName = pid => (products || []).find(p => p.id === pid)?.name || pid
 
-  const downloadSummary = () => {
-    downloadDaySummaryPdf({ summary: daySummaryRecord, visits, orders, productName })
+  // Each batch's own download is scoped to just the orders locked under it (and the visits tied to
+  // those orders' order_id — a no-order visit has none, so it never belongs to any batch) — same
+  // "one batch's own orders" rule RetailingCompleteDialog uses right at confirm time, reused here
+  // for viewing/re-downloading a past batch later in the day.
+  const downloadBatchSummary = (record) => {
+    const batchOrders = (orders || []).filter(o => o.batch_id === record.id)
+    const batchOrderIds = new Set(batchOrders.map(o => o.id))
+    const batchVisits = (visits || []).filter(v => v.order_id && batchOrderIds.has(v.order_id))
+    downloadDaySummaryPdf({ summary: record, visits: batchVisits, orders: batchOrders, productName })
   }
 
   if (visits === null) return <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}>Loading...</div>
@@ -708,15 +722,22 @@ function DaySummary({ daySummaryRecord, visits, orders, products, onRefresh, sho
 
   return (
     <div>
-      {daySummaryRecord && (
-        <div style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 10, padding: '10px 14px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      {/* One card per batch — a day can now hold more than one Retailing Complete run if further
+          orders were taken after an earlier batch locked. Newest first (fetchDaySummariesForDate's
+          own ordering). */}
+      {(daySummaryRecords || []).map((record, i) => (
+        <div key={record.id} style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 10, padding: '10px 14px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <div>
-            <div style={{ fontSize: 12, fontWeight: 700, color: '#065f46' }}>✓ Retailing Complete — {daySummaryRecord.id}</div>
-            <div style={{ fontSize: 11, color: '#047857' }}>Generated {new Date(daySummaryRecord.created_at).toLocaleString('en-IN')}</div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#065f46' }}>
+              ✓ Retailing Complete — Batch {daySummaryRecords.length - i} — {record.id}
+            </div>
+            <div style={{ fontSize: 11, color: '#047857' }}>
+              Generated {new Date(record.created_at).toLocaleString('en-IN')} · {record.total_orders} order(s) · {F(record.total_value)}
+            </div>
           </div>
-          <Btn sm v="pri" onClick={downloadSummary}>⬇ Download Summary</Btn>
+          <Btn sm v="pri" onClick={() => downloadBatchSummary(record)}>⬇ Download Summary</Btn>
         </div>
-      )}
+      ))}
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <div style={{ fontSize: 12, color: '#6b7280' }}>{visits.length} outlet(s) visited today</div>
