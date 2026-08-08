@@ -3871,3 +3871,81 @@ and tapping a day cell inside it correctly opens `DayDetailSheet` visually on to
 confirmed both Sheets stacked, day detail readable).
 
 **Nothing outstanding** — schema-free UI change, confirmed working live in the same pass.
+
+## Attendance: split into HR Dashboard + standalone Attendance Approval page (8 Aug 2026 session) —
+## BUILT, SCHEMA-FREE, BROWSER-TESTED & CONFIRMED WORKING
+
+User shared a reference screenshot (Trilliant Software's attendance dashboard: stat tiles, a
+trend chart, a Department Summary donut, a Recent Attendance table) and asked to remove the
+approval queues from the main Attendance screen entirely, move them under a new "Attendance
+Approval" sidebar menu, and replace the main screen with a dashboard matching the reference.
+
+**Resolved via AskUserQuestion before building** (this app has no Department or Leave/Holiday
+concept, so two reference panels have no direct equivalent):
+- 5th tile (reference's "On Leave") → **Pending Approvals** (Stage 1 + Stage 2 combined count),
+  tapping it navigates to the new Attendance Approval page.
+- "Department Summary" donut (no Department field exists) → **Employees by Role** headcount
+  breakdown.
+- **Manpower Production Issues card stays** on the new HR dashboard, unchanged placement.
+- **Roster drill-down becomes view-only** — tapping a day in the Attendance Roster used to open a
+  detail Sheet with live Approve buttons; since approval actions are moving off the main screen,
+  this same drill-down now shows status only. All approving happens exclusively on the new page.
+
+**Built:**
+1. **`src/components/AttendanceDayDetailSheet.jsx`** (new) — the day-detail Sheet (punch summary,
+   rule/waiver badge, Stage 1/2 status blocks, driver journey events / non-driver activity vein
+   timeline) extracted verbatim out of `Attendance.jsx`, so both pages below reuse the exact same
+   rendering instead of forking it. Gained a `readOnly` prop (default `false`): `false` (Approvals
+   page) shows the same live Approve buttons as before; `true` (Dashboard's Roster tap) replaces
+   every Approve button with a plain status line ("Pending — see Attendance Approval").
+2. **`src/components/charts/AttendanceTrendChart.jsx`** (new) — light-themed Recharts `LineChart`
+   (this page stays light, unlike the dark `SalesSnapshot`/`GoalsStatus` pages, matching the
+   reference's own white-background design), 3 lines — Present (`#10b981`)/Absent
+   (`#ef4444`)/Late (`#f59e0b`) — per calendar day this month up to today.
+3. **`src/pages/shared/AttendanceApprovals.jsx`** (new, menu id `attendanceApprovals`, HR/Admin
+   only) — Stage 1 — Punch-In Approvals + Stage 2 — Activity Approvals queues, moved verbatim off
+   the old `AttendanceHR`, opening `AttendanceDayDetailSheet` with `readOnly=false` and the full
+   `onApproveStage1`/`onApproveStage2`/`onApproveWaiver` wiring — same `db.js` functions as before,
+   zero behavior change to the approval logic itself.
+4. **`Attendance.jsx`'s `AttendanceHR`** rebuilt as an HR Dashboard: 5 stat tiles (Total Employees,
+   Present/Absent/Late Today, Pending Approvals — the last navigates to the new page via the
+   `onNavigate` prop every page already receives from `WebApp.jsx`), `AttendanceTrendChart`,
+   an "Employees by Role" `ContributionDonut` (reused as-is from `GoalBarChart.jsx`), a new "Recent
+   Attendance" table (last 8 punches, status badge), the existing Manpower Production Issues card,
+   and the existing Attendance Roster (roster rows unchanged from the earlier same-session redesign
+   — summary only, tap to open the calendar Sheet — but day-clicks now open
+   `AttendanceDayDetailSheet` with `readOnly` instead of the old always-actionable Sheet).
+5. **`WebApp.jsx` + `Settings.jsx`** — new `attendanceApprovals` menu id (label "Attendance
+   Approval", ✅) mirrored into both `ALL_MENUS` copies per Recurring Bug Pattern #6.
+
+**Schema-free** — reuses existing `db.js` functions (`fetchPendingPunchApprovals`,
+`fetchPendingActivityApprovals`, `fetchAllAttendanceForMonth`, `approvePunchStage1`,
+`approveActivityStage2`, `approveWaiverStage1/2`) with zero new queries or columns.
+
+**Verification:** `vite build` clean. Scoped `eslint` — `AttendanceDayDetailSheet.jsx` and
+`AttendanceTrendChart.jsx` both zero errors; `Attendance.jsx`'s and the new
+`AttendanceApprovals.jsx`'s one `set-state-in-effect` each match the already-accepted mount-fetch
+pattern class documented throughout this session (same as `InvoiceApprovalTile.jsx`'s
+unsuppressed precedent); `WebApp.jsx`/`Settings.jsx`'s pre-existing errors confirmed
+byte-identical via `git stash` diff.
+
+**Confirmed live via headless Playwright** (HR login, `attendanceApprovals` enabled for r1/r4 via
+REST with the user's authorization): the new dashboard shows all 5 tiles + trend chart + role donut
++ recent attendance + Manpower card + Roster, with **no** Stage 1/Stage 2 queue cards anywhere on
+it. Tapping a Roster day opens the read-only detail Sheet — confirmed both Stage 1 ("✓ Approved")
+and Stage 2 ("Pending — see Attendance Approval") render as plain status text with **zero** Approve
+buttons. The new Attendance Approval page shows both queues; clicking a Stage 2 row opens the same
+detail Sheet fully actionable (a real "Approve Activity" button present and clickable).
+
+**One real debugging detour, root-caused, not a bug:** the Employees-by-Role donut appeared
+completely blank (legend visible, no pie slices) in every `fullPage: true` Playwright screenshot,
+despite `git`-grep-free DOM inspection confirming valid geometry (7 real arc paths, correct fill
+colors, `opacity: 1`, `visibility: visible`, no clipping). Re-tested with a **non-`fullPage`**
+screenshot (`fullPage: false`) — the donut rendered perfectly. Root cause: Playwright's `fullPage`
+capture resizes/stitches the viewport, which appears to retrigger Recharts' Pie mount-animation
+via `ResizeObserver` and the stitched screenshot catches it mid-animation-reset — a known class of
+Playwright+Recharts screenshot interaction, not an application bug. No code change needed; flagged
+here in case a future `fullPage` screenshot on this app shows a similarly "blank" Recharts `Pie`
+specifically (Line/Bar charts were unaffected in this same test).
+
+**Nothing outstanding** — schema-free, fully tested end-to-end in the same pass.
