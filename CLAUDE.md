@@ -3121,8 +3121,8 @@ create table day_summaries (
   matches the day's actual orders → reopen the Day Summary tab → confirm the same banner + a
   working re-download appears there too.
 
-## Late Present Rule + Half Day Rule (Attendance) (8 Aug 2026 session) — BUILT, SCHEMA NOT YET
-## APPLIED, NOT YET BROWSER-TESTED
+## Late Present Rule + Half Day Rule (Attendance) (8 Aug 2026 session) — BUILT, SCHEMA CONFIRMED
+## APPLIED (verified via live REST probe, 8 Aug 2026), NOT YET BROWSER-TESTED
 
 Brand-new feature, not discussed in any prior session (confirmed via full-file exploration + a
 CLAUDE.md grep before planning). Turns the existing Attendance/Punch-In system's `duty_status`/
@@ -3281,10 +3281,11 @@ mount-fetch effects (in `AttendanceHR` and the new `AttendanceManagerView`) trig
 (confirmed identical shape via direct comparison), not a new category of problem.
 
 **Still open / not done yet:**
-- **Schema not yet applied** — nothing in this feature works until all 3 blocks above run;
-  `createAttendanceRule`/`approveWaiverStage1`/etc. will error until then, and `punchIn` will simply
-  keep writing `rule_status: null` (soft-fail-safe, `approvedAttendanceRules` stays empty from
-  useData's fetch until the table exists).
+- ~~Schema not yet applied~~ — confirmed applied via a live REST probe (8 Aug 2026):
+  `users.manager_id`, `attendance_rules` (empty, as expected before any rule is created),
+  `attendance_punches`'s 6 new columns (correct defaults — `rule_waiver_status: 'not_applicable'`,
+  rest null), and `attendance_rule_settings`'s singleton row (id=1, all caps/thresholds null =
+  unlimited/off) all confirmed live.
 - **Not browser-tested** — same constraint as most feature work in this project (no chromium-cli/
   Playwright by default). Full flow to verify once schema is applied, in order: as HR, create a Late
   Present rule (small threshold, 1-2 test users) → as Admin, approve the rule → as one of those
