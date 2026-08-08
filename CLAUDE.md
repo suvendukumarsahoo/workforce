@@ -4174,3 +4174,52 @@ arrived editable as intended.
 
 **Nothing outstanding** — schema-free, fully tested end-to-end across every audience (own/Manager/
 Admin) and all three entry points, both bugs found during testing fixed and re-verified.
+
+## Distributor Secondary Value mismatch: dashboards counted uncompleted orders (9 Aug 2026 session,
+## same-day follow-up) — FIXED, BROWSER-TESTED & CONFIRMED WORKING
+
+**User's report:** Arjun's dashboard "Value" showed ₹1.37L but the brand-new Order Summary Report
+showed under ₹2,000. Diagnosed via direct REST queries (not guessing from the UI) — real two-part
+root cause:
+
+1. **`Dashboard.jsx`'s `DistributorSecondarySection`, `TeamSnapshot.jsx`'s own panel, and
+   `achievementEngine.js`'s `secondary_value`/`secondary_orders`/`productive_outlets` loops all
+   summed/counted every non-cancelled order in range regardless of completion status** — a
+   still-editable, never-completed order counted the same as a locked, finalized one. The new
+   Report correctly only counts completed batches (`batch_id not null`), so the two numbers were
+   bound to disagree wherever real ongoing orders existed.
+2. **A genuine backfill gap.** 14 of Arjun's orders (₹90,996) were legitimately completed via
+   Retailing Complete under the OLD single-batch-per-day system, *before* this session's earlier
+   multi-batch schema change added `secondary_orders.batch_id` — they were `locked=true` but never
+   got a `batch_id` assigned when that column was introduced, so the Report wrongly excluded real
+   finished work. Confirmed via REST this was isolated to Arjun (14 rows, one pre-existing legacy
+   `day_summaries` id `DS-3-08082026` to backfill onto) — no other member was affected.
+
+**Resolved via AskUserQuestion:** backfill the 14 orders' `batch_id` **and** fix the counting gap at
+its source everywhere, not just patch the Report.
+
+**Built:**
+1. **One-time backfill** — `UPDATE secondary_orders SET batch_id='DS-3-08082026' WHERE member_id=3
+   AND batch_id IS NULL AND locked=true` (14 rows), applied via REST after confirming scope.
+2. **`achievementEngine.js`** — Value loop now skips orders with no `batch_id`; a new
+   `batchedOrderIds` set (built from `secondaryOrders`) gates the `retailVisits` loop so
+   Productive Outlets/Total No. of Orders only count visits whose `order_id` belongs to a completed
+   batch.
+3. **`Dashboard.jsx`'s `DistributorSecondarySection`** and **`TeamSnapshot.jsx`'s own panel** — same
+   `batchedOrderIds` fix applied to their raw Today/Month/Year activity stats (previously ungated,
+   unlike the goal-achievement path which was at least gated on approval status but not
+   completion).
+4. **Rough edge cleaned up while re-testing**: `DistributorSecondaryReport.jsx`'s "Total Items"
+   could show long floating-point tails (`127.04761904761905`) since quantities can be fractional
+   under the unit-conversion feature (base-unit-equivalent storage, e.g. 10 Pieces ÷ 50/Base = 0.2)
+   — added a `round2` helper, applied to Summary's `totalItems` and Detail's `qty`.
+
+**Verification:** `vite build` + scoped `eslint` clean (baseline was already 0 errors on all 3
+scoping-fix files, still 0 after). Confirmed live: Dashboard's Value tile now reads **₹92.7K**,
+exactly matching the Report's **₹92,695.52** total (₹850 + ₹850 + ₹90,995.52 across all 3 real
+completed batches, the legacy one now correctly showing 14 orders after the backfill). The
+remaining 5 genuinely-still-ongoing orders (₹45,203, never completed since 4 Aug) now correctly
+stay excluded from both the dashboards and the Report until actually completed — intentional, not
+a residual bug.
+
+**Nothing outstanding** — fix applied, backfill applied, confirmed working live in the same pass.
