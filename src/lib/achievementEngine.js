@@ -128,12 +128,20 @@ export function computeAchievements(invoices = [], goals = {}, products = [], di
     ach.new_outlets += 1
   })
 
+  // Distributor Secondary — an order only counts once Retailing Complete has actually locked it
+  // into a batch (batch_id set); a still-ongoing/never-completed order (or one soft-cancelled) isn't
+  // real, final activity yet — same reasoning DistributorSecondaryReport.jsx's own report scope
+  // uses. Found via a live "Value shows ₹1.37L on the dashboard but the Report shows ₹2K" report —
+  // this loop, and the retailVisits one below, were counting every order regardless of completion.
+  const batchedOrderIds = new Set(secondaryOrders.filter(o => o.batch_id).map(o => o.id))
+
   // Distributor Secondary — Productive Outlets (distinct outlets with >=1 order in range) and
   // Total No. of Orders (count of order-outcome visits in range) — both derived from retailVisits,
   // gated independently on their own field's approval status.
   const productiveOutletSets = {}
   retailVisits.forEach(v => {
     if (v.outcome !== 'order') return
+    if (!v.order_id || !batchedOrderIds.has(v.order_id)) return
     if (!inRange(v.visit_date)) return
     const mid = String(v.member_id)
     const goal = goals[mid]
@@ -149,8 +157,10 @@ export function computeAchievements(invoices = [], goals = {}, products = [], di
     if (result[mid]) result[mid].productive_outlets = set.size
   })
 
-  // Distributor Secondary — Value: sum of secondary_order_items (qty*rate) for orders in range.
+  // Distributor Secondary — Value: sum of secondary_order_items (qty*rate) for completed-batch
+  // orders in range.
   secondaryOrders.forEach(o => {
+    if (!o.batch_id) return
     const mid = String(o.member_id)
     const goal = goals[mid]
     const ach = result[mid]

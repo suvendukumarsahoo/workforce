@@ -167,12 +167,18 @@ export default function TeamSnapshot({ mid, invoices, customers, myAgg, periodTa
 
   // Distributor Secondary raw activity, tab-scoped (Today/Month/Year) — separate from the always-
   // monthly Goal Progress gauges below, same duality every other tab-scoped panel in this app uses.
+  // An order only counts once Retailing Complete has actually locked it into a batch (batch_id
+  // set) — a still-ongoing/never-completed order isn't real, final activity yet. Found via a live
+  // "Value shows ₹1.37L here but the Report shows ₹2K" report — this panel previously counted
+  // every order regardless of completion, same root cause fixed in achievementEngine.js/
+  // Dashboard.jsx.
+  const batchedOrderIds = new Set((mySecondaryOrders || []).filter(o => o.batch_id).map(o => o.id))
   const newOutletsCount = (myOutlets || []).filter(o => { const d = new Date(o.created_at); return d >= range.from && d <= range.to }).length
-  const myOrderVisits = (myRetailVisits || []).filter(v => v.outcome === 'order' && (() => { const d = new Date(v.visit_date); return d >= range.from && d <= range.to })())
+  const myOrderVisits = (myRetailVisits || []).filter(v => v.outcome === 'order' && v.order_id && batchedOrderIds.has(v.order_id) && (() => { const d = new Date(v.visit_date); return d >= range.from && d <= range.to })())
   const productiveOutletsCount = new Set(myOrderVisits.map(v => v.outlet_id)).size
   const totalOrdersCount = myOrderVisits.length
   const secondaryValueSum = (mySecondaryOrders || [])
-    .filter(o => { const d = new Date(o.order_date); return d >= range.from && d <= range.to })
+    .filter(o => o.batch_id && (() => { const d = new Date(o.order_date); return d >= range.from && d <= range.to })())
     .reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0), 0)
 
   return (

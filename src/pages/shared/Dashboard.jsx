@@ -253,12 +253,18 @@ function DistributorSecondarySection({ memberIds, retailOutlets, secondaryOrders
   const inRange = iso => { if (!iso) return false; const d = new Date(iso); return d >= range.from && d <= range.to }
   const memberIdSet = new Set((memberIds || []).map(String))
 
+  // An order only counts once Retailing Complete has actually locked it into a batch (batch_id
+  // set) — a still-ongoing/never-completed order isn't real, final activity yet. Found via a live
+  // "Value shows ₹1.37L here but the Report shows ₹2K" report — this section previously counted
+  // every order regardless of completion, same root cause fixed in achievementEngine.js.
+  const batchedOrderIds = new Set((secondaryOrders || []).filter(o => o.batch_id).map(o => o.id))
+
   const newOutletsCount = (retailOutlets || []).filter(o => memberIdSet.has(String(o.created_by)) && inRange(o.created_at)).length
-  const orderVisits = (retailVisits || []).filter(v => memberIdSet.has(String(v.member_id)) && v.outcome === 'order' && inRange(v.visit_date))
+  const orderVisits = (retailVisits || []).filter(v => memberIdSet.has(String(v.member_id)) && v.outcome === 'order' && v.order_id && batchedOrderIds.has(v.order_id) && inRange(v.visit_date))
   const productiveOutletsCount = new Set(orderVisits.map(v => v.outlet_id)).size
   const totalOrdersCount = orderVisits.length
   const secondaryValueSum = (secondaryOrders || [])
-    .filter(o => memberIdSet.has(String(o.member_id)) && inRange(o.order_date))
+    .filter(o => o.batch_id && memberIdSet.has(String(o.member_id)) && inRange(o.order_date))
     .reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0), 0)
 
   return (

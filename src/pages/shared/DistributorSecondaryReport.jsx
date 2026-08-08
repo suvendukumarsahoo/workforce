@@ -9,6 +9,10 @@ import { getCurrentPeriod, monthRangeForPeriod } from '../../lib/period.js'
 
 const selStyle = { padding: '6px 9px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12, background: '#fff' }
 const uniqById = arr => Object.values(Object.fromEntries((arr || []).filter(Boolean).map(x => [x.id, x])))
+// Quantities can be fractional (unit-conversion feature stores a base-unit-equivalent, e.g. 10
+// Pieces ÷ 50/Base = 0.2) — long floating-point tails (127.04761904761905) look broken on screen
+// and in exports, so round to 2 decimals wherever a qty/qty-sum is shown.
+const round2 = n => Math.round((Number(n) || 0) * 100) / 100
 
 // Reached three ways: direct menu click (defaults to the current month, unlocked), or a click-
 // through from Dashboard.jsx's DistributorSecondarySection / TeamSnapshot.jsx's own panel (pre-
@@ -74,7 +78,7 @@ export default function DistributorSecondaryReport({ navParams }) {
   const summaryRows = Object.values(groups).map(g => ({
     ...g,
     totalOrders: g.orders.length,
-    totalItems: g.orders.reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0), 0), 0),
+    totalItems: round2(g.orders.reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0), 0), 0)),
     totalValue: g.orders.reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0), 0),
   })).sort((a, b) => new Date(b.date) - new Date(a.date))
 
@@ -82,7 +86,7 @@ export default function DistributorSecondaryReport({ navParams }) {
     date: o.order_date, batchId: o.batch_id, distributorName: o.distributor?.name || o.distributor_id,
     beatName: o.beat?.name || o.beat_id, memberName: memberName(o.member_id),
     orderId: o.id, outlet: o.outlet?.name || o.outlet_id, product: it.product?.name || it.product_id,
-    qty: it.qty, rate: it.rate, value: (Number(it.qty) || 0) * (Number(it.rate) || 0),
+    qty: round2(it.qty), rate: it.rate, value: (Number(it.qty) || 0) * (Number(it.rate) || 0),
   })))
 
   const summaryColumns = [
