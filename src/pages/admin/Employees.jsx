@@ -34,6 +34,7 @@ export default function Employees() {
       hq_longitude: d.hq_longitude !== '' && d.hq_longitude != null ? Number(d.hq_longitude) : null,
       duty_start_time: d.duty_start_time || null,
       allowed_deviation_m: d.allowed_deviation_m !== '' && d.allowed_deviation_m != null ? Number(d.allowed_deviation_m) : 20,
+      manager_id: d.manager_id ? Number(d.manager_id) : null,
     }
     if (sheet?.id) {
       const { error } = await db.updateUser(sheet.id, payload)
@@ -52,7 +53,7 @@ export default function Employees() {
     <div>
       {sheet !== null && (
         <Sheet title={sheet?.id ? 'Edit user' : 'Add user'} onClose={() => setSheet(null)}>
-          <UserForm init={sheet?.id ? sheet : {}} roles={roles} onSave={save} onClose={() => setSheet(null)} isEdit={!!sheet?.id} />
+          <UserForm init={sheet?.id ? sheet : {}} roles={roles} users={users} onSave={save} onClose={() => setSheet(null)} isEdit={!!sheet?.id} />
         </Sheet>
       )}
       <CrudTable
@@ -69,10 +70,11 @@ export default function Employees() {
   )
 }
 
-function UserForm({ init, roles, onSave, onClose, isEdit }) {
+function UserForm({ init, roles, users, onSave, onClose, isEdit }) {
   const [d, setD] = useState({ ...init })
   const [locBusy, setLocBusy] = useState(false)
   const set = (k, v) => setD(x => ({ ...x, [k]: v }))
+  const managers = (users || []).filter(u => u.role_id === 'r2')
 
   const useCurrentLocation = () => {
     if (!navigator.geolocation) return
@@ -104,6 +106,8 @@ function UserForm({ init, roles, onSave, onClose, isEdit }) {
       <Inp label="Approved Deviation Limit (metres)" value={d.allowed_deviation_m ?? 20} onChange={v => set('allowed_deviation_m', v)} type="number" helper="Distance from HQ allowed before a punch-in is flagged for HR review" />
 
       <Inp label="Duty Reporting Time" value={d.duty_start_time || ''} onChange={v => set('duty_start_time', v)} type="time" helper="Used to flag punch-ins as late vs on time" />
+
+      <Inp label="Reporting Manager" value={d.manager_id || ''} onChange={v => set('manager_id', v)} options={[{ value: '', label: 'None' }, ...managers.map(m => ({ value: m.id, label: m.name }))]} helper="Used to route Late Present / Half Day waiver approvals to the right Manager" />
 
       <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
         <Btn v="pri" full onClick={() => onSave(d)}>Save</Btn>

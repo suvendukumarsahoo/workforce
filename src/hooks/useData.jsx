@@ -29,6 +29,7 @@ export function DataProvider({ children }) {
   const [secondaryOrders, setSecondaryOrders] = useState([])
   const [registrations, setRegistrations] = useState([])
   const [payments, setPayments] = useState([])
+  const [approvedAttendanceRules, setApprovedAttendanceRules] = useState([])
   const [currentPeriod] = useState(getCurrentPeriod())
 
   useEffect(() => {
@@ -42,7 +43,7 @@ export function DataProvider({ children }) {
   { data: r }, { data: u }, { data: m }, { data: c }, { data: p },
   { data: dist }, { data: pa }, { data: g }, { data: inv }, { data: exp },
   { data: sal }, { data: att }, { data: vis }, { data: reg }, { data: pay },
-  { data: rvis }, { data: routs }, { data: sord },
+  { data: rvis }, { data: routs }, { data: sord }, { data: attRules },
 ] = await Promise.all([
   db.fetchRoles(), db.fetchUsers(), db.fetchMembers(), db.fetchCategories(),
   db.fetchProducts(), db.fetchDistributors(), db.fetchParameters(currentPeriod), db.fetchGoals(currentPeriod),
@@ -50,6 +51,7 @@ export function DataProvider({ children }) {
   db.fetchAttendance(new Date().getMonth()+1, new Date().getFullYear()),
   db.fetchVisits(), db.fetchRegistrations(), db.fetchPayments(),
   db.fetchRetailVisits(), db.fetchRetailOutlets(), db.fetchSecondaryOrders(),
+  db.fetchAttendanceRules(),
 ])
 
     if (r)    setRoles(r)
@@ -65,6 +67,7 @@ export function DataProvider({ children }) {
           if (rvis) setRetailVisits(rvis)
           if (routs) setRetailOutlets(routs)
           if (sord) setSecondaryOrders(sord)
+          if (attRules) setApprovedAttendanceRules(attRules.filter(rr => rr.status === 'approved'))
     if (g)   {
       const goalMap = {}
       g.forEach(goal => {
@@ -103,7 +106,7 @@ export function DataProvider({ children }) {
       secondaryOrders, setSecondaryOrders,
       registrations, setRegistrations,
       loading, loadAll, toast, showToast,payments, setPayments,
-      currentPeriod,
+      currentPeriod, approvedAttendanceRules,
     }}>
       {children}
     </DataContext.Provider>

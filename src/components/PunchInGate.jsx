@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../hooks/useAuth.jsx'
+import { useData } from '../hooks/useData.jsx'
 import { Btn } from './ui.jsx'
 import { haversineMeters } from '../lib/geo.js'
+import { resolveRuleClassification } from '../lib/attendanceRules.js'
 import * as db from '../lib/db.js'
 
 const DEFAULT_DEVIATION_LIMIT_M = 20
@@ -17,6 +19,7 @@ function dutyStatusFor(dutyStartTime) {
 
 export default function PunchInGate({ children }) {
   const { currentUser, logout } = useAuth()
+  const { approvedAttendanceRules } = useData()
   const [checked, setChecked] = useState(false)
   const [punched, setPunched] = useState(false)
   const [punching, setPunching] = useState(false)
@@ -38,9 +41,13 @@ export default function PunchInGate({ children }) {
     setPunching(true)
     setSubmitError(null)
     const duty = dutyStatusFor(currentUser.duty_start_time)
+    // Late Present / Half Day rule classification — only fires for users covered by an
+    // Admin-approved rule; everyone else keeps exactly today's plain Late/On-Time behavior above.
+    const rule = resolveRuleClassification(currentUser, approvedAttendanceRules, duty?.minutesLate)
     const { error } = await db.punchIn(currentUser.id, {
       lat, lng, distanceM, locationFlag, flagReason,
       dutyStatus: duty?.status, minutesLate: duty?.minutesLate,
+      ruleType: rule?.ruleType, ruleId: rule?.ruleId,
     })
     setPunching(false)
     if (error) {

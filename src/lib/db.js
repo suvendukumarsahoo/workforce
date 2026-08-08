@@ -17,6 +17,7 @@
  */
 
 import { supabase } from './supabase'
+import { deriveApprover2Role } from './attendanceRules'
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 
@@ -883,7 +884,7 @@ export async function fetchTodayPunch(userId) {
   return { data, error }
 }
 
-export async function punchIn(userId, { lat, lng, distanceM, locationFlag, flagReason, dutyStatus, minutesLate }) {
+export async function punchIn(userId, { lat, lng, distanceM, locationFlag, flagReason, dutyStatus, minutesLate, ruleType, ruleId }) {
   const { data, error } = await supabase
     .from('attendance_punches')
     .insert({
@@ -895,6 +896,12 @@ export async function punchIn(userId, { lat, lng, distanceM, locationFlag, flagR
       punch_approval_status: 'pending',
       activity_approval_status: 'pending',
       status: 'present',
+      // Late Present / Half Day rule classification (independent of the two-stage approval above)
+      // — only set when an Admin-approved rule actually covers this user and their arrival broke
+      // its threshold; otherwise both stay null/'not_applicable', unchanged from today's behavior.
+      rule_status: ruleType || null,
+      rule_id: ruleId || null,
+      rule_waiver_status: ruleType ? 'pending' : 'not_applicable',
     })
     .select()
     .single()
@@ -935,7 +942,7 @@ export async function fetchAllAttendanceForMonth(month, year) {
   const to = `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
   const { data, error } = await supabase
     .from('attendance_punches')
-    .select('*, user:users!attendance_punches_user_id_fkey(id, name, avatar, color, role_id)')
+    .select('*, user:users!attendance_punches_user_id_fkey(id, name, avatar, color, role_id, manager_id), rule:attendance_rules(*)')
     .gte('date', from)
     .lte('date', to)
     .order('date')
@@ -947,7 +954,7 @@ export async function fetchAllAttendanceForMonth(month, year) {
 export async function fetchPendingPunchApprovals() {
   const { data, error } = await supabase
     .from('attendance_punches')
-    .select('*, user:users!attendance_punches_user_id_fkey(id, name, avatar, color, role_id)')
+    .select('*, user:users!attendance_punches_user_id_fkey(id, name, avatar, color, role_id, manager_id), rule:attendance_rules(*)')
     .eq('punch_approval_status', 'pending')
     .order('date', { ascending: false })
   return { data, error }
@@ -968,7 +975,7 @@ export async function approvePunchStage1(id, approvedBy) {
 export async function fetchPendingActivityApprovals() {
   const { data, error } = await supabase
     .from('attendance_punches')
-    .select('*, user:users!attendance_punches_user_id_fkey(id, name, avatar, color, role_id)')
+    .select('*, user:users!attendance_punches_user_id_fkey(id, name, avatar, color, role_id, manager_id), rule:attendance_rules(*)')
     .eq('punch_approval_status', 'approved')
     .eq('activity_approval_status', 'pending')
     .order('date', { ascending: false })
@@ -982,6 +989,164 @@ export async function approveActivityStage2(id, approvedBy) {
     .eq('id', id)
     .select()
     .single()
+  return { data, error }
+}
+
+// ─── ATTENDANCE RULES (Late Present / Half Day) ────────────────────────────────
+// HR authors a rule (role + selected users + grace-period minutes + who reviews exceptions);
+// Admin approves the rule once before it's live. Each punch that then crosses an approved rule's
+// threshold gets its own independent, up-to-2-stage waiver approval (rule_waiver_status) — entirely
+// separate from the existing punch_approval_status/activity_approval_status columns above, which
+// keep meaning exactly what they always have.
+
+export async function fetchAttendanceRules() {
+  const { data, error } = await supabase
+    .from('attendance_rules')
+    .select('*, role:roles(id, name)')
+    .order('created_at', { ascending: false })
+  return { data, error }
+}
+
+export async function createAttendanceRule(payload) {
+  const { data, error } = await supabase
+    .from('attendance_rules')
+    .insert({
+      rule_type: payload.rule_type,
+      name: payload.name || null,
+      role_id: payload.role_id,
+      user_ids: payload.user_ids || [],
+      threshold_minutes: payload.threshold_minutes,
+      approver1_role: payload.approver1_role,
+      approver2_role: deriveApprover2Role(payload.approver1_role),
+      status: 'pending',
+      created_by: payload.created_by,
+    })
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function approveAttendanceRule(id, approvedBy) {
+  const { data, error } = await supabase
+    .from('attendance_rules')
+    .update({ status: 'approved', approved_by: approvedBy, approved_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function fetchAttendanceRuleSettings() {
+  const { data, error } = await supabase
+    .from('attendance_rule_settings')
+    .select('*')
+    .eq('id', 1)
+    .maybeSingle()
+  return { data, error }
+}
+
+export async function upsertAttendanceRuleSettings(payload, updatedBy) {
+  const { data, error } = await supabase
+    .from('attendance_rule_settings')
+    .upsert({ id: 1, ...payload, updated_by: updatedBy, updated_at: new Date().toISOString() }, { onConflict: 'id' })
+    .select()
+    .single()
+  return { data, error }
+}
+
+// Waiver queue — instances that crossed an approved rule and aren't fully waived yet. HR/Admin use
+// this unfiltered; Manager's view filters client-side to user.manager_id === currentUser.id (same
+// fetch-broad-scope-client-side convention as the rest of this app).
+export async function fetchPendingWaiverApprovals() {
+  const { data, error } = await supabase
+    .from('attendance_punches')
+    .select('*, user:users!attendance_punches_user_id_fkey(id, name, avatar, color, role_id, manager_id), rule:attendance_rules(*)')
+    .not('rule_status', 'is', null)
+    .in('rule_waiver_status', ['pending', 'stage1_approved'])
+    .order('date', { ascending: false })
+  return { data, error }
+}
+
+function monthBoundsStrings() {
+  const d = new Date()
+  const y = d.getFullYear(), m = d.getMonth() + 1
+  const from = `${y}-${String(m).padStart(2, '0')}-01`
+  const lastDay = new Date(y, m, 0).getDate()
+  const to = `${y}-${String(m).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+  return { from, to }
+}
+
+// How many waivers has this approver role already granted this employee this month? Manager count
+// = stage-1 waivers on rules where approver1_role='manager'. HR count = either a direct single-stage
+// approval (approver1_role='hr') or a stage-2 sign-off (rule_approver2_by set) — HR is "involved"
+// either way. Fetch-broad-filter-client-side, matching this app's established pattern.
+async function countMonthlyWaivers(userId, approverRole) {
+  const { from, to } = monthBoundsStrings()
+  const { data, error } = await supabase
+    .from('attendance_punches')
+    .select('id, rule_approver1_by, rule_approver2_by, rule:attendance_rules(approver1_role)')
+    .eq('user_id', userId)
+    .gte('date', from)
+    .lte('date', to)
+  if (error) return 0
+  return (data || []).filter(p => {
+    if (approverRole === 'manager') return !!p.rule_approver1_by && p.rule?.approver1_role === 'manager'
+    return (p.rule?.approver1_role === 'hr' && !!p.rule_approver1_by) || !!p.rule_approver2_by
+  }).length
+}
+
+export async function approveWaiverStage1(punchId, approverUserId, approverRole) {
+  const { data: settings } = await fetchAttendanceRuleSettings()
+  const { data: punch } = await supabase.from('attendance_punches').select('*, rule:attendance_rules(*)').eq('id', punchId).single()
+  if (!punch) return { data: null, error: { message: 'Punch not found' } }
+
+  const cap = approverRole === 'manager' ? settings?.max_waivers_manager : settings?.max_waivers_hr
+  if (cap != null) {
+    const used = await countMonthlyWaivers(punch.user_id, approverRole)
+    if (used >= cap) {
+      return { data: null, error: { message: `${approverRole === 'manager' ? 'Manager' : 'HR'} waiver limit (${cap}/month) already reached for this employee.` } }
+    }
+  }
+
+  const goesStraightToApproved = !punch.rule?.approver2_role
+  const { data, error } = await supabase
+    .from('attendance_punches')
+    .update({
+      rule_waiver_status: goesStraightToApproved ? 'approved' : 'stage1_approved',
+      rule_approver1_by: approverUserId,
+      rule_approver1_at: new Date().toISOString(),
+    })
+    .eq('id', punchId)
+    .select()
+    .single()
+  if (!error) await logActivity(approverUserId, 'approve', 'attendance_rule', `Waived ${punch.rule_status === 'half_day' ? 'Half Day' : 'Late Present'} for ${punch.date}`, punchId)
+  return { data, error }
+}
+
+export async function approveWaiverStage2(punchId, approverUserId) {
+  const { data: settings } = await fetchAttendanceRuleSettings()
+  const { data: punch } = await supabase.from('attendance_punches').select('*, rule:attendance_rules(*)').eq('id', punchId).single()
+  if (!punch) return { data: null, error: { message: 'Punch not found' } }
+
+  const cap = settings?.max_waivers_hr
+  if (cap != null) {
+    const used = await countMonthlyWaivers(punch.user_id, 'hr')
+    if (used >= cap) {
+      return { data: null, error: { message: `HR waiver limit (${cap}/month) already reached for this employee.` } }
+    }
+  }
+
+  const { data, error } = await supabase
+    .from('attendance_punches')
+    .update({
+      rule_waiver_status: 'approved',
+      rule_approver2_by: approverUserId,
+      rule_approver2_at: new Date().toISOString(),
+    })
+    .eq('id', punchId)
+    .select()
+    .single()
+  if (!error) await logActivity(approverUserId, 'approve', 'attendance_rule', `Waived ${punch.rule_status === 'half_day' ? 'Half Day' : 'Late Present'} (stage 2) for ${punch.date}`, punchId)
   return { data, error }
 }
 

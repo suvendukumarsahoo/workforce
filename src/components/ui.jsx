@@ -220,9 +220,14 @@ export const Confirm = ({ msg, onYes, onNo }) => (
 )
 
 // ─── ATTENDANCE CALENDAR ──────────────────────────────────────────────────────
-export const AttCal = ({ days = [], onDayClick }) => {
+// `flags` (optional, parallel to `days`) marks Late Present / Half Day rule outcomes as a small
+// corner dot — a second, independent axis from the day's P/X/A/W background color (attendance
+// legitimacy vs. arrival-time-rule-compliance can co-occur on the same day). Values: null | 'late'
+// | 'half_day'. A waived instance simply has no flag by the time it's read back.
+export const AttCal = ({ days = [], onDayClick, flags = [] }) => {
   const BG = { P: '#d1fae5', A: '#fee2e2', H: '#fef3c7', W: '#f9fafb', T: '#dbeafe', X: '#ede9fe' }
   const TC = { P: '#065f46', A: '#991b1b', H: '#92400e', W: '#d1d5db', T: '#1d4ed8', X: '#6d28d9' }
+  const FLAG_DOT = { late: '#f97316', half_day: '#dc2626' }
   return (
     <div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7,1fr)', gap: 2, marginBottom: 2 }}>
@@ -233,9 +238,12 @@ export const AttCal = ({ days = [], onDayClick }) => {
           <div
             key={i}
             onClick={onDayClick ? () => onDayClick(i + 1) : undefined}
-            style={{ textAlign: 'center', fontSize: 9, padding: '4px 1px', borderRadius: 4, background: BG[d] || '#f9fafb', color: TC[d] || '#9ca3af', fontWeight: d === 'T' ? 700 : 400, cursor: onDayClick ? 'pointer' : undefined }}
+            style={{ position: 'relative', textAlign: 'center', fontSize: 9, padding: '4px 1px', borderRadius: 4, background: BG[d] || '#f9fafb', color: TC[d] || '#9ca3af', fontWeight: d === 'T' ? 700 : 400, cursor: onDayClick ? 'pointer' : undefined }}
           >
             {i + 1}
+            {flags[i] && (
+              <span style={{ position: 'absolute', top: 1, right: 1, width: 5, height: 5, borderRadius: '50%', background: FLAG_DOT[flags[i]] }} />
+            )}
           </div>
         ))}
       </div>

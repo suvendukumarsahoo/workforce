@@ -3120,3 +3120,186 @@ create table day_summaries (
   Retailing Complete → confirm the success dialog shows a real id/timestamp and the downloaded PDF
   matches the day's actual orders → reopen the Day Summary tab → confirm the same banner + a
   working re-download appears there too.
+
+## Late Present Rule + Half Day Rule (Attendance) (8 Aug 2026 session) — BUILT, SCHEMA NOT YET
+## APPLIED, NOT YET BROWSER-TESTED
+
+Brand-new feature, not discussed in any prior session (confirmed via full-file exploration + a
+CLAUDE.md grep before planning). Turns the existing Attendance/Punch-In system's `duty_status`/
+`minutes_late` — previously a raw, zero-grace-period, purely informational signal with no threshold
+and no effect on Present/Pending/Absent — into a real, governed policy: HR authors rules (which
+employees, how much grace time, who reviews exceptions), Admin approves each rule once before it's
+live, punches that break an approved rule auto-flag, and each flagged instance goes through its own
+waiver approval before it either clears or counts toward an escalation into an extra Absent. Full
+plan approved via plan-mode before building (comparable in scope to the original Monthly Goals
+architecture) — see the chat for the approved plan text.
+
+**Resolved via AskUserQuestion before building (2 rounds, 6 questions total):**
+- **Two separate approval layers.** (1) Admin approves each *rule* once, before it's active — role,
+  selected users, threshold, who reviews exceptions. (2) Independently, each individual auto-flagged
+  Late Present/Half Day *instance* goes through its own waiver approval.
+- **No reversal/override step.** Rule creation picks **Approver 1 = Manager or HR**. If Approver 1
+  = Manager, **Approver 2 is automatically HR** (a required second sign-off, not an override — just
+  the other party in the pair). If Approver 1 = HR, there's **no Approver 2 at all** — HR's single
+  approval is final. Approvals are one-directional, matching this app's existing precedent (Invoice/
+  Journey approvals also have no reject-after-approve path).
+- **"Admin sets maximum late present allowed by HR/Manager" = a count cap** (waivers HR/Manager may
+  each grant a given employee per month), not a grace-period ceiling.
+- **Half Day supersedes Late Present** when a single arrival crosses both thresholds — confirms Half
+  Day is the same lateness signal as Late Present, just a larger cutoff, not a separate mechanism.
+- **Manager scoping needed a real, pre-existing gap closed**: no general employee→Manager
+  relationship existed (`members.manager_id` only ever covered Sales Team, via a different table,
+  for the Goals system). Added a new **`users.manager_id`** column, generalizing
+  `Parameters.jsx`'s existing manager-assignment pattern onto `Employees.jsx` for any role.
+- **Escalation ("N unapproved = 1 Absent") is a derived, live-computed extra count** — folded into
+  the existing Present/Pending/Absent/Rate stats, not tied to any calendar cell (no natural date to
+  assign a "floating" absence to; matches how every other stat in this app is computed live, never
+  a stored running counter).
+
+**Built:**
+1. **`src/lib/attendanceRules.js`** (new, pure, no DB) — `resolveRuleClassification(user,
+   approvedRules, minutesLate)` (Half Day evaluated first per the supersedes rule, largest-threshold-
+   wins if multiple rules of the same type match), `deriveApprover2Role`, `isUnapprovedInstance`,
+   `isFullyApprovedPunch`, `eligibleForWaiverStage` (Admin always eligible; Manager only for their
+   own team's Manager-first stage-1 items; HR for HR-first stage-1 and always for stage-2), and
+   **`computeAttendanceStats(punches, today, daysInMonth, ruleSettings)`** — the single source of
+   truth for Present/Pending/Absent/Rate/AttCal-days/AttCal-flags/unapproved-Late-count/unapproved-
+   Half-Day-count/effective-Absent, now shared by both the HR roster and self-view calendar, which
+   previously hand-copied this same formula independently (a real, pre-existing duplication this
+   session closed as a side effect of needing to add the new fields to both places anyway).
+2. **`useData.jsx`** — new `approvedAttendanceRules` in global context (fetched once via
+   `db.fetchAttendanceRules()`, filtered to `status==='approved'` client-side), same "load reference
+   data once globally" convention as `roles`/`categories`.
+3. **`db.js`** — `fetchAttendanceRules`, `createAttendanceRule` (auto-derives `approver2_role`),
+   `approveAttendanceRule`, `fetchAttendanceRuleSettings`/`upsertAttendanceRuleSettings`,
+   `fetchPendingWaiverApprovals` (fetch-broad; HR/Admin use it unfiltered, Manager scopes it
+   client-side to `user.manager_id === currentUser.id`), `approveWaiverStage1`/`approveWaiverStage2`
+   (each counts this employee's this-month waivers already granted by that approver role before
+   writing, blocking with an inline error if `attendance_rule_settings`' cap would be exceeded; both
+   call `db.logActivity` on success, per this session's established Activity Log convention).
+   `punchIn(...)` gained `ruleType`/`ruleId` params, writing the new `rule_status`/`rule_id`/
+   `rule_waiver_status` columns — the existing `duty_status`/`minutes_late` write is completely
+   untouched. `fetchAllAttendanceForMonth`/`fetchPendingPunchApprovals`/
+   `fetchPendingActivityApprovals` all gained `manager_id` on the embedded user join + a new
+   `rule:attendance_rules(*)` join, so `DayDetailSheet` has consistent rule data regardless of which
+   entry point opened it.
+4. **`PunchInGate.jsx`** — alongside the existing `dutyStatusFor()` call, now also calls
+   `resolveRuleClassification(currentUser, approvedAttendanceRules, duty.minutesLate)` (needed
+   adding `useData()` to this component, which previously only used `useAuth()`) and passes the
+   result into `db.punchIn(...)`. No UI change to the punch-in flow itself — the existing one-time
+   Late/On-Time screen is unchanged; the new classification surfaces later, in Attendance/roster/
+   self-view, not at punch time. Users not covered by any approved rule keep exactly today's
+   behavior (informational message only, no flag, no workflow, no count).
+5. **`ui.jsx`'s `AttCal`** — new optional `flags` prop (parallel array to `days`, `null | 'late' |
+   'half_day'`), rendered as a small colored corner dot **without changing the existing P/X/A/W
+   background color** — attendance-legitimacy and arrival-time-rule-compliance are independent axes
+   that can co-occur on the same day. A waived instance has no dot (matches "removed from the late
+   present column").
+6. **`Employees.jsx`** — new "Reporting Manager" `<select>` in `UserForm` (options = `role_id==='r2'`
+   users, same filter Parameters.jsx already uses), writing `manager_id` on save.
+7. **`Attendance.jsx`** — the biggest change:
+   - Router gains a third branch: Manager (`role?.id==='r2'`) now gets `AttendanceManagerView` (new)
+     instead of falling through to the plain self-view — Manager previously had **zero presence** in
+     this file at all.
+   - `AttendanceHR()` gained 3 new cards: **Attendance Rules** (list + status badge + "+ Create
+     Rule" Sheet + Admin-only "Approve Rule" button), **Attendance Rule Settings** (Admin-only, 4
+     number inputs for the waiver caps + escalation thresholds), **Pending Waiver Approvals** (queue
+     with inline Waive/Approve-Stage-2 button shown only when `eligibleForWaiverStage` says the
+     viewer can act on that row; ineligible rows show "Not yours" instead).
+   - **`AttendanceManagerView`** (new) — `MyAttendanceCalendar` (Manager punches in like anyone
+     else) plus a "Team Waiver Approvals" card scoped to their own team via the new `manager_id`.
+   - **`CreateRuleSheet`** (new) — Rule Type radio, Role select, a Chips-style multi-select user
+     picker (adapted from `Parameters.jsx`'s existing `Chips` component shape), grace-period-minutes
+     input, Approver 1 radio with Approver 2 shown read-only/auto.
+   - **`DayDetailSheet`** gained a new block (alongside the existing `duty_status` line): if
+     `punch.rule_status` is set, shows a Late Present/Half Day badge + waiver status, and — gated by
+     `eligibleForWaiverStage` — a Waive/Approve-(Stage 2) button, reusing the Sheet's existing
+     `runApprove` pattern.
+   - Roster rows gained Late/Half Day count badges (unapproved instances only) and now pass
+     `computeAttendanceStats`'s `flags` into `AttCal`; the roster's "A" tile now shows
+     `effectiveAbsent`, not the raw punch-less-day count.
+8. **`MyAttendanceCalendar.jsx`** (self-view) — same `computeAttendanceStats` call, same Late/Half
+   Day badges + `effectiveAbsent`-in-place-of-raw-Absent + `AttCal` flags, so "user attendance will
+   show same" holds for every role, not just the HR roster.
+
+**Schema — NOT yet applied, user must run:**
+```sql
+-- General employee -> Manager relationship (new; only Sales Team had this before, via members)
+alter table users add column manager_id bigint references users(id);
+
+-- HR-authored, Admin-approved rules. One row per rule; rule_type distinguishes Late Present vs Half Day.
+create table attendance_rules (
+  id bigserial primary key,
+  rule_type text not null,                  -- 'late_present' | 'half_day'
+  name text,
+  role_id text not null references roles(id),
+  user_ids jsonb not null default '[]',     -- users.id values covered by this rule (all share role_id)
+  threshold_minutes integer not null,       -- grace period past duty_start_time before this rule fires
+  approver1_role text not null,             -- 'manager' | 'hr'
+  approver2_role text,                      -- 'hr' when approver1_role='manager', else null (no stage 2)
+  status text not null default 'pending',   -- 'pending' | 'approved'  (Admin's one-time approval of the RULE)
+  created_by bigint not null references users(id),
+  created_at timestamptz not null default now(),
+  approved_by bigint references users(id),
+  approved_at timestamptz
+);
+
+-- Per-punch rule outcome + its own (up to 2-stage) waiver approval, independent of the existing
+-- punch_approval_status/activity_approval_status columns, which stay exactly as-is.
+alter table attendance_punches
+  add column rule_status text,                    -- 'late_present' | 'half_day' | null
+  add column rule_id bigint references attendance_rules(id),
+  add column rule_waiver_status text not null default 'not_applicable',
+    -- 'not_applicable' | 'pending' | 'stage1_approved' | 'approved'
+  add column rule_approver1_by bigint references users(id),
+  add column rule_approver1_at timestamptz,
+  add column rule_approver2_by bigint references users(id),
+  add column rule_approver2_at timestamptz;
+
+-- Admin-only global policy: waiver caps + escalation thresholds. Singleton row.
+create table attendance_rule_settings (
+  id integer primary key default 1,
+  max_waivers_manager integer,            -- per employee per month; null = unlimited
+  max_waivers_hr integer,                 -- per employee per month; null = unlimited
+  unapproved_late_to_absent integer,      -- N unapproved Late Present = 1 effective Absent; null = off
+  unapproved_half_day_to_absent integer,  -- N unapproved Half Day = 1 effective Absent; null = off
+  updated_by bigint references users(id),
+  updated_at timestamptz
+);
+insert into attendance_rule_settings (id) values (1);
+```
+
+**Verification done this session:** `vite build` clean. Scoped `eslint` on every new/touched file
+(`attendanceRules.js`, `db.js`, `useData.jsx`, `PunchInGate.jsx`, `ui.jsx`, `Employees.jsx`,
+`Attendance.jsx`, `MyAttendanceCalendar.jsx`) — `git stash` diff confirms every pre-existing issue
+(`ui.jsx`'s 2 `react-refresh/only-export-components`, `useData.jsx`'s 1 of the same + 1
+exhaustive-deps warning, `Employees.jsx`'s unused `SBadge`) is byte-identical before/after. **Two
+new lint errors, both accepted as-is**: `Attendance.jsx`'s two new `useEffect(() => { load() }, [])`
+mount-fetch effects (in `AttendanceHR` and the new `AttendanceManagerView`) trigger
+`react-hooks/set-state-in-effect` — this is the exact same already-accepted pattern class as
+`InvoiceApprovalTile.jsx`'s pre-existing, left-unsuppressed `useEffect(() => { loadData() }, [])`
+(confirmed identical shape via direct comparison), not a new category of problem.
+
+**Still open / not done yet:**
+- **Schema not yet applied** — nothing in this feature works until all 3 blocks above run;
+  `createAttendanceRule`/`approveWaiverStage1`/etc. will error until then, and `punchIn` will simply
+  keep writing `rule_status: null` (soft-fail-safe, `approvedAttendanceRules` stays empty from
+  useData's fetch until the table exists).
+- **Not browser-tested** — same constraint as most feature work in this project (no chromium-cli/
+  Playwright by default). Full flow to verify once schema is applied, in order: as HR, create a Late
+  Present rule (small threshold, 1-2 test users) → as Admin, approve the rule → as one of those
+  users, punch in late → as HR/Admin, confirm the instance appears in Pending Waiver Approvals and
+  the roster's Late badge/dot → approve Stage 1 (as Manager if the rule was Manager-first, confirming
+  the new `AttendanceManagerView` queue is correctly scoped) → confirm Stage 2 (HR) is required and
+  completes it → confirm the badge/dot clears once fully approved. Repeat briefly for a Half Day
+  rule with a larger threshold, confirming it supersedes Late Present on the same punch. Set a low
+  waiver cap in Attendance Rule Settings and confirm the UI blocks further waivers once hit. Set a
+  low "N unapproved = absent" threshold and confirm the Effective Absent stat increments correctly
+  on both the HR roster and self-view.
+- **`Employees.jsx`'s Reporting Manager field has no cycle guard** — nothing stops assigning a
+  Manager as their own report, or a manager-chain loop; not asked for, not built. Low real-world
+  risk (the dropdown only lists `role_id==='r2'` users, and a Manager assigning themselves would be
+  an obvious user error, not a silent one), flagged rather than defended against.
+- **No reject path on a waiver instance** — matches the confirmed "no reversal" design; an
+  unwaived instance simply stays unapproved and feeds the escalation count, there's no explicit
+  "Reject" button distinct from "not yet approved."
