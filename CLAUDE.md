@@ -3524,4 +3524,32 @@ authorization, specifically to confirm detection still fires through the new `ma
 - Nothing schema- or logic-related — fully applied, fully tested, the one bug found is fixed and
   re-verified. `Employees.jsx`'s no-cycle-guard note and the no-reject-path design note from the
   feature above still apply unchanged (this restructuring didn't touch either).
+
+### Immediate follow-up, same session: rule rows open a full review Sheet before Admin can approve
+
+User's report right after the restructuring above shipped: "admin not able to see rules details,
+only the approve button is there" — turned out not to be a bug (a live screenshot confirmed role/
+threshold/approver chain/status all rendered correctly inline), but a UX ask: Admin should have to
+open and examine a rule properly before approving it, not approve straight off the one-line list
+summary. Clarified via the user's own follow-up: *"the admin should be able to see the rule details
+on click so that he can examine and approve — without seeing the rule details, how he can
+approve."*
+
+**Built:** each rule row in the Rule Setting card is now clickable (cursor pointer, a trailing "›"
+chevron added next to the status badge, same affordance this app already uses for click-to-drill
+rows elsewhere, e.g. `Attendance.jsx`'s Stage 2 queue), opening a new `RuleDetailSheet` — same
+Sheet-based review pattern this app already uses (`InvoiceApprovalTile.jsx`'s "Review" flow). The
+inline "Approve Rule" button was **removed from the list row entirely** and now lives only inside
+this detail Sheet, so approving genuinely requires opening the review first. The Sheet shows
+everything the list row already had (Rule Type, Role, Grace Period, Approver 1/2) **plus fields
+that weren't surfaced anywhere before**: Created By (resolved from `rule.created_by` against the
+already-loaded `users` list) and Created At, and — once approved — Approved By/At too. Approving
+from inside the Sheet auto-closes it and refreshes the list, same as the rest of this app's
+approval flows.
+
+`vite build` + scoped `eslint` clean after this change (same 2 pre-existing-pattern
+`set-state-in-effect` errors as before, nothing new). Confirmed live via headless Playwright:
+clicking a pending rule opens the Sheet showing all fields including a real "HR Manager" creator
+name and timestamp, Approve Rule works from inside it, and the Sheet closes automatically once
+approved.
   would close the loop.

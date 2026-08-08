@@ -23,6 +23,7 @@ function RuleManagement() {
   const [settingsDraft, setSettingsDraft] = useState({})
   const [savingSettings, setSavingSettings] = useState(false)
   const [showCreateRule, setShowCreateRule] = useState(false)
+  const [reviewRule, setReviewRule] = useState(null)
   const [busyId, setBusyId] = useState(null)
   const [loadError, setLoadError] = useState(null)
 
@@ -46,6 +47,7 @@ function RuleManagement() {
     setBusyId(null)
     if (error) { setLoadError('Rule approval failed — ' + error.message); return }
     await db.logActivity(currentUser?.id, 'approve', 'attendance_rule', 'Approved attendance rule', id)
+    setReviewRule(null)
     await load()
   }
 
@@ -116,27 +118,23 @@ function RuleManagement() {
       </div>
 
       <Card>
-        <CH title={`${RULE_TYPE_LABEL[tab]} Rules`} sub={`${tabRules.length} setting(s)`} right={isHR ? <Btn sm v="pri" onClick={() => setShowCreateRule(true)}>+ Create Rule</Btn> : null} />
+        <CH title={`${RULE_TYPE_LABEL[tab]} Rules`} sub={`${tabRules.length} setting(s) — tap a rule to review`} right={isHR ? <Btn sm v="pri" onClick={() => setShowCreateRule(true)}>+ Create Rule</Btn> : null} />
         {tabRules.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No {RULE_TYPE_LABEL[tab].toLowerCase()} rules created yet</div>}
         {tabRules.map(r => (
-          <div key={r.id} style={{ padding: '10px 14px', borderBottom: '1px solid #f3f4f6' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600 }}>{r.role?.name}</div>
-                <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
-                  grace {r.threshold_minutes}m · Approver 1: {APPROVER_ROLE_LABEL[r.approver1_role]}
-                  {r.approver2_role ? ` → Approver 2: ${APPROVER_ROLE_LABEL[r.approver2_role]}` : ' (final)'}
-                </div>
+          <div key={r.id} onClick={() => setReviewRule(r)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '10px 14px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{r.role?.name}</div>
+              <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
+                grace {r.threshold_minutes}m · Approver 1: {APPROVER_ROLE_LABEL[r.approver1_role]}
+                {r.approver2_role ? ` → Approver 2: ${APPROVER_ROLE_LABEL[r.approver2_role]}` : ' (final)'}
               </div>
-              <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 12, flexShrink: 0, background: r.status === 'approved' ? '#d1fae5' : '#fef3c7', color: r.status === 'approved' ? '#065f46' : '#92400e' }}>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 12, background: r.status === 'approved' ? '#d1fae5' : '#fef3c7', color: r.status === 'approved' ? '#065f46' : '#92400e' }}>
                 {r.status === 'approved' ? 'Approved' : 'Pending Admin Approval'}
               </span>
+              <span style={{ fontSize: 14, color: '#9ca3af' }}>›</span>
             </div>
-            {r.status === 'pending' && isAdmin && (
-              <Btn sm v="pri" style={{ marginTop: 8 }} disabled={busyId === r.id} onClick={() => approveRule(r.id)}>
-                {busyId === r.id ? 'Approving...' : 'Approve Rule'}
-              </Btn>
-            )}
           </div>
         ))}
       </Card>
@@ -197,6 +195,64 @@ function RuleManagement() {
       {showCreateRule && (
         <CreateRuleSheet ruleType={tab} onClose={() => setShowCreateRule(false)} onCreated={load} />
       )}
+
+      {reviewRule && (
+        <RuleDetailSheet
+          rule={reviewRule}
+          users={users}
+          isAdmin={isAdmin}
+          busyId={busyId}
+          onApprove={approveRule}
+          onClose={() => setReviewRule(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// Opened by tapping a rule row — full detail (including who created it and when, not shown on the
+// list row) so Admin has something to actually examine before approving, rather than approving
+// straight off the one-line summary.
+function RuleDetailSheet({ rule, users, isAdmin, busyId, onApprove, onClose }) {
+  const nameOf = id => (users || []).find(u => String(u.id) === String(id))?.name || (id ? `User #${id}` : '—')
+  const fmt = ts => ts ? new Date(ts).toLocaleString('en-IN') : '—'
+
+  return (
+    <Sheet title={`${RULE_TYPE_LABEL[rule.rule_type]} Rule`} sub={rule.role?.name} onClose={onClose}>
+      <div style={{ background: '#f9fafb', borderRadius: 10, padding: 12, marginBottom: 14, fontSize: 13 }}>
+        <DetailRow label="Rule Type" value={RULE_TYPE_LABEL[rule.rule_type]} />
+        <DetailRow label="Role" value={rule.role?.name} />
+        <DetailRow label="Grace Period" value={`${rule.threshold_minutes} minutes beyond reporting time`} />
+        <DetailRow label="Approver 1" value={APPROVER_ROLE_LABEL[rule.approver1_role]} />
+        <DetailRow label="Approver 2" value={rule.approver2_role ? APPROVER_ROLE_LABEL[rule.approver2_role] : 'None — Approver 1 is final'} />
+        <DetailRow label="Created By" value={nameOf(rule.created_by)} />
+        <DetailRow label="Created At" value={fmt(rule.created_at)} />
+        <DetailRow label="Status" value={rule.status === 'approved' ? 'Approved' : 'Pending Admin Approval'} />
+        {rule.status === 'approved' && (
+          <>
+            <DetailRow label="Approved By" value={nameOf(rule.approved_by)} />
+            <DetailRow label="Approved At" value={fmt(rule.approved_at)} />
+          </>
+        )}
+      </div>
+
+      {rule.status === 'pending' && isAdmin && (
+        <Btn v="pri" full disabled={busyId === rule.id} onClick={() => onApprove(rule.id)}>
+          {busyId === rule.id ? 'Approving...' : 'Approve Rule'}
+        </Btn>
+      )}
+      {rule.status === 'pending' && !isAdmin && (
+        <div style={{ fontSize: 12, color: '#9ca3af', textAlign: 'center' }}>Waiting for Admin approval</div>
+      )}
+    </Sheet>
+  )
+}
+
+function DetailRow({ label, value }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '5px 0' }}>
+      <span style={{ color: '#6b7280' }}>{label}</span>
+      <span style={{ fontWeight: 600, textAlign: 'right' }}>{value}</span>
     </div>
   )
 }
