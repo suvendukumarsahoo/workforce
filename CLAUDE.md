@@ -3698,3 +3698,119 @@ immediately legible, future days no longer look blank/broken).
 
 **Still open:** none — this was a pure style change to one shared component, no schema, no logic
 change, confirmed rendering correctly in both places it's used.
+
+## Punch In Rules — Deviation & Early Punch, real-time gating (8 Aug 2026 session) — BUILT, SCHEMA
+## NOT YET APPLIED, NOT YET BROWSER-TESTED (form UI confirmed via headless Playwright; the actual
+## punch-time gating logic can't be tested until schema is live)
+
+User's ask: "let's also have a punch in rules... punch in deviation from headquarter...meter...
+action->allow/dont allow/allow with warning... Early Punch Ins-maximum...mins before reporting
+time...Action-->Allow/Dont Allow/Allow with message." Two new rule types, structurally different
+from Late Present/Half Day — they govern the punch-in act **in real time** (block/warn/allow) at
+the moment of punching in, not a post-hoc classification resolved later through a waiver. Full plan
+approved via plan-mode before building (comparable in scope to the original Late Present/Half Day
+feature).
+
+**Resolved via AskUserQuestion before building:**
+- **Reuse the exact same rule shell** already built for Late Present/Half Day — HR creates a rule
+  scoped to a role, Admin approves the setting, HR then maps specific users in. Same UI discipline,
+  lets different teams have different limits.
+- **"Don't Allow" is a hard block** — no punch row gets created at all; the employee sees why and
+  cannot proceed through this path (contrasts with Late Present/Half Day, which never blocks —
+  everything there is resolved after the fact).
+- **`users.allowed_deviation_m` becomes a fallback, not replaced.** A user covered by an *approved*
+  Punch Deviation rule follows that rule's threshold + Action instead of their own
+  `allowed_deviation_m`. Anyone not covered by any approved rule of that type keeps exactly today's
+  behavior (their own per-user limit, always soft-warn-and-confirm) — non-breaking, no migration.
+
+These two types have **no waiver-approval workflow** — the decision is instant, so instead of an
+Approver 1/2 chain they carry a single **Action**: `allow` (silent, no flag even if the limit is
+crossed) / `deny` (hard block) / `warn` (existing confirm-before-proceeding UX, and — new — flagged
+for HR review afterward via the same `location_flag`/`flag_reason` columns and HR-notification path
+Deviation warnings already used). The Pending Waiver Approvals / Attendance Rule Settings (waiver
+caps + escalation) / Waiver Counts cards only make sense for the waiver-based types and now hide
+entirely when either new tab is active.
+
+**Built:**
+1. **Schema** — `attendance_rules` gains `threshold_meters` (Punch Deviation only) and `action`
+   (Punch Deviation/Early Punch only); `threshold_minutes` and `approver1_role`'s `NOT NULL`
+   constraints relaxed since the new rule types don't populate them.
+2. **`src/lib/attendanceRules.js`** — `RULE_TYPE_LABEL` gains `punch_deviation`/`early_punch`; new
+   `ACTION_LABEL` map (`allow`/`deny`/`warn`); new `resolvePunchGateRule(user, approvedRules,
+   ruleType)` — reuses the existing private `rulesApplyingTo` role+mapping filter, returns the
+   *most restrictive* matching approved rule (smallest threshold wins) or `null` if none covers
+   this user.
+3. **`db.js`'s `createAttendanceRule`** — accepts the new `threshold_meters`/`action` fields;
+   `approver2_role` is only derived when `approver1_role` was actually provided (the two new types
+   pass `action` instead and leave approver fields null).
+4. **`PunchInGate.jsx` — the real behavioral change.** Restructured into a sequential two-stage
+   gate:
+   - **Stage 1, Early Punch** (no GPS needed, runs first to fail fast) — if `duty_start_time` is
+     set and the current moment is before it, computes `minutesEarly` (the inverse of the existing
+     late-arrival calculation) and resolves an approved Early Punch rule. `deny` → a new `blocked`
+     screen (🚫, reason + "Try Again"/"Logout", no way to submit a punch). `warn` → the existing
+     `pendingConfirm` screen, now with an `'early'` copy branch, requiring explicit confirm before
+     continuing to stage 2. `allow` → proceeds silently.
+   - **Stage 2, Location/Deviation** (the existing `evaluate()`, extended) — after computing
+     `distanceM` exactly as before, resolves an approved Punch Deviation rule; if one applies, uses
+     *its* threshold + action instead of `allowed_deviation_m`; if none applies, falls back to
+     today's exact behavior (per-user limit, always `warn`). Same three-way branch.
+   - **Combined flagging** — if either stage was confirmed via `warn`, its message is accumulated
+     into a `priorFlags` array threaded through to the final `submitPunch` call, joined with `; `
+     into one `flag_reason` if both stages triggered — reuses the existing `location_flag` column
+     and HR-notification path untouched, no new schema needed for the punch row itself.
+5. **`AttendanceRules.jsx`** — tab bar extended to 4 tabs. `CreateRuleSheet` and `RuleDetailSheet`
+   both branch on rule type: Late Present/Half Day keep today's Role + Threshold(minutes) +
+   Approver 1 fields; Punch Deviation/Early Punch show Role + Threshold (metres or minutes, labeled
+   per type) + **Action** select — labeled "Allow with Warning" for Punch Deviation and "Allow with
+   Message" for Early Punch per the user's own wording (same underlying `warn` value). Pending
+   Waiver Approvals / Attendance Rule Settings / Waiver Counts cards wrapped in an
+   `isWaiverBasedType` check, hidden entirely on the two new tabs. `MappingRow`'s summary line also
+   adapts (metres vs. minutes-early vs. grace-minutes) depending on the rule's type.
+
+**Schema — NOT yet applied, user must run:**
+```sql
+alter table attendance_rules
+  add column threshold_meters integer,   -- Punch Deviation only (metres); null for other types
+  add column action text;                -- 'allow' | 'deny' | 'warn' — Punch Deviation/Early Punch only
+
+alter table attendance_rules alter column threshold_minutes drop not null;
+alter table attendance_rules alter column approver1_role drop not null;
+```
+`attendance_rule_users` (the mapping table) needs no changes — already generic over any `rule_type`.
+
+**Verification done this session:** `vite build` clean. Scoped `eslint` on every touched file
+(`attendanceRules.js`, `db.js`, `PunchInGate.jsx`, `AttendanceRules.jsx`) — `attendanceRules.js`,
+`db.js`, and `PunchInGate.jsx` all zero errors; `AttendanceRules.jsx`'s 3 `set-state-in-effect`
+errors confirmed byte-identical (same lines, same shape) via `git stash` diff before/after — the
+same already-accepted mount-fetch pattern class documented earlier this session, nothing new.
+Confirmed live via headless Playwright (schema not yet applied, so only the **form UI** could be
+tested, not the actual gating): both new tabs render, the waiver-specific cards correctly disappear
+on them, "+ Create Rule" on each tab shows exactly the right fields (Punch Deviation: "Maximum
+deviation from headquarters (metres)" + Action defaulting to "Allow with Warning"; Early Punch:
+"Maximum early punch-in (minutes before reporting time)" + Action defaulting to "Allow with
+Message") with **no** Approver 1 field on either — confirmed via screenshot, not just code review.
+One grammar nit found and fixed during this pass ("Approve a Early Punch rule" → "an Early Punch
+rule", a small `/^[aeiou]/i` check added to the existing "approve a rule first to map users"
+placeholder).
+
+**Still open / not done yet:**
+- **Schema not yet applied** — `createAttendanceRule` will fail (`threshold_meters`/`action`
+  columns don't exist yet, and inserting `null` into the still-`NOT NULL`
+  `threshold_minutes`/`approver1_role` columns for these two new types would violate the existing
+  constraints) until the migration above runs.
+- **The actual punch-time gating logic is completely unverified live** — this is the core of what
+  was asked for and hasn't been exercised at all yet, only the rule-creation form UI has. Full flow
+  to verify once schema is applied, for **both** rule types, all **three** actions each (6 real
+  punch attempts total): create a rule with a small/tight threshold and Action=Don't Allow, map a
+  test user in, have them attempt to punch in from a violating position/time → confirm the new
+  `blocked` screen appears with the right message and **no** `attendance_punches` row gets created.
+  Repeat with Action=Allow with Warning/Message → confirm the existing confirm screen appears
+  (correct copy per type) and, once confirmed, the punch succeeds with `location_flag=true` and a
+  `flag_reason` that shows up in the existing Pending Punch Approvals queue. Repeat with
+  Action=Allow → confirm the punch succeeds completely silently, `location_flag=false`. Then
+  specifically test a punch that trips **both** stages at once (early AND deviation, both
+  Action=Allow with Warning) → confirm both confirm screens appear in sequence and the final
+  `flag_reason` contains both messages joined with `; `. Finally confirm a user covered by *no*
+  rule of either type still behaves exactly as before today's change (soft-warn deviation via their
+  own `allowed_deviation_m`, zero early-punch restriction).

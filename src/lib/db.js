@@ -1014,6 +1014,9 @@ export async function fetchAttendanceRules() {
   return { data, error }
 }
 
+// Late Present/Half Day rules pass threshold_minutes + approver1_role (approver2_role auto-
+// derived). Punch Deviation/Early Punch rules pass threshold_meters or threshold_minutes + action
+// instead — no approver chain, since there's no waiver-approval workflow for a real-time gate.
 export async function createAttendanceRule(payload) {
   const { data, error } = await supabase
     .from('attendance_rules')
@@ -1021,9 +1024,11 @@ export async function createAttendanceRule(payload) {
       rule_type: payload.rule_type,
       name: payload.name || null,
       role_id: payload.role_id,
-      threshold_minutes: payload.threshold_minutes,
-      approver1_role: payload.approver1_role,
-      approver2_role: deriveApprover2Role(payload.approver1_role),
+      threshold_minutes: payload.threshold_minutes ?? null,
+      threshold_meters: payload.threshold_meters ?? null,
+      action: payload.action ?? null,
+      approver1_role: payload.approver1_role ?? null,
+      approver2_role: payload.approver1_role ? deriveApprover2Role(payload.approver1_role) : null,
       status: 'pending',
       created_by: payload.created_by,
     })

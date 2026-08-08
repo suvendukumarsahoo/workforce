@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Btn, Sheet, Inp } from '../../components/ui.jsx'
-import { RULE_TYPE_LABEL, APPROVER_ROLE_LABEL, eligibleForWaiverStage } from '../../lib/attendanceRules.js'
+import { RULE_TYPE_LABEL, APPROVER_ROLE_LABEL, ACTION_LABEL, eligibleForWaiverStage } from '../../lib/attendanceRules.js'
 import { getCurrentPeriod, formatPeriodLabel, monthRangeForPeriod, listRecentPeriods } from '../../lib/period.js'
 import * as db from '../../lib/db.js'
 
@@ -109,6 +109,10 @@ function RuleManagement() {
   }
 
   const tabRules = rules.filter(r => r.rule_type === tab)
+  // Late Present/Half Day go through a waiver-approval workflow (Approver 1/2, caps, escalation);
+  // Punch Deviation/Early Punch are real-time gates decided instantly at punch-in (an Action, no
+  // approval chain) — none of the waiver-specific cards below apply to them.
+  const isWaiverBasedType = tab === 'late_present' || tab === 'half_day'
 
   return (
     <div>
@@ -118,8 +122,8 @@ function RuleManagement() {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-        {['late_present', 'half_day'].map(t => (
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
+        {['late_present', 'half_day', 'punch_deviation', 'early_punch'].map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -143,8 +147,14 @@ function RuleManagement() {
             <div style={{ minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600 }}>{r.role?.name}</div>
               <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>
-                grace {r.threshold_minutes}m · Approver 1: {APPROVER_ROLE_LABEL[r.approver1_role]}
-                {r.approver2_role ? ` → Approver 2: ${APPROVER_ROLE_LABEL[r.approver2_role]}` : ' (final)'}
+                {r.rule_type === 'punch_deviation' ? (
+                  <>limit {r.threshold_meters}m · Action: {ACTION_LABEL[r.action]}</>
+                ) : r.rule_type === 'early_punch' ? (
+                  <>limit {r.threshold_minutes}m early · Action: {ACTION_LABEL[r.action]}</>
+                ) : (
+                  <>grace {r.threshold_minutes}m · Approver 1: {APPROVER_ROLE_LABEL[r.approver1_role]}
+                  {r.approver2_role ? ` → Approver 2: ${APPROVER_ROLE_LABEL[r.approver2_role]}` : ' (final)'}</>
+                )}
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
@@ -161,7 +171,7 @@ function RuleManagement() {
         <CH title="User Mapping" sub="Who this rule applies to — editable any time, no approval needed" />
         {tabRules.filter(r => r.status === 'approved').length === 0 && (
           <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>
-            Approve a {RULE_TYPE_LABEL[tab]} rule first to map users
+            Approve {/^[aeiou]/i.test(RULE_TYPE_LABEL[tab]) ? 'an' : 'a'} {RULE_TYPE_LABEL[tab]} rule first to map users
           </div>
         )}
         {tabRules.filter(r => r.status === 'approved').map(r => (
@@ -169,6 +179,7 @@ function RuleManagement() {
         ))}
       </Card>
 
+      {isWaiverBasedType && (
       <Card>
         <CH title="Pending Waiver Approvals" sub={`${waiverQueue.length} instance(s) — Late Present / Half Day`} />
         {waiverQueue.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>Nothing pending</div>}
@@ -196,8 +207,9 @@ function RuleManagement() {
           )
         })}
       </Card>
+      )}
 
-      {isAdmin && (
+      {isWaiverBasedType && isAdmin && (
         <Card>
           <CH title="Attendance Rule Settings" sub="Waiver caps + escalation thresholds — applies to both rule types" />
           <div style={{ padding: 14 }}>
@@ -210,7 +222,7 @@ function RuleManagement() {
         </Card>
       )}
 
-      {isAdmin && (
+      {isWaiverBasedType && isAdmin && (
         <Card>
           <CH
             title="Waiver Counts"
@@ -304,15 +316,28 @@ function RuleManagement() {
 function RuleDetailSheet({ rule, users, isAdmin, busyId, onApprove, onClose }) {
   const nameOf = id => (users || []).find(u => String(u.id) === String(id))?.name || (id ? `User #${id}` : '—')
   const fmt = ts => ts ? new Date(ts).toLocaleString('en-IN') : '—'
+  const isGateType = rule.rule_type === 'punch_deviation' || rule.rule_type === 'early_punch'
 
   return (
     <Sheet title={`${RULE_TYPE_LABEL[rule.rule_type]} Rule`} sub={rule.role?.name} onClose={onClose}>
       <div style={{ background: '#f9fafb', borderRadius: 10, padding: 12, marginBottom: 14, fontSize: 13 }}>
         <DetailRow label="Rule Type" value={RULE_TYPE_LABEL[rule.rule_type]} />
         <DetailRow label="Role" value={rule.role?.name} />
-        <DetailRow label="Grace Period" value={`${rule.threshold_minutes} minutes beyond reporting time`} />
-        <DetailRow label="Approver 1" value={APPROVER_ROLE_LABEL[rule.approver1_role]} />
-        <DetailRow label="Approver 2" value={rule.approver2_role ? APPROVER_ROLE_LABEL[rule.approver2_role] : 'None — Approver 1 is final'} />
+        {isGateType ? (
+          <>
+            <DetailRow
+              label={rule.rule_type === 'punch_deviation' ? 'Maximum Deviation' : 'Maximum Early Punch-In'}
+              value={rule.rule_type === 'punch_deviation' ? `${rule.threshold_meters} metres from HQ` : `${rule.threshold_minutes} minutes before reporting time`}
+            />
+            <DetailRow label="Action" value={ACTION_LABEL[rule.action]} />
+          </>
+        ) : (
+          <>
+            <DetailRow label="Grace Period" value={`${rule.threshold_minutes} minutes beyond reporting time`} />
+            <DetailRow label="Approver 1" value={APPROVER_ROLE_LABEL[rule.approver1_role]} />
+            <DetailRow label="Approver 2" value={rule.approver2_role ? APPROVER_ROLE_LABEL[rule.approver2_role] : 'None — Approver 1 is final'} />
+          </>
+        )}
         <DetailRow label="Created By" value={nameOf(rule.created_by)} />
         <DetailRow label="Created At" value={fmt(rule.created_at)} />
         <DetailRow label="Status" value={rule.status === 'approved' ? 'Approved' : 'Pending Admin Approval'} />
@@ -357,7 +382,9 @@ function MappingRow({ rule, users, isHR, onAdd, onRemove }) {
 
   return (
     <div style={{ padding: '10px 14px', borderBottom: '1px solid #f3f4f6' }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 6 }}>{rule.role?.name} — grace {rule.threshold_minutes}m</div>
+      <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 6 }}>
+        {rule.role?.name} — {rule.rule_type === 'punch_deviation' ? `limit ${rule.threshold_meters}m` : rule.rule_type === 'early_punch' ? `limit ${rule.threshold_minutes}m early` : `grace ${rule.threshold_minutes}m`}
+      </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: isHR ? 6 : 0 }}>
         {(rule.mapped || []).length === 0 && <span style={{ fontSize: 12, color: '#9ca3af' }}>No users mapped yet</span>}
         {(rule.mapped || []).map(m => (
@@ -388,22 +415,36 @@ function MappingRow({ rule, users, isHR, onAdd, onRemove }) {
 function CreateRuleSheet({ ruleType, onClose, onCreated }) {
   const { currentUser } = useAuth()
   const { roles, showToast } = useData()
+  const isGateType = ruleType === 'punch_deviation' || ruleType === 'early_punch'
   const [roleId, setRoleId] = useState('')
   const [threshold, setThreshold] = useState('')
   const [approver1, setApprover1] = useState('manager')
+  const [action, setAction] = useState('warn')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState(null)
+
+  // Same underlying 'warn' action, different wording per the user's own request — "Allow with
+  // Warning" for a distance rule, "Allow with Message" for an early-punch one.
+  const warnLabel = ruleType === 'early_punch' ? 'Allow with Message' : 'Allow with Warning'
 
   const save = async () => {
     setErr(null)
     if (!roleId) { setErr('Select a role'); return }
-    if (!threshold || Number(threshold) <= 0) { setErr('Enter a grace period in minutes'); return }
+    if (!threshold || Number(threshold) <= 0) { setErr(isGateType ? 'Enter a limit' : 'Enter a grace period in minutes'); return }
     setSaving(true)
-    const { data, error } = await db.createAttendanceRule({
-      rule_type: ruleType, role_id: roleId,
-      threshold_minutes: Number(threshold), approver1_role: approver1,
-      created_by: currentUser?.id,
-    })
+    const payload = isGateType
+      ? {
+          rule_type: ruleType, role_id: roleId,
+          threshold_meters: ruleType === 'punch_deviation' ? Number(threshold) : undefined,
+          threshold_minutes: ruleType === 'early_punch' ? Number(threshold) : undefined,
+          action, created_by: currentUser?.id,
+        }
+      : {
+          rule_type: ruleType, role_id: roleId,
+          threshold_minutes: Number(threshold), approver1_role: approver1,
+          created_by: currentUser?.id,
+        }
+    const { data, error } = await db.createAttendanceRule(payload)
     setSaving(false)
     if (error) { setErr(error.message); return }
     await db.logActivity(currentUser?.id, 'create', 'attendance_rule', `Created ${RULE_TYPE_LABEL[ruleType]} rule`, data?.id)
@@ -415,14 +456,38 @@ function CreateRuleSheet({ ruleType, onClose, onCreated }) {
   return (
     <Sheet title={`Create ${RULE_TYPE_LABEL[ruleType]} Rule`} sub="A setting only — map specific users once it's approved" onClose={onClose}>
       <Inp label="Role" value={roleId} onChange={setRoleId} options={[{ value: '', label: 'Select role...' }, ...(roles || []).map(r => ({ value: r.id, label: r.name }))]} />
-      <Inp label="Maximum time allowed beyond reporting time (minutes)" value={threshold} onChange={setThreshold} type="number" />
-      <Inp
-        label="Approver 1"
-        value={approver1}
-        onChange={setApprover1}
-        options={[{ value: 'manager', label: 'Manager' }, { value: 'hr', label: 'HR' }]}
-        helper={approver1 === 'manager' ? 'Approver 2 will automatically be HR (2nd sign-off required)' : 'HR approval alone is final — no Approver 2'}
-      />
+      {isGateType ? (
+        <>
+          <Inp
+            label={ruleType === 'punch_deviation' ? 'Maximum deviation from headquarters (metres)' : 'Maximum early punch-in (minutes before reporting time)'}
+            value={threshold}
+            onChange={setThreshold}
+            type="number"
+          />
+          <Inp
+            label="Action"
+            value={action}
+            onChange={setAction}
+            options={[{ value: 'allow', label: 'Allow' }, { value: 'deny', label: "Don't Allow" }, { value: 'warn', label: warnLabel }]}
+            helper={
+              action === 'deny' ? 'Punch-in is blocked entirely if this limit is crossed — no punch is recorded.'
+                : action === 'warn' ? 'Employee sees a warning and must confirm before punching in; flagged for HR review.'
+                : 'Punch-in proceeds with no warning, even if this limit is crossed.'
+            }
+          />
+        </>
+      ) : (
+        <>
+          <Inp label="Maximum time allowed beyond reporting time (minutes)" value={threshold} onChange={setThreshold} type="number" />
+          <Inp
+            label="Approver 1"
+            value={approver1}
+            onChange={setApprover1}
+            options={[{ value: 'manager', label: 'Manager' }, { value: 'hr', label: 'HR' }]}
+            helper={approver1 === 'manager' ? 'Approver 2 will automatically be HR (2nd sign-off required)' : 'HR approval alone is final — no Approver 2'}
+          />
+        </>
+      )}
       {err && <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '8px 10px', marginBottom: 10, fontSize: 11, color: '#991b1b' }}>{err}</div>}
       <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
         <Btn v="pri" full disabled={saving} onClick={save}>{saving ? 'Creating...' : 'Create Rule'}</Btn>

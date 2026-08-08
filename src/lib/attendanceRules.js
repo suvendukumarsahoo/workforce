@@ -16,11 +16,21 @@
 export const RULE_TYPE_LABEL = {
   late_present: 'Late Present',
   half_day: 'Half Day',
+  punch_deviation: 'Punch Deviation',
+  early_punch: 'Early Punch',
 }
 
 export const APPROVER_ROLE_LABEL = {
   manager: 'Manager',
   hr: 'HR',
+}
+
+// Punch Deviation / Early Punch rules — no waiver-approval workflow (the decision is made
+// instantly at punch time), so instead of an approver chain they carry a single `action`.
+export const ACTION_LABEL = {
+  allow: 'Allow',
+  deny: "Don't Allow",
+  warn: 'Allow with Warning',
 }
 
 function rulesApplyingTo(user, approvedRules, ruleType) {
@@ -54,6 +64,18 @@ export function resolveRuleClassification(user, approvedRules, minutesLate) {
   }
 
   return null
+}
+
+// Punch Deviation / Early Punch — real-time gates evaluated at punch-in, not post-hoc
+// classifications. Returns the most restrictive matching approved rule (smallest threshold wins,
+// since a smaller allowance is the tighter constraint) or null if none covers this user — callers
+// fall back to today's pre-rule behavior when null. `ruleType` is 'punch_deviation' (threshold in
+// `threshold_meters`) or 'early_punch' (threshold in `threshold_minutes`).
+export function resolvePunchGateRule(user, approvedRules, ruleType) {
+  const matches = rulesApplyingTo(user, approvedRules, ruleType)
+  if (matches.length === 0) return null
+  const key = ruleType === 'punch_deviation' ? 'threshold_meters' : 'threshold_minutes'
+  return matches.reduce((a, b) => ((b[key] ?? Infinity) < (a[key] ?? Infinity) ? b : a))
 }
 
 // Given a rule's approver1_role, what approver2_role should be stored (auto-derived, not user-picked).
