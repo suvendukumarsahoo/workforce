@@ -6,6 +6,9 @@ import OrderFullDetail from '../../components/OrderFullDetail.jsx'
 import { getOrderStageLabel, getOrderStageColor } from '../../components/orderStageLabel.js'
 import * as db from '../../lib/db.js'
 
+const selStyle = { padding: '6px 9px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12, background: '#fff' }
+const uniqById = arr => Object.values(Object.fromEntries((arr || []).filter(Boolean).map(x => [x.id, x])))
+
 // Also reused directly by DistributorOrder.jsx's own "My Distributor Orders" list (Sales Team) —
 // that screen used to hand-roll a second, drifted copy of this exact list (a raw, permanently-stuck
 // order.status string instead of getOrderStageLabel's real pipeline-wide derivation, and non-
@@ -20,6 +23,11 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
   const [payments, setPayments] = useState([])
   const [loaded, setLoaded] = useState(false)
   const [selected, setSelected] = useState(null)
+  const [distributorFilter, setDistributorFilter] = useState('')
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
+  const [minValue, setMinValue] = useState('')
+  const [maxValue, setMaxValue] = useState('')
 
   const isSalesTeam = role?.name === 'Sales Team'
   const mid = currentUser?.member_id
@@ -33,11 +41,26 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
   }
   if (!loaded) loadData()
 
-  const visibleOrders = isSalesTeam ? orders.filter(o => o.member_id === mid) : orders
+  const scopedOrders = isSalesTeam ? orders.filter(o => o.member_id === mid) : orders
   const orderValue = o => (o.items || []).reduce((s, it) => s + (it.rate || 0) * (it.final_qty ?? it.approved_qty ?? it.order_qty), 0)
   // Rep column only earns its place in the org-wide view (Admin/Manager/etc.) — Sales Team's own
   // list is always "themselves," a repeated column there would just be dead weight.
   const showRep = !isSalesTeam
+
+  // Distributor dropdown options come from the scoped-but-not-yet-filtered set, same pattern as
+  // DistributorSecondaryReport.jsx's uniqById — so picking a distributor never hides itself out of
+  // its own option list. Date/value filters default to blank (no filter) rather than defaulting to
+  // "this month" the way period-scoped reports do — this list has no natural period of its own.
+  const distributorOptions = uniqById(scopedOrders.map(o => o.distributor))
+  const visibleOrders = scopedOrders.filter(o => {
+    if (distributorFilter && o.distributor_id !== distributorFilter) return false
+    if (fromDate && new Date(o.order_date) < new Date(fromDate)) return false
+    if (toDate && new Date(o.order_date) > new Date(`${toDate}T23:59:59`)) return false
+    const val = orderValue(o)
+    if (minValue && val < Number(minValue)) return false
+    if (maxValue && val > Number(maxValue)) return false
+    return true
+  })
 
   const th = { padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280', whiteSpace: 'nowrap' }
   const td = { padding: '8px 10px', fontSize: 12, verticalAlign: 'middle' }
@@ -45,15 +68,51 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
   return (
     <div>
       <Card>
+        <CH title="Filters" />
+        <div style={{ padding: 12, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
+          <div>
+            <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Distributor</div>
+            <select value={distributorFilter} onChange={e => setDistributorFilter(e.target.value)} style={selStyle}>
+              <option value="">All</option>
+              {distributorOptions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>From</div>
+            <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} style={selStyle} />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>To</div>
+            <input type="date" value={toDate} onChange={e => setToDate(e.target.value)} style={selStyle} />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Value ≥</div>
+            <input type="number" placeholder="Min" value={minValue} onChange={e => setMinValue(e.target.value)} style={{ ...selStyle, width: 90 }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Value ≤</div>
+            <input type="number" placeholder="Max" value={maxValue} onChange={e => setMaxValue(e.target.value)} style={{ ...selStyle, width: 90 }} />
+          </div>
+          {(distributorFilter || fromDate || toDate || minValue || maxValue) && (
+            <button onClick={() => { setDistributorFilter(''); setFromDate(''); setToDate(''); setMinValue(''); setMaxValue('') }}
+              style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: '6px 0' }}>
+              Clear filters
+            </button>
+          )}
+        </div>
+      </Card>
+
+      <Card>
         <CH title={title} sub={`${visibleOrders.length} order(s)`} right={headerRight} />
-        {visibleOrders.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No orders</div>}
+        {visibleOrders.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No orders match these filters</div>}
         {visibleOrders.length > 0 && (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: showRep ? 900 : 780 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: showRep ? 980 : 860 }}>
               <thead>
                 <tr style={{ background: '#f9fafb' }}>
                   <th style={th}>Order #</th>
                   <th style={th}>Distributor</th>
+                  <th style={th}>Town</th>
                   {showRep && <th style={th}>Rep</th>}
                   <th style={th}>Date</th>
                   <th style={th}>Value</th>
@@ -69,12 +128,8 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
                       style={{ borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}
                       onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'} onMouseLeave={e => e.currentTarget.style.background = ''}>
                       <td style={{ ...td, fontWeight: 700 }}>#{o.id}</td>
-                      <td style={td}>
-                        <div style={{ fontWeight: 600 }}>{o.distributor?.name}</div>
-                        {(o.distributor?.town || o.distributor?.area) && (
-                          <div style={{ fontSize: 11, color: '#9ca3af' }}>{o.distributor?.town || o.distributor?.area}</div>
-                        )}
-                      </td>
+                      <td style={{ ...td, fontWeight: 600 }}>{o.distributor?.name}</td>
+                      <td style={{ ...td, color: '#6b7280' }}>{o.distributor?.town || o.distributor?.area || '—'}</td>
                       {showRep && <td style={td}>{o.member?.name || '—'}</td>}
                       <td style={{ ...td, color: '#6b7280', whiteSpace: 'nowrap' }}>{new Date(o.order_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
                       <td style={{ ...td, fontWeight: 600 }}>{F(orderValue(o))}</td>
