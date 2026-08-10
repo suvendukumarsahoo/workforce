@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Btn, Inp, Sheet, F } from '../../components/ui.jsx'
+import OrderStatus from './OrderStatus.jsx'
 import * as db from '../../lib/db.js'
 
 export default function DistributorOrder() {
@@ -16,7 +17,6 @@ const [step, setStep] = useState('list') // list -> select -> payment -> items -
   const [payment, setPayment] = useState({ mode_of_payment: '', bank_name: '', ifsc_code: '', bank_branch: '', transaction_date: '', transaction_amount: '', transaction_id: '', remarks: '' })
   const [otp, setOtp] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [myOrders, setMyOrders] = useState([])
   const [editingOrderId, setEditingOrderId] = useState(null)
   const [editingPaymentId, setEditingPaymentId] = useState(null)
 
@@ -26,19 +26,6 @@ const [step, setStep] = useState('list') // list -> select -> payment -> items -
 
   const usedProductIds = new Set(items.map(it => it.product_id))
   const availableProducts = (products || []).filter(p => !usedProductIds.has(p.id))
-
-  const loadMyOrders = async () => {
-    const { data } = await db.fetchDistributorOrders()
-    setMyOrders((data || []).filter(o => o.member_id === mid))
-  }
-
-  const statusLabel = s => ({
-    order_submitted: 'Awaiting Manager Approval',
-    manager_approved_admin_pending: 'Manager Approved — Admin Pending',
-    confirmed: 'Confirmed',
-  }[s] || s)
-
-  const orderValue = (order) => (order.items || []).reduce((s, it) => s + (it.rate || 0) * (it.final_qty ?? it.approved_qty ?? it.order_qty), 0)
 
   const editOrder = async (order) => {
     setEditingOrderId(order.id)
@@ -147,7 +134,7 @@ const [step, setStep] = useState('list') // list -> select -> payment -> items -
         }
       }
       db.logActivity(currentUser?.id, 'update', 'order', `Updated order #${editingOrderId} — ${(customers || []).find(d => d.id === distributorId)?.name || distributorId}`, editingOrderId)
-      await loadAll(); await loadMyOrders()
+      await loadAll()
       setSubmitting(false)
       showToast('Order updated')
     } else {
@@ -162,7 +149,7 @@ const [step, setStep] = useState('list') // list -> select -> payment -> items -
         if (payError) { showToast('Order created but payment save failed'); setSubmitting(false); return }
       }
       db.logActivity(currentUser?.id, 'submit', 'order', `Submitted order #${order.id} — ${(customers || []).find(d => d.id === distributorId)?.name || distributorId}`, order.id)
-      await loadAll(); await loadMyOrders()
+      await loadAll()
       setSubmitting(false)
       showToast('Order submitted for manager approval')
     }
@@ -175,28 +162,15 @@ const [step, setStep] = useState('list') // list -> select -> payment -> items -
   const paymentAmount = Number(payment.transaction_amount) || 0
   const exceedsPayment = isAdvance && gt.value > paymentAmount
   const catSummary = categorySummary()
-if (step === 'list' && myOrders.length === 0) loadMyOrders()
 
   return (
     <div>
       {step === 'list' && (
-        <Card>
-          <CH title="My Distributor Orders" sub={`${myOrders.length} order(s)`} right={<Btn v="pri" sm onClick={() => setStep('select')}>+ New Order</Btn>} />
-          {myOrders.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No orders yet</div>}
-          {myOrders.map(o => {
-            const editable = o.status === 'order_submitted'
-            return (
-              <div key={o.id} onClick={editable ? () => editOrder(o) : undefined}
-                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid #f3f4f6', cursor: editable ? 'pointer' : 'default' }}>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>Order #{o.id} — {o.distributor?.name}{o.distributor?.town ? `, ${o.distributor.town}` : ''}</div>
-                  <div style={{ fontSize: 11, color: '#9ca3af' }}>{new Date(o.order_date).toLocaleString('en-IN')} · {F(orderValue(o))}{editable ? ' · Tap to edit' : ''}</div>
-                </div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: o.status === 'confirmed' ? '#10b981' : '#2563eb' }}>{statusLabel(o.status)}</div>
-              </div>
-            )
-          })}
-        </Card>
+        <OrderStatus
+          title="My Distributor Orders"
+          headerRight={<Btn v="pri" sm onClick={() => setStep('select')}>+ New Order</Btn>}
+          onEditOrder={editOrder}
+        />
       )}
 
       {step === 'select' && (
