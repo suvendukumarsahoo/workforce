@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, F, Sheet, Tile } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
@@ -21,6 +21,21 @@ const { products, categories, showToast } = useData()
   const [editingOrder, setEditingOrder] = useState(null)
   const [showPendingPicking, setShowPendingPicking] = useState(false)
   const [showPickingComplete, setShowPickingComplete] = useState(false)
+  const [loadItemProgress, setLoadItemProgress] = useState({}) // order_item_id -> load_item_progress row, for the open load detail
+
+  // it.availability (picking-time Available/Wait/Unavailable) never changes once loading starts —
+  // load_item_progress is the real per-item "was this actually loaded" record LoadingScreen.jsx
+  // writes to, keyed by allocation_id + order_item_id. Only fetchable once a load has a vehicle
+  // allocation at all.
+  useEffect(() => {
+    const allocationId = selectedLoad && selectedLoad !== 'list' ? selectedLoad.allocation?.id : null
+    if (!allocationId) { setLoadItemProgress({}); return }
+    db.fetchLoadItemProgress(allocationId).then(({ data }) => {
+      const map = {}
+      ;(data || []).forEach(p => { map[p.order_item_id] = p })
+      setLoadItemProgress(map)
+    })
+  }, [selectedLoad])
 
   const loadOrders = async () => {
     const { data } = await db.fetchPickingOrders()
@@ -68,6 +83,14 @@ const { products, categories, showToast } = useData()
     if (load.loading_stage === 'wm_loaded') return { label: 'Awaiting Driver Confirmation', color: '#f59e0b' }
     if (load.allocation.status === 'loading_in_progress') return { label: 'Loading In Progress', color: '#f59e0b' }
     return { label: 'Vehicle Allocated — Not Started', color: '#6b7280' }
+  }
+
+  const loadedStatus = (itemId) => {
+    const p = loadItemProgress[itemId]
+    if (!p) return { label: '—', color: '#9ca3af' }
+    if (p.status === 'complete') return { label: `✓ Loaded ${p.loaded_qty}`, color: '#10b981' }
+    if (p.status === 'paused') return { label: `⏸ Paused ${p.loaded_qty}`, color: '#ef4444' }
+    return { label: `Loading ${p.loaded_qty}...`, color: '#f59e0b' }
   }
 
   const categoryTiles = () => {
@@ -223,18 +246,23 @@ const { products, categories, showToast } = useData()
                     <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Product</th>
                     <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Qty</th>
                     <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Volume</th>
-                    <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Status</th>
+                    <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Picking Status</th>
+                    <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Loaded</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(selectedLoad.items || []).filter(it => !it.cancelled).map(it => (
-                    <tr key={it.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{productName(it.product_id)}</td>
-                      <td style={{ padding: '8px 10px', fontSize: 12 }}>{it.final_qty}</td>
-                      <td style={{ padding: '8px 10px', fontSize: 12 }}>{((it.volume || 0) * it.final_qty).toFixed(2)}</td>
-                      <td style={{ padding: '8px 10px', fontSize: 12 }}>{it.availability || '—'}</td>
-                    </tr>
-                  ))}
+                  {(selectedLoad.items || []).filter(it => !it.cancelled).map(it => {
+                    const ls = loadedStatus(it.id)
+                    return (
+                      <tr key={it.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                        <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{productName(it.product_id)}</td>
+                        <td style={{ padding: '8px 10px', fontSize: 12 }}>{it.final_qty}</td>
+                        <td style={{ padding: '8px 10px', fontSize: 12 }}>{((it.volume || 0) * it.final_qty).toFixed(2)}</td>
+                        <td style={{ padding: '8px 10px', fontSize: 12, color: '#6b7280' }}>{it.availability || '—'}</td>
+                        <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600, color: ls.color }}>{ls.label}</td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
