@@ -17,7 +17,6 @@ import DistributorSecondaryReport from '../shared/DistributorSecondaryReport.jsx
 import DistributorStockSalesReport from '../shared/DistributorStockSalesReport.jsx'
 import StockTakeEntry from './StockTakeEntry.jsx'
 import StockTakeScheduleCard from '../../components/StockTakeScheduleCard.jsx'
-import OrderStatus from '../shared/OrderStatus.jsx'
 
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 const netS = s => (s.basic||0)+(s.hra||0)+(s.ta||0)+(s.da||0)-(s.pf||0)-(s.tds||0)
@@ -217,7 +216,10 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
   const MORE_ITEMS = [
   hasMenu('newCustomerVisit') && { id: 'newCustomerVisit', icon: '🚶', label: 'New Customer Visit' },
   hasMenu('newCustomerVisit') && { id: 'pendingVisits',    icon: '📌', label: `Pending Visits${pendingVisits.length ? ` (${pendingVisits.length})` : ''}` },
-  hasMenu('orderStatus') && { id: 'orderStatus', icon: '📊', label: 'Order Status' },
+  // No separate 'orderStatus' entry here — Distributor Order's own list is now the exact same
+  // OrderStatus.jsx component (title="My Distributor Orders"), plus create/edit, so it's a strict
+  // superset for Sales Team specifically. orderStatus stays in WebApp.jsx/Settings.jsx unchanged —
+  // it's still the only order-tracking screen at all for every other role.
   hasMenu('distributorOrder') && { id: 'distributorOrder', icon: '🛒', label: 'Distributor Order' },
   hasMenu('distributorSecondary') && { id: 'distributorSecondary', icon: '🏪', label: 'Distributor Secondary' },
   hasMenu('distributorSecondaryReport') && { id: 'distributorSecondaryReport', icon: '📈', label: 'Secondary Order Report' },
@@ -618,7 +620,6 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
             onDone={() => { setStockTakeDistributorId(null); setTab('dashboard') }}
           />
         )}
-        {tab === 'orderStatus' && <OrderStatus />}
         {tab === 'pendingVisits' && (
           <Card>
             <CH title="Pending Visits" sub={`${pendingVisits.length} customer(s) to visit`} />
