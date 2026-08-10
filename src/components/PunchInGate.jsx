@@ -4,6 +4,9 @@ import { useData } from '../hooks/useData.jsx'
 import { Btn } from './ui.jsx'
 import { haversineMeters } from '../lib/geo.js'
 import { resolveRuleClassification, resolvePunchGateRule } from '../lib/attendanceRules.js'
+import { localDateStr } from '../lib/period.js'
+import { computeDueStatus } from '../lib/stockTakeSchedule.js'
+import StockTakeEntry from '../pages/team/StockTakeEntry.jsx'
 import * as db from '../lib/db.js'
 
 const DEFAULT_DEVIATION_LIMIT_M = 20
@@ -29,8 +32,8 @@ function minutesBeforeDuty(dutyStartTime) {
 }
 
 export default function PunchInGate({ children }) {
-  const { currentUser, logout } = useAuth()
-  const { approvedAttendanceRules } = useData()
+  const { currentUser, role, logout } = useAuth()
+  const { approvedAttendanceRules, distributors } = useData()
   const [checked, setChecked] = useState(false)
   const [punched, setPunched] = useState(false)
   const [punching, setPunching] = useState(false)
@@ -41,6 +44,15 @@ export default function PunchInGate({ children }) {
   const [blocked, setBlocked] = useState(null) // { reason: 'early'|'deviation', ...details } — hard "Don't Allow"
   const [result, setResult] = useState(null) // duty status shown once, right after a fresh punch
 
+  // Sales Team (r5) only — Distributor Physical Stock Take gate. `overdueDistributors` is a queue:
+  // the block screen embeds StockTakeEntry for the first one, onDone pops it and moves to the next,
+  // and once empty the normal punch flow proceeds. Only matters on the not-yet-punched-today path
+  // (see the render logic below) — this never retroactively locks someone out after they've already
+  // punched in.
+  const [stockTakeChecked, setStockTakeChecked] = useState(false)
+  const [overdueDistributors, setOverdueDistributors] = useState([])
+  const [warnDistributors, setWarnDistributors] = useState([])
+
   useEffect(() => {
     if (!currentUser?.id) return
     db.fetchTodayPunch(currentUser.id).then(({ data, error }) => {
@@ -49,6 +61,37 @@ export default function PunchInGate({ children }) {
       setChecked(true)
     })
   }, [currentUser?.id])
+
+  useEffect(() => {
+    if (role?.id !== 'r5' || !currentUser?.member_id) { setStockTakeChecked(true); return }
+    const mid = currentUser.member_id
+    const myDistributors = (distributors || []).filter(d => d.type === 'Distributor' && (d.assignments || []).some(a => a.member_id === mid))
+    const distributorIds = myDistributors.map(d => d.id)
+    if (!distributorIds.length) { setStockTakeChecked(true); return }
+
+    (async () => {
+      const today = localDateStr(new Date())
+      // Bootstrap first — "frequency is calculated immediately from next punch in of team": an
+      // approved rule with no anchor yet gets one right now, before due-status is computed off it.
+      await db.bootstrapStockTakeAnchors(distributorIds, today)
+      const [{ data: rules }, { data: takes }] = await Promise.all([
+        db.fetchStockTakeRules({ distributorIds }),
+        db.fetchStockTakesForDistributors({ distributorIds }),
+      ])
+      const latestTakeDate = {}
+      ;(takes || []).forEach(t => { latestTakeDate[t.distributor_id] = t.take_date }) // ascending order — last write wins = latest
+      const overdue = [], warn = []
+      myDistributors.forEach(d => {
+        const rule = (rules || []).find(r => r.distributor_id === d.id)
+        const status = computeDueStatus(rule, latestTakeDate[d.id] || null, today)
+        if (status.state === 'overdue') overdue.push(d)
+        else if (status.state === 'warn') warn.push(d)
+      })
+      setOverdueDistributors(overdue)
+      setWarnDistributors(warn)
+      setStockTakeChecked(true)
+    })()
+  }, [role?.id, currentUser?.member_id, distributors])
 
   const submitPunch = async (lat, lng, distanceM, locationFlag, flagReason) => {
     setPunching(true)
@@ -168,9 +211,35 @@ export default function PunchInGate({ children }) {
 
   if (!checked) return null
   if (punched && !result) return children
+  if (!stockTakeChecked) return null
 
   const cardStyle = { background: '#fff', borderRadius: 16, padding: 28, maxWidth: 360, width: '100%', textAlign: 'center' }
   const wrapStyle = { minHeight: '100vh', background: '#0f172a', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, fontFamily: "-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif" }
+  const wideCardStyle = { background: '#fff', borderRadius: 16, padding: 20, maxWidth: 640, width: '100%', maxHeight: '92vh', overflowY: 'auto' }
+
+  if (overdueDistributors.length > 0) {
+    const current = overdueDistributors[0]
+    return (
+      <div style={wrapStyle}>
+        <div style={wideCardStyle}>
+          <div style={{ textAlign: 'center', marginBottom: 16 }}>
+            <div style={{ fontSize: 36, marginBottom: 6 }}>📋</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: '#ef4444' }}>Physical Stock Take Required</div>
+            <div style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
+              {overdueDistributors.length > 1
+                ? `${overdueDistributors.length} distributors are overdue — complete each to punch in.`
+                : 'This distributor\'s stock take is overdue — complete it to punch in.'}
+            </div>
+          </div>
+          <StockTakeEntry
+            distributor={current}
+            memberId={currentUser.member_id}
+            onDone={() => setOverdueDistributors(prev => prev.slice(1))}
+          />
+        </div>
+      </div>
+    )
+  }
 
   if (result) {
     const isLate = result.status === 'late'
@@ -250,6 +319,12 @@ export default function PunchInGate({ children }) {
         <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 20 }}>
           {new Date().toLocaleDateString('en-IN', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
         </div>
+
+        {warnDistributors.length > 0 && (
+          <div style={{ fontSize: 11, color: '#92400e', background: '#fef3c7', borderRadius: 8, padding: '8px 10px', marginBottom: 16, textAlign: 'left' }}>
+            ⚠ Stock take due soon: {warnDistributors.map(d => d.name).join(', ')}
+          </div>
+        )}
 
         <Btn v="pri" full disabled={punching} onClick={() => doPunch(true)}>
           {punching ? 'Punching in...' : 'Punch In'}

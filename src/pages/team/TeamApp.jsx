@@ -14,6 +14,9 @@ import PaymentEntryForm from '../shared/PaymentEntryForm.jsx'
 import DistributorOrder from '../shared/DistributorOrder.jsx'
 import DistributorSecondary from '../shared/DistributorSecondary.jsx'
 import DistributorSecondaryReport from '../shared/DistributorSecondaryReport.jsx'
+import DistributorStockSalesReport from '../shared/DistributorStockSalesReport.jsx'
+import StockTakeEntry from './StockTakeEntry.jsx'
+import StockTakeScheduleCard from '../../components/StockTakeScheduleCard.jsx'
 import OrderStatus from '../shared/OrderStatus.jsx'
 
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
@@ -49,6 +52,7 @@ export default function TeamApp() {
   const [pendingDetail, setPendingDetail] = useState(null)
   const [docWizardLead, setDocWizardLead] = useState(null)
 const [paymentLead, setPaymentLead] = useState(null)
+  const [stockTakeDistributorId, setStockTakeDistributorId] = useState(null) // voluntary/early entry via the 'stockTakeEntry' tab
 
   const mid  = currentUser?.member_id
   const todayStr = new Date().toISOString().split('T')[0]
@@ -208,6 +212,8 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
   hasMenu('distributorOrder') && { id: 'distributorOrder', icon: '🛒', label: 'Distributor Order' },
   hasMenu('distributorSecondary') && { id: 'distributorSecondary', icon: '🏪', label: 'Distributor Secondary' },
   hasMenu('distributorSecondaryReport') && { id: 'distributorSecondaryReport', icon: '📈', label: 'Secondary Order Report' },
+  hasMenu('stockTakeEntry') && { id: 'stockTakeEntry', icon: '📋', label: 'Physical Stock Take' },
+  hasMenu('distributorStockSalesReport') && { id: 'distributorStockSalesReport', icon: '📦', label: 'Stock & Sales Report' },
 ].filter(Boolean)
   const TABS = [
     hasMenu('dashboard')    && { id: 'dashboard',    icon: '🏠', label: 'Home'     },
@@ -350,6 +356,7 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
     }}
   />
 )}
+            <StockTakeScheduleCard mid={mid} distributors={customers} />
             <MyAttendanceCalendar compact />
           </>
         )}
@@ -580,6 +587,14 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
         {tab === 'distributorOrder' && <DistributorOrder />}
         {tab === 'distributorSecondary' && <DistributorSecondary />}
         {tab === 'distributorSecondaryReport' && <DistributorSecondaryReport navParams={reportParams} />}
+        {tab === 'distributorStockSalesReport' && <DistributorStockSalesReport />}
+        {tab === 'stockTakeEntry' && (
+          <StockTakePicker
+            mid={mid} distributors={customers}
+            distributorId={stockTakeDistributorId} setDistributorId={setStockTakeDistributorId}
+            onDone={() => { setStockTakeDistributorId(null); setTab('dashboard') }}
+          />
+        )}
         {tab === 'orderStatus' && <OrderStatus />}
         {tab === 'pendingVisits' && (
           <Card>
@@ -740,6 +755,31 @@ function GoalEntrySheet({ member, param, goal, period, products, categories, cus
   )
 }
 
+
+// Voluntary/early physical stock take, reached via the 'stockTakeEntry' MORE_ITEMS tab (the forced
+// version lives directly inside PunchInGate.jsx instead, for the overdue case). Pick a distributor
+// first, then hand off to the same StockTakeEntry form.
+function StockTakePicker({ mid, distributors, distributorId, setDistributorId, onDone }) {
+  const myDistributors = (distributors || []).filter(d => d.type === 'Distributor' && (d.assignments || []).some(a => a.member_id === mid))
+  const selected = myDistributors.find(d => d.id === distributorId)
+
+  if (selected) {
+    return <StockTakeEntry distributor={selected} memberId={mid} onDone={onDone} onCancel={() => setDistributorId(null)} />
+  }
+
+  return (
+    <Card>
+      <CH title="Physical Stock Take" sub="Pick a distributor" />
+      {myDistributors.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No distributors assigned to you</div>}
+      {myDistributors.map(d => (
+        <div key={d.id} onClick={() => setDistributorId(d.id)} style={{ padding: '12px 14px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>{d.name}</div>
+          <div style={{ fontSize: 11, color: '#9ca3af' }}>{d.area || '—'}</div>
+        </div>
+      ))}
+    </Card>
+  )
+}
 
 function LeadListSheet({ stage, leads, onSelectLead, onClose }) {
 const stageLabel = { interested: 'Interested', not_interested: 'Not Interested', final: 'Final', distributor: 'Distributor Created', visited: 'Total Visited' }[stage] || stage

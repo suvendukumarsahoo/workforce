@@ -265,6 +265,90 @@ arrive unlocked, pre-filled to whichever Today/Month/Year tab was active. `TeamA
 **`src/lib/printSecondaryOrder.js`** — single-order PDF + batch ZIP (`jszip`, real individual PDF
 files, not one combined document). **`src/lib/printDaySummary.js`** — per-batch/day-summary PDF.
 
+## Module: Distributor Physical Stock Take & Stock/Sales Report
+
+A distributor's stock is tracked by **scheduled physical counts**, not an auto-derived ledger — a
+Manager sets a stock-take cadence per distributor, HR must approve it, and once approved it drives
+both a schedule on the Sales Team member's own page and a hard block on that day's punch-in once a
+count goes overdue.
+
+**Schedule (`distributor_stock_take_rules`, one row per distributor)** — Manager authors/edits via
+`src/pages/manager/StockTakeSchedule.jsx` (menu `stockTakeSchedule`): Frequency
+(Weekly/Fortnightly/Monthly, fixed 7/14/30-day intervals — Monthly is *not* calendar-month-aware, by
+explicit choice) + a Deviation Limit in days (1–7, the grace window past the due date). **Not a
+one-time/locked setup** — editable any time. Every edit writes only to the row's `pending_*`
+columns (`db.upsertStockTakeRule`) and fires an HR notification
+(`createNotification({target_roles:['r4']})`) — the currently-**active** (last-approved)
+`frequency`/`deviation_limit_days` keeps governing the gate/schedule undisturbed until HR acts, so
+an in-flight proposal can never silently override what's actually in effect. HR (+ Admin) approves
+via `src/pages/shared/StockTakeRuleApprovals.jsx` (menu `stockTakeRuleApprovals`,
+`db.approveStockTakeRuleChange`/`rejectStockTakeRuleChange`) — approving copies `pending_*` into the
+active columns and clears them; rejecting just clears `pending_*`, active config (if any) untouched.
+
+**Cycle anchor**: a newly-approved schedule doesn't start counting from the approval moment — it
+starts from the covering rep's *next punch-in* ("frequency is calculated immediately from next
+punch in of team"). `first_anchor_date` sits on the rule row for exactly this bootstrap; once a real
+stock take exists for that distributor, its `take_date` always wins over `first_anchor_date` in due-
+date math (`src/lib/stockTakeSchedule.js`'s `computeDueStatus`) — the column becomes moot after the
+first count. `db.bootstrapStockTakeAnchors` is called opportunistically (from `PunchInGate.jsx`'s
+stock-take check, idempotent, no scheduled job) rather than needing a cron.
+
+**Punch-in gate (`src/components/PunchInGate.jsx`, r5/Sales Team only)** — a new `useEffect`
+parallel to the existing punch-check one resolves the rep's own distributors, fetches their rules +
+latest stock takes, and runs `computeDueStatus` per distributor. `state==='overdue'` (past the
+deviation deadline) **blocks that day's punch-in entirely**, replacing the normal punch card with a
+full-screen "Physical Stock Take Required" view that embeds `StockTakeEntry` directly (no routing —
+`PunchInGate` sits above `TeamApp`'s own tab state, so it renders the form itself, queue-style: one
+overdue distributor at a time, `onDone` pops to the next). `state==='warn'` (within 2 days of the
+deadline) is a soft, non-blocking banner on the normal punch card. This only affects the
+not-yet-punched-today path — never retroactively locks someone out after they've already punched in.
+
+**Physical count entry (`src/pages/team/StockTakeEntry.jsx`)** — needs no approval (ground-truth
+data capture, not a contestable figure). **Exhaustive by design**: every active product gets a line,
+including explicit 0s — a product simply absent from a take means "not recounted," a distinct fact
+from "counted as zero" that the report must preserve (see below). Reused three ways: embedded in
+`PunchInGate`'s forced overdue screen, `TeamApp.jsx`'s `stockTakeEntry` menu tab (voluntary/early
+counts, via a distributor-picker wrapper), and `src/components/StockTakeScheduleCard.jsx` (the
+always-visible, non-blocking schedule card on the Sales Team's own Home tab, "Take Stock Now" per
+row — same due-status logic as the gate, so the two can never disagree). Take date is always the
+real current local date (`createStockTake`'s count-then-pad `PST-DDMMYYYY-NN`, same local-date
+convention as `SO-`/`LD-`) — never user-editable.
+
+**Geofencing (distributor proximity, separate from the punch-in overdue gate above)** — on save,
+`StockTakeEntry.jsx` captures the rep's current position and compares it to the distributor's
+`confirmed_latitude`/`confirmed_longitude` via `haversineMeters` (`src/lib/geo.js`, same helper
+`PunchInGate.jsx` uses for HQ deviation). `distributor_stock_takes` carries `lat`/`lng`/`distance_m`/
+`location_flag` (mirrors `attendance_punches`' own lat/lng/distance/flag columns) so every count's
+actual location is on record regardless of outcome. Currently **soft-warn only**
+(`GEOFENCE_HARD_BLOCK = false` — a single named constant, deliberately kept as the one line to flip
+when this becomes a real block): outside `GEOFENCE_RADIUS_M` (100m) shows one combined toast
+("Stock take saved · ⚠ Xm from Y's location — recorded anyway") and still saves — two separate
+`showToast()` calls back-to-back was tried first and silently lost the warning (the app only shows
+one toast at a time, second call clobbers the first before it's readable), so the warning is folded
+into the single post-save toast instead. A distributor with no confirmed coordinates on file skips
+the check entirely (allowed through unverified — nothing to check against, not a rep's problem to
+fix a Distributor-master data gap).
+
+**Stock & Sales Report (`src/pages/shared/DistributorStockSalesReport.jsx`, menu
+`distributorStockSalesReport`, same 3-way audience as the Secondary Order Report)** — periods are
+anchored to **real stock-take dates**, not a user-chosen range (no date-range filter; Distributor +
+Product + Sales Rep instead). For each distributor's stock takes in `take_date` order:
+**Closing** = that take's physical count (ground truth, never calculated); **Opening** = the
+*previous* period's Closing (0 before the very first take — there is no manual baseline in this
+design); **Receipts** = auto-derived from `distributor_orders` where `delivered_at` is set (Journey
+Phase 3's Delivery Complete — *not* invoice approval) in between, via
+`db.fetchDeliveredOrdersForStockReport`; **Sales** is a *derived plug figure*,
+`Opening + Receipts − Closing` — reconciling that derived number against the real Distributor
+Secondary sales data itemwise is explicit **future work ("a match design"), not built**. All figures
+are already base-unit-equivalent (deliveries via `distributor_order_items.final_qty`; counts via
+`unitConversion.js`'s `toBaseQty`, same as Distributor Secondary's cart) — "report in the highest
+unit" is just display formatting: base-unit qty as-is, labeled with the product's Base Unit, rounded
+to 1 decimal (`stockReport.js`'s `round1`). `computeStockTakePeriods` (`src/lib/stockReport.js`,
+pure, mirrors `achievementEngine.js`'s shape) carries the last known Closing forward across any take
+that skipped a product, rather than treating a skip as zero. Summary tab = latest period per
+(distributor, product); Detail tab = every period ever recorded. Export reuses
+`printSecondaryReport.js`'s generic `downloadReportPdf`/`downloadReportExcel` as-is.
+
 ## Module: Attendance & HR
 
 **Punch-In System** — every employee (all 7 roles) punches in once per calendar day before reaching
@@ -298,11 +382,24 @@ mapping itself, via `attendance_rule_users`, decoupled from the rule row). 4 rul
 violet Pending / amber Today), not the original pastel palette.
 
 **HR Dashboard vs Attendance Approval (split)**:
-- **`Attendance.jsx`** (menu `attendance`) is now an HR Dashboard for HR/Admin: 5 stat tiles, a
-  `AttendanceTrendChart` (Present/Absent/Late per day), Employees-by-Role donut, Recent Attendance
-  table, Manpower Production Issues card, and the **Attendance Roster** — summary rows only (P/X/A/
-  Rate + badges), tapping an employee opens a `RosterCalendarSheet` with their full month calendar;
-  tapping a day inside that opens a **read-only** `AttendanceDayDetailSheet` (no approve buttons).
+- **`Attendance.jsx`** (menu `attendance`) is now an HR Dashboard for HR/Admin, restyled after a
+  reference dashboard (Tipsoi) the user pointed at — same light Card/Tile styling as the rest of the
+  app, not a dark reskin: 4 ring-style hero stat tiles (`RingStat`, plain SVG progress ring + %, not
+  recharts — six-plus of these can sit in one row) for Present/Absent/On Time/Late (Present = punched
+  in today, independent of approval status — On Time + Late always sums back to it), plus plain
+  `Tile`s for Total Employees/Pending Approvals below; **Role-Wise Attendance** — one compact
+  center-labeled donut per role (`RoleDonut`), all fitting one row, shared legend below — stands in
+  for the reference's per-department donuts since WorkForce has no Department field, Role is the
+  closest existing grouping; **Late Today** / **Absent Today** two-column card (the reference's
+  second card is "On Leave," which has no real equivalent — no leave/holiday calendar in this app —
+  so "Absent Today" fills that slot with real data instead), each row with avatar, role, Line Manager
+  (resolved via `users.manager_id`, blank when unset) and a per-user monthly recurrence count;
+  **Attendance Feed** — simplified chronological punch list (avatar, name, time, relative "Xm/h/d
+  ago"), no status badge; then, kept unchanged below all of the above: `AttendanceTrendChart`
+  (Present/Absent/Late per day), Manpower Production Issues card, and the **Attendance Roster** —
+  summary rows only (P/X/A/Rate + badges), tapping an employee opens a `RosterCalendarSheet` with
+  their full month calendar; tapping a day inside that opens a **read-only** `AttendanceDayDetailSheet`
+  (no approve buttons).
 - **`AttendanceApprovals.jsx`** (menu `attendanceApprovals`, HR/Admin-only) — Stage 1 + Stage 2
   approval queues, moved off the dashboard entirely. Opens the same `AttendanceDayDetailSheet`
   (`src/components/AttendanceDayDetailSheet.jsx`, shared component) but **fully actionable**

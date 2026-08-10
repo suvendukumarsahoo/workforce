@@ -1872,3 +1872,173 @@ export async function fetchSecondaryOrders(dateRange = null) {
   const { data, error } = await query
   return { data, error }
 }
+
+// ─── DISTRIBUTOR STOCK TAKE (scheduled physical counts, feeds the Stock & Sales Report) ────────
+// Schedule (distributor_stock_take_rules) is a distributor-level policy: Manager sets/edits it
+// (always writing to the pending_* columns so the currently-active, already-approved config keeps
+// governing the punch-in gate/schedule until HR acts — not a one-time lock, but never silently
+// overwritten mid-edit either), HR approves via StockTakeRuleApprovals.jsx. Physical counts
+// themselves (distributor_stock_takes/_items) need no approval — they're ground-truth data capture,
+// not a figure someone could contest.
+
+export async function fetchStockTakeRules({ distributorIds }) {
+  if (!distributorIds?.length) return { data: [], error: null }
+  const { data, error } = await supabase
+    .from('distributor_stock_take_rules')
+    .select('*, distributor:distributors(id,name)')
+    .in('distributor_id', distributorIds)
+  return { data, error }
+}
+
+export async function upsertStockTakeRule({ distributor_id, frequency, deviation_limit_days, submittedBy }) {
+  const { data, error } = await supabase
+    .from('distributor_stock_take_rules')
+    .upsert({
+      distributor_id,
+      pending_frequency: frequency, pending_deviation_limit_days: deviation_limit_days,
+      pending_submitted_by: submittedBy, pending_submitted_at: new Date().toISOString(),
+      rejection_reason: null, created_by: submittedBy, updated_at: new Date().toISOString(),
+    }, { onConflict: 'distributor_id', ignoreDuplicates: false })
+    .select()
+    .single()
+  if (!error) {
+    await createNotification({
+      target_roles: ['r4'],
+      title: 'Stock Take Schedule change pending approval',
+      body: `${frequency} / ${deviation_limit_days}-day deviation limit proposed for distributor ${distributor_id}`,
+      type: 'stock_take_rule_pending',
+      ref_id: distributor_id,
+    })
+  }
+  return { data, error }
+}
+
+// distributor_stock_take_rules.pending_submitted_by has no queryable FK to `users` embeddable
+// alongside distributor — resolve client-side against the already-loaded `users` list instead,
+// same convention as secondary_orders.member_id.
+export async function fetchPendingStockTakeRuleChanges() {
+  const { data, error } = await supabase
+    .from('distributor_stock_take_rules')
+    .select('*, distributor:distributors(id,name)')
+    .not('pending_frequency', 'is', null)
+    .order('pending_submitted_at', { ascending: true })
+  return { data, error }
+}
+
+export async function approveStockTakeRuleChange(id, approvedBy) {
+  const { data: row, error: fetchError } = await supabase
+    .from('distributor_stock_take_rules')
+    .select('pending_frequency, pending_deviation_limit_days')
+    .eq('id', id)
+    .single()
+  if (fetchError) return { data: null, error: fetchError }
+  const { data, error } = await supabase
+    .from('distributor_stock_take_rules')
+    .update({
+      frequency: row.pending_frequency, deviation_limit_days: row.pending_deviation_limit_days,
+      status: 'approved', approved_by: approvedBy, approved_at: new Date().toISOString(),
+      pending_frequency: null, pending_deviation_limit_days: null,
+      pending_submitted_by: null, pending_submitted_at: null, rejection_reason: null,
+    })
+    .eq('id', id)
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function rejectStockTakeRuleChange(id, approvedBy, reason) {
+  const { data, error } = await supabase
+    .from('distributor_stock_take_rules')
+    .update({
+      pending_frequency: null, pending_deviation_limit_days: null,
+      pending_submitted_by: null, pending_submitted_at: null,
+      rejection_reason: reason || null,
+    })
+    .eq('id', id)
+    .select()
+    .single()
+  return { data, error }
+}
+
+// All completed physical stock takes for the given distributors, oldest first — feeds both the
+// Stock & Sales Report (stockReport.js builds consecutive-take periods from this) and the punch-in
+// gate's due-date computation (stockTakeSchedule.js's computeDueStatus wants the latest per
+// distributor, derived client-side from this same list).
+export async function fetchStockTakesForDistributors({ distributorIds }) {
+  if (!distributorIds?.length) return { data: [], error: null }
+  const { data, error } = await supabase
+    .from('distributor_stock_takes')
+    .select('*, items:distributor_stock_take_items(*, product:products(id,name,unit))')
+    .in('distributor_id', distributorIds)
+    .order('take_date', { ascending: true })
+  return { data, error }
+}
+
+// header: { distributor_id, member_id }. items: every active product's { product_id, category_id,
+// physical_qty (base-unit-equivalent), entered_unit, entered_qty } — including explicit 0s, unlike
+// the Distributor Secondary cart's qty>0 filter, since an exhaustive physical count is the whole
+// point (a product simply absent from a take means "not recounted," not "zero").
+export async function createStockTake(header, items) {
+  const today = new Date()
+  const dd = String(today.getDate()).padStart(2, '0')
+  const mm = String(today.getMonth() + 1).padStart(2, '0')
+  const yyyy = today.getFullYear()
+  const dateStr = `${dd}${mm}${yyyy}`
+  // Local calendar date, not toISOString() — same IST-boundary reasoning as createSecondaryOrder.
+  const takeDate = `${yyyy}-${mm}-${dd}`
+  const { count } = await supabase
+    .from('distributor_stock_takes')
+    .select('id', { count: 'exact', head: true })
+    .like('id', `PST-${dateStr}-%`)
+  const seq = String((count || 0) + 1).padStart(2, '0')
+  const id = `PST-${dateStr}-${seq}`
+  const { data: take, error } = await supabase
+    .from('distributor_stock_takes')
+    .insert({ id, ...header, take_date: takeDate })
+    .select()
+    .single()
+  if (error) return { data: null, error }
+  const itemRows = items.map(it => ({
+    take_id: take.id, product_id: it.product_id,
+    physical_qty: it.physical_qty, entered_unit: it.entered_unit || 'base', entered_qty: it.entered_qty ?? it.physical_qty,
+  }))
+  const { error: itemError } = await supabase.from('distributor_stock_take_items').insert(itemRows)
+  return { data: take, error: itemError }
+}
+
+// Bootstrap only — "frequency is calculated immediately from next punch in of team": an approved
+// rule's cycle doesn't start ticking from the approval moment, it starts from the covering rep's
+// next punch-in. Called opportunistically from PunchInGate's stock-take check; idempotent (only
+// ever touches rows where first_anchor_date is still null), no scheduled job needed. Once a real
+// stock take exists for a distributor, its take_date always wins over this column in
+// stockTakeSchedule.js's computeDueStatus, so this value becomes moot after the first count.
+export async function bootstrapStockTakeAnchors(distributorIds, today) {
+  if (!distributorIds?.length) return { error: null }
+  const { error } = await supabase
+    .from('distributor_stock_take_rules')
+    .update({ first_anchor_date: today })
+    .in('distributor_id', distributorIds)
+    .eq('status', 'approved')
+    .is('first_anchor_date', null)
+  return { error }
+}
+
+// Every delivered order (Journey Phase 3's "Delivery Complete", distributor_orders.delivered_at
+// set) for the given distributors, all-time — feeds the Stock & Sales Report's Receipts side. No
+// server-side date filter: delivered_at is a full timestamptz written via toISOString(), so
+// bucketing by local calendar date against a date-only from/to boundary happens client-side in
+// stockReport.js via period.js's localDateStr(), never a server-side toISOString() date slice (see
+// CLAUDE.md's IST-boundary bug pattern).
+// No `member:members(...)` embed by default — distributor_orders has 2 FKs into other tables
+// (member_id, manager_id) so PostgREST needs explicit constraint aliasing; fetchOrdersAwaitingInvoice
+// above already established the working alias (`distributor_orders_member_id_fkey`), reused here.
+export async function fetchDeliveredOrdersForStockReport({ distributorIds }) {
+  if (!distributorIds?.length) return { data: [], error: null }
+  const { data, error } = await supabase
+    .from('distributor_orders')
+    .select('*, distributor:distributors(id,name), member:members!distributor_orders_member_id_fkey(id,name), items:distributor_order_items(*, product:products(id,name))')
+    .in('distributor_id', distributorIds)
+    .not('delivered_at', 'is', null)
+    .order('delivered_at', { ascending: false })
+  return { data, error }
+}

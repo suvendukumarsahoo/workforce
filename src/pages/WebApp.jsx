@@ -39,6 +39,9 @@ import StockUpdate from './shared/StockUpdate.jsx'
 import ProductionIssues from './shared/ProductionIssues.jsx'
 import DistributorPresenceMap from './shared/DistributorPresenceMap.jsx'
 import DistributorSecondaryReport from './shared/DistributorSecondaryReport.jsx'
+import DistributorStockSalesReport from './shared/DistributorStockSalesReport.jsx'
+import StockTakeSchedule from './manager/StockTakeSchedule.jsx'
+import StockTakeRuleApprovals from './shared/StockTakeRuleApprovals.jsx'
 
 const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard',        icon:'📊', sec:'Overview'  },
@@ -73,6 +76,9 @@ const ALL_MENUS = [
 { id:'geoBusinessView', label:'Geographical Business View', icon:'🗺️', sec:'Distributor Functions' },
 { id:'journeyApprovals', label:'Journey Approvals', icon:'🏁', sec:'Distributor Functions' },
 { id:'distributorSecondaryReport', label:'Distributor Secondary Report', icon:'📈', sec:'Distributor Functions' },
+{ id:'stockTakeSchedule', label:'Stock Take Schedule', icon:'🗓️', sec:'Distributor Functions' },
+{ id:'stockTakeRuleApprovals', label:'Stock Take Approvals', icon:'✅', sec:'Distributor Functions' },
+{ id:'distributorStockSalesReport', label:'Distributor Stock & Sales Report', icon:'📦', sec:'Distributor Functions' },
 { id:'assignedLoads', label:'My Loads', icon:'🚚', sec:'Overview' },
 { id:'driverLoadingConfirm', label:'Confirm Loading', icon:'📦', sec:'Overview' },
 { id:'driverJourney', label:'Journey', icon:'🧭', sec:'Overview' },
@@ -108,6 +114,9 @@ vehicleLiveMap: VehicleLiveMap,
 geoBusinessView: DistributorPresenceMap,
 journeyApprovals: JourneyApprovals,
 distributorSecondaryReport: DistributorSecondaryReport,
+stockTakeSchedule: StockTakeSchedule,
+stockTakeRuleApprovals: StockTakeRuleApprovals,
+distributorStockSalesReport: DistributorStockSalesReport,
 stockUpdate: StockUpdate,
 productionIssues: ProductionIssues,
 assignedLoads: AssignedLoads,

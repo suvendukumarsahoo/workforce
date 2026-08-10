@@ -8,6 +8,22 @@
 
 const pad2 = n => String(n).padStart(2, '0')
 
+// Local calendar date string ('YYYY-MM-DD') for any timestamp/Date — for comparing a timestamptz
+// column (e.g. distributor_orders.delivered_at, written via toISOString()) against a date-only
+// boundary ('YYYY-MM-DD') without landing on the wrong day near midnight IST. Never
+// `new Date(ts).toISOString().slice(0,10)` — see this file's header comment.
+export function localDateStr(ts) {
+  const d = new Date(ts)
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+
+// 'YYYY-MM-DD' + n days (n may be negative), staying in local calendar terms throughout.
+export function addDaysStr(dateStr, n) {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const next = new Date(y, m - 1, d + n)
+  return `${next.getFullYear()}-${pad2(next.getMonth() + 1)}-${pad2(next.getDate())}`
+}
+
 export function getCurrentPeriod() {
   const d = new Date()
   return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`
