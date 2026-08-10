@@ -61,6 +61,15 @@ const [paymentLead, setPaymentLead] = useState(null)
     d.next_followup_date && d.next_followup_date <= todayStr
   )
   const pendingVisits = (customers || []).filter(d => (d.assignedTo || []).includes(mid) && d.contact_today)
+  // Distributor pipeline stages that need a real action from this rep right now (Manager just
+  // approved a Final lead → registration_pending needs docs submitted; payment_pending needs
+  // payment details entered) — the other in-progress stages (documents_submitted,
+  // documentation_verification, payment_verification) are all "waiting on Admin," nothing for the
+  // rep to do yet. Previously only surfaced as a small clickable legend label under the My Pipeline
+  // donut on TeamSnapshot — easy to miss entirely, since nothing else on the page hints anything is
+  // waiting. This card is the second, hard-to-miss path to the same LeadDetailSheet.
+  const actionNeededLeads = (customers || []).filter(d => (d.assignedTo || []).includes(mid) && ['registration_pending', 'payment_pending'].includes(d.lead_stage))
+  const actionNeededLabel = { registration_pending: 'Submit registration documents', payment_pending: 'Enter payment details' }
   const p    = (params || {})[mid] || {}
   const g    = (goals  || {})[mid] || { status: 'draft' }
   const sal  = (salaries || []).find(s => s.member_id === mid)
@@ -275,6 +284,20 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
         {/* DASHBOARD */}
         {tab === 'dashboard' && (
           <>
+            {actionNeededLeads.length > 0 && (
+              <Card style={{ background: '#eff6ff', border: '1px solid #bfdbfe' }}>
+                <CH title="Action Needed" sub={`${actionNeededLeads.length} distributor(s) waiting on you`} />
+                {actionNeededLeads.map(d => (
+                  <div key={d.id} onClick={() => setSelectedLead(d)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid #dbeafe', cursor: 'pointer' }}>
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>{d.name}</div>
+                      <div style={{ fontSize: 11, color: '#1e40af', marginTop: 2 }}>{actionNeededLabel[d.lead_stage]}</div>
+                    </div>
+                    <div style={{ fontSize: 12, color: '#9ca3af' }}>›</div>
+                  </div>
+                ))}
+              </Card>
+            )}
             <TeamSnapshot
               mid={mid}
               invoices={invoices}
