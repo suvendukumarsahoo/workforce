@@ -85,12 +85,16 @@ const { products, categories, showToast } = useData()
     return { label: 'Vehicle Allocated — Not Started', color: '#6b7280' }
   }
 
-  const loadedStatus = (itemId) => {
-    const p = loadItemProgress[itemId]
+  // "X/Y" against the item's own final_qty, not just the raw loaded count — this is a live figure
+  // (loadItemProgress is only ever a snapshot at the moment the Sheet opened, but the fraction
+  // itself matches exactly what LoadingScreen.jsx's own active loading view shows: "Loaded: X / Y").
+  const loadedStatus = (item) => {
+    const p = loadItemProgress[item.id]
+    const frac = `${p?.loaded_qty || 0}/${item.final_qty}`
     if (!p) return { label: '—', color: '#9ca3af' }
-    if (p.status === 'complete') return { label: `✓ Loaded ${p.loaded_qty}`, color: '#10b981' }
-    if (p.status === 'paused') return { label: `⏸ Paused ${p.loaded_qty}`, color: '#ef4444' }
-    return { label: `Loading ${p.loaded_qty}...`, color: '#f59e0b' }
+    if (p.status === 'complete') return { label: `✓ ${frac}`, color: '#10b981' }
+    if (p.status === 'paused') return { label: `⏸ ${frac}`, color: '#ef4444' }
+    return { label: `${frac} loading...`, color: '#f59e0b' }
   }
 
   const categoryTiles = () => {
@@ -252,7 +256,7 @@ const { products, categories, showToast } = useData()
                 </thead>
                 <tbody>
                   {(selectedLoad.items || []).filter(it => !it.cancelled).map(it => {
-                    const ls = loadedStatus(it.id)
+                    const ls = loadedStatus(it)
                     return (
                       <tr key={it.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                         <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{productName(it.product_id)}</td>
