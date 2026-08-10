@@ -32,9 +32,10 @@ const [loadedQtyMap, setLoadedQtyMap] = useState({})
   useEffect(() => {
     let cancelled = false
     const poll = async () => {
-      const itemIds = activeItems.map(it => it.id)
-      if (itemIds.length === 0) return
-      const { data } = await db.fetchLoadItemProgress ? await db.fetchLoadItemProgress(order.allocation_id || '') : { data: [] }
+      // Not allocated to a vehicle yet — nothing to poll (fetchLoadItemProgress('') would just
+      // query allocation_id='' and silently return nothing, not actually skip the fetch).
+      if (!order.allocation_id) { setLoadedQtyMap({}); return }
+      const { data } = await db.fetchLoadItemProgress(order.allocation_id)
       if (cancelled) return
       const map = {}
       ;(data || []).forEach(p => { map[p.order_item_id] = p.loaded_qty })
@@ -43,7 +44,7 @@ const [loadedQtyMap, setLoadedQtyMap] = useState({})
     poll()
     const interval = setInterval(poll, 12000)
     return () => { cancelled = true; clearInterval(interval) }
-  }, [order.id])
+  }, [order.id, order.allocation_id])
 
   const fillRate = (() => {
     const totalItems = activeItems.length || 1
@@ -165,11 +166,21 @@ const [loadedQtyMap, setLoadedQtyMap] = useState({})
             </thead>
             <tbody>
               {activeItems.map(it => {
-                const statusLabel = it.availability === 'Available' ? 'Picking Done'
+                // it.availability alone only ever says "Picking Done," even once the item is
+                // actually loaded onto the vehicle — the Loading column's own progress bar (right
+                // next to this one) already tracks real loaded_qty via loadedQtyMap, so once an
+                // item is Available this reads that instead of leaving the label stuck at Picking
+                // Done forever. Same >= final_qty completion condition LoadingScreen.jsx itself uses.
+                const loadedQty = loadedQtyMap[it.id] || 0
+                const fullyLoaded = it.final_qty > 0 && loadedQty >= it.final_qty
+                const partiallyLoaded = loadedQty > 0 && !fullyLoaded
+                const statusLabel = it.availability === 'Available'
+                  ? (fullyLoaded ? 'Loaded' : partiallyLoaded ? `Loading (${loadedQty}/${it.final_qty})` : 'Picking Done')
                   : it.availability === 'Wait' ? `Wait${it.wait_days ? ` (${it.wait_days}d)` : ''}`
                   : it.availability === 'Unavailable' ? 'Unavailable'
                   : 'Pending'
-                const statusColor = it.availability === 'Available' ? '#10b981'
+                const statusColor = it.availability === 'Available'
+                  ? (fullyLoaded ? '#2563eb' : partiallyLoaded ? '#f59e0b' : '#10b981')
                   : it.availability === 'Wait' ? '#f59e0b'
                   : it.availability === 'Unavailable' ? '#ef4444'
                   : '#9ca3af'
