@@ -109,7 +109,15 @@ any non-Available item) → `ready_for_load` (all Available) — Admin creates a
 (`DriverOrderConfirmTile.jsx` — per-order load-qty confirm), `driverJourney`
 (`AllocationJourneyTile.jsx` — invoice checklist → journey → per-stop delivery → return-to-base).
 `LoadingScreen.jsx`: per-stop→per-item→Lift Stack→qty÷lift button grid→Pause/Resume→auto-complete→
-driver-confirmation poll→next stop. Not globally persistent across navigation (by design).
+driver-confirmation poll→next stop. Not globally persistent across navigation (by design). The
+actual stop-advance/loading_complete **write** happens inside `db.driverConfirmOrderLoaded` itself
+(fired the moment the driver confirms) — not inside `LoadingScreen.jsx`'s poll, which only
+re-syncs its own local UI to whatever already happened. Fixed a real stuck-forever bug this way:
+the write used to live only in that poll, which stopped running the moment the WM closed the
+screen, so a driver confirming while the WM wasn't watching left the allocation at
+`loading_in_progress` forever even though every order was already `driver_confirmed` — no manual
+DB fix needed for existing stuck rows either, `db.fetchInProgressAllocations` self-heals any
+allocation whose orders are all already `driver_confirmed` on every load.
 
 **Driver lock-out**: a driver is locked (unavailable in Allocate Vehicle's dropdown) iff they have
 any `vehicle_allocations` row with `status != 'completed'` — derived purely from that column, no

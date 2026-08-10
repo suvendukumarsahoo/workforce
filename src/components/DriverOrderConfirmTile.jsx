@@ -25,7 +25,17 @@ export default function DriverOrderConfirmTile() {
 
   const confirm = async () => {
     setBusy(true)
-    await db.driverConfirmOrderLoaded(reviewing.order.id)
+    const { allocationCompleted, allocationId } = await db.driverConfirmOrderLoaded(reviewing.order.id)
+    if (allocationCompleted) {
+      db.logActivity(currentUser?.id, 'update', 'allocation', `Loading complete — allocation #${allocationId}`, allocationId)
+      db.createNotification({
+        target_roles: ['r1', 'r3'],
+        title: 'Loading Complete',
+        body: `Load #${allocationId} — ready for invoicing`,
+        type: 'loading_complete',
+        ref_id: String(allocationId),
+      })
+    }
     setBusy(false)
     setReviewing(null)
     await loadData()

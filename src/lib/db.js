@@ -316,25 +316,9 @@ export async function updateLoadItemProgress(id, updates) {
   return { data, error }
 }
 
-export async function advanceStopIndex(allocationId, newIndex) {
-  const { data, error } = await supabase
-    .from('vehicle_allocations')
-    .update({ current_stop_index: newIndex })
-    .eq('id', allocationId)
-    .select()
-    .single()
-  return { data, error }
-}
-
-export async function markLoadingComplete(allocationId) {
-  const { data, error } = await supabase
-    .from('vehicle_allocations')
-    .update({ status: 'loading_complete', loading_completed_at: new Date().toISOString() })
-    .eq('id', allocationId)
-    .select()
-    .single()
-  return { data, error }
-}
+// Advancing current_stop_index / marking loading_complete now happens inline inside
+// driverConfirmOrderLoaded (see its own comment) — no standalone advanceStopIndex/
+// markLoadingComplete left here to avoid a second, bypassable path to the same writes.
 
 export async function updateAllocationChecklist(allocationId, updates) {
   const { data, error } = await supabase
@@ -503,7 +487,20 @@ export async function fetchInProgressAllocations() {
     .select('*, vehicle:vehicles(id, vehicle_number), warehouse:warehouses(id, name, latitude, longitude), driver:members!vehicle_allocations_driver_id_fkey(id, name)')
     .eq('status', 'loading_in_progress')
     .order('loading_started_at', { ascending: true })
-  return { data, error }
+  if (error || !data?.length) return { data, error }
+
+  // Self-heal: driverConfirmOrderLoaded is now the only place that advances/completes an
+  // allocation, but one stuck 'loading_in_progress' from before that fix (every order already
+  // driver_confirmed, nothing left to ever re-check it) would otherwise sit here forever — this
+  // backfills it on load instead of requiring a manual DB fix.
+  const results = await Promise.all(data.map(async a => {
+    const { data: orders } = await supabase.from('distributor_orders').select('loading_stage').eq('allocation_id', a.id)
+    const allConfirmed = (orders || []).length > 0 && orders.every(o => o.loading_stage === 'driver_confirmed')
+    if (!allConfirmed) return a
+    await supabase.from('vehicle_allocations').update({ status: 'loading_complete', loading_completed_at: new Date().toISOString() }).eq('id', a.id)
+    return null
+  }))
+  return { data: results.filter(Boolean), error: null }
 }
 
 
@@ -1606,18 +1603,51 @@ export async function markOrderWmLoaded(orderId) {
   return { data, error }
 }
 
+// Advancing to the next stop / marking the whole allocation loading_complete used to happen only
+// inside LoadingScreen.jsx's client-side poll — which only runs while the WM literally has that
+// screen open. If the WM closed it (navigated away, refreshed, session ended) before the driver
+// got around to confirming, that poll never ran again, so the transition silently never happened —
+// the allocation sat at 'loading_in_progress' forever even once every order was actually
+// driver_confirmed. Doing it here instead means it always fires, straight off the driver's own
+// action, regardless of what the WM's screen is doing. Returns `allocationCompleted`/`allocationId`
+// so the caller (DriverOrderConfirmTile.jsx) can fire the same completion notification/activity log
+// LoadingScreen.jsx used to.
 export async function driverConfirmOrderLoaded(orderId) {
-  const { data, error } = await supabase
+  const { data: order, error } = await supabase
     .from('distributor_orders')
     .update({ loading_stage: 'driver_confirmed', driver_load_confirmed_at: new Date().toISOString() })
     .eq('id', orderId)
     .select()
     .single()
-  return { data, error }
-} 
+  if (error || !order?.allocation_id) return { data: order, error, allocationCompleted: false }
+
+  const { data: allocation } = await supabase
+    .from('vehicle_allocations')
+    .select('id, stop_sequence, current_stop_index, status')
+    .eq('id', order.allocation_id)
+    .single()
+  if (!allocation || allocation.status !== 'loading_in_progress') return { data: order, error: null, allocationCompleted: false }
+
+  const stopSequence = allocation.stop_sequence || []
+  const nextIndex = (allocation.current_stop_index || 0) + 1
+  if (nextIndex >= stopSequence.length) {
+    await supabase.from('vehicle_allocations').update({ status: 'loading_complete', loading_completed_at: new Date().toISOString() }).eq('id', allocation.id)
+    return { data: order, error: null, allocationCompleted: true, allocationId: allocation.id }
+  }
+  await supabase.from('vehicle_allocations').update({ current_stop_index: nextIndex }).eq('id', allocation.id)
+  return { data: order, error: null, allocationCompleted: false }
+}
 
 export async function fetchOrderLoadingStage(orderId) {
    const { data, error } = await supabase.from('distributor_orders').select('loading_stage').eq('id', orderId).single()
+  return { data, error }
+}
+
+// Read-back for LoadingScreen.jsx's poll to resync local UI (stopIndex/completion) to whatever
+// driverConfirmOrderLoaded already wrote server-side — the poll no longer writes this transition
+// itself, only observes it.
+export async function fetchAllocationProgress(allocationId) {
+  const { data, error } = await supabase.from('vehicle_allocations').select('status, current_stop_index').eq('id', allocationId).single()
   return { data, error }
 }
 
