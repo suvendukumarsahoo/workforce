@@ -57,6 +57,19 @@ const { products, categories, showToast } = useData()
     volume: acc.volume + (it.volume || 0) * it.final_qty,
   }), { qty: 0, volume: 0 })
 
+  // `it.availability` (per-item, in the table below) is the picking-time Available/Wait/Unavailable
+  // tag — a different axis entirely from whether the load has actually been physically loaded onto
+  // its vehicle yet. This derives that separately, off the same distributor_orders.loading_stage /
+  // vehicle_allocations.status fields the Loading In Progress fix now keeps correct.
+  const loadStatus = (load) => {
+    if (!load.allocation) return { label: 'Awaiting Vehicle Allocation', color: '#6b7280' }
+    if (load.allocation.status === 'loading_complete') return { label: 'Load Complete', color: '#10b981' }
+    if (load.loading_stage === 'driver_confirmed') return { label: 'Driver Confirmed', color: '#2563eb' }
+    if (load.loading_stage === 'wm_loaded') return { label: 'Awaiting Driver Confirmation', color: '#f59e0b' }
+    if (load.allocation.status === 'loading_in_progress') return { label: 'Loading In Progress', color: '#f59e0b' }
+    return { label: 'Vehicle Allocated — Not Started', color: '#6b7280' }
+  }
+
   const categoryTiles = () => {
     const groups = {}
     relevantOrders.forEach(o => {
@@ -172,9 +185,15 @@ const { products, categories, showToast } = useData()
           {loads.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No loads created yet</div>}
           {loads.map(l => {
             const qv = loadQtyVolume(l)
+            const status = loadStatus(l)
             return (
               <div key={l.id} onClick={() => setSelectedLoad(l)} style={{ padding: '12px 4px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
-                <div style={{ fontWeight: 600, fontSize: 13 }}>{l.load_id} — {l.distributor?.name}</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>{l.load_id} — {l.distributor?.name}</div>
+                  <span style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 12, background: `${status.color}22`, color: status.color, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                    {status.label}
+                  </span>
+                </div>
                 <div style={{ fontSize: 11, color: '#9ca3af' }}>{l.distributor?.town || l.distributor?.area || '—'}</div>
                 <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>Qty: {qv.qty} · Volume: {qv.volume.toFixed(2)} cu.ft</div>
               </div>
@@ -185,6 +204,16 @@ const { products, categories, showToast } = useData()
 
       {selectedLoad && selectedLoad !== 'list' && (
         <Sheet title={`${selectedLoad.load_id} — ${selectedLoad.distributor?.name}`} sub={selectedLoad.distributor?.town || selectedLoad.distributor?.area} onClose={() => setSelectedLoad('list')}>
+          <Card>
+            <div style={{ padding: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 12, color: '#6b7280' }}>Load Status</span>
+              {(() => { const s = loadStatus(selectedLoad); return (
+                <span style={{ fontSize: 12, fontWeight: 700, padding: '4px 10px', borderRadius: 12, background: `${s.color}22`, color: s.color }}>
+                  {s.label}
+                </span>
+              ) })()}
+            </div>
+          </Card>
           <Card>
             <CH title="Items" />
             <div style={{ overflowX: 'auto' }}>
