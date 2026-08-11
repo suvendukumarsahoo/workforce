@@ -18,18 +18,25 @@ const uniqById = arr => Object.values(Object.fromEntries((arr || []).filter(Bool
 // (deliberately read-only) OrderFullDetail — every other order still opens detail as normal.
 export default function OrderStatus({ title = 'Order Status', headerRight, onEditOrder }) {
   const { currentUser, role } = useAuth()
-  const { products } = useData()
+  const { products, members, users } = useData()
   const [orders, setOrders] = useState([])
   const [payments, setPayments] = useState([])
   const [loaded, setLoaded] = useState(false)
   const [selected, setSelected] = useState(null)
   const [distributorFilter, setDistributorFilter] = useState('')
+  const [repFilter, setRepFilter] = useState('')
+  const [managerFilter, setManagerFilter] = useState('')
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
   const [minValue, setMinValue] = useState('')
   const [maxValue, setMaxValue] = useState('')
 
-  const isSalesTeam = role?.name === 'Sales Team'
+  // Same 3-way scoping as DistributorSecondaryReport.jsx: Sales Team sees only their own orders,
+  // Manager sees their own team's (members.manager_id === currentUser.id), everyone else
+  // (Admin/Accounts/HR/WM) sees every Sales Team member's orders org-wide.
+  const isOwnView = role?.id === 'r5'
+  const isManagerRole = role?.id === 'r2'
+  const multiRep = !isOwnView
   const mid = currentUser?.member_id
 
   const loadData = async () => {
@@ -41,11 +48,30 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
   }
   if (!loaded) loadData()
 
-  const scopedOrders = isSalesTeam ? orders.filter(o => o.member_id === mid) : orders
+  const salesTeamMemberIds = new Set((users || []).filter(u => u.role_id === 'r5' && u.member_id != null).map(u => u.member_id))
+  const scopeMembers = isOwnView
+    ? (members || []).filter(m => m.id === mid)
+    : isManagerRole
+      ? (members || []).filter(m => salesTeamMemberIds.has(m.id) && String(m.manager_id || '') === String(currentUser?.id))
+      : (members || []).filter(m => salesTeamMemberIds.has(m.id)) // org-wide roles — every Sales Team member
+  const managerName = managerId => (users || []).find(u => String(u.id) === String(managerId))?.name || null
+  // Manager column/filter only earns its place in the org-wide view — Manager's own view is always
+  // "themselves," repeating that on every row would just be dead weight (same reasoning the Rep
+  // column already uses against Sales Team's own view).
+  const showManager = multiRep && !isManagerRole
+  const managerOptions = showManager
+    ? Object.values(Object.fromEntries(scopeMembers.filter(m => m.manager_id).map(m => [m.manager_id, { id: m.manager_id, name: managerName(m.manager_id) || m.manager_id }])))
+    : []
+
+  const managerFilteredMembers = managerFilter ? scopeMembers.filter(m => String(m.manager_id || '') === managerFilter) : scopeMembers
+  const effectiveMemberIds = new Set((repFilter ? [repFilter] : managerFilteredMembers.map(m => m.id)).map(String))
+
+  const scopedOrders = orders.filter(o => effectiveMemberIds.has(String(o.member_id)))
   const orderValue = o => (o.items || []).reduce((s, it) => s + (it.rate || 0) * (it.final_qty ?? it.approved_qty ?? it.order_qty), 0)
-  // Rep column only earns its place in the org-wide view (Admin/Manager/etc.) — Sales Team's own
-  // list is always "themselves," a repeated column there would just be dead weight.
-  const showRep = !isSalesTeam
+  // Rep column only earns its place in the org-wide/team view (Manager/Admin/etc.) — Sales Team's
+  // own list is always "themselves," a repeated column there would just be dead weight.
+  const showRep = multiRep
+  const managerForOrder = o => showManager ? managerName((members || []).find(m => m.id === o.member_id)?.manager_id) : null
 
   // Distributor dropdown options come from the scoped-but-not-yet-filtered set, same pattern as
   // DistributorSecondaryReport.jsx's uniqById — so picking a distributor never hides itself out of
@@ -77,6 +103,24 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
               {distributorOptions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           </div>
+          {showManager && (
+            <div>
+              <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Manager</div>
+              <select value={managerFilter} onChange={e => { setManagerFilter(e.target.value); setRepFilter('') }} style={selStyle}>
+                <option value="">All</option>
+                {managerOptions.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </div>
+          )}
+          {multiRep && (
+            <div>
+              <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Rep</div>
+              <select value={repFilter} onChange={e => setRepFilter(e.target.value)} style={selStyle}>
+                <option value="">All</option>
+                {managerFilteredMembers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>From</div>
             <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)} style={selStyle} />
@@ -93,8 +137,8 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
             <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Value ≤</div>
             <input type="number" placeholder="Max" value={maxValue} onChange={e => setMaxValue(e.target.value)} style={{ ...selStyle, width: 90 }} />
           </div>
-          {(distributorFilter || fromDate || toDate || minValue || maxValue) && (
-            <button onClick={() => { setDistributorFilter(''); setFromDate(''); setToDate(''); setMinValue(''); setMaxValue('') }}
+          {(distributorFilter || repFilter || managerFilter || fromDate || toDate || minValue || maxValue) && (
+            <button onClick={() => { setDistributorFilter(''); setRepFilter(''); setManagerFilter(''); setFromDate(''); setToDate(''); setMinValue(''); setMaxValue('') }}
               style={{ background: 'none', border: 'none', color: '#2563eb', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: '6px 0' }}>
               Clear filters
             </button>
@@ -107,13 +151,14 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
         {visibleOrders.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No orders match these filters</div>}
         {visibleOrders.length > 0 && (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: showRep ? 980 : 860 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: showRep ? (showManager ? 1080 : 980) : 860 }}>
               <thead>
                 <tr style={{ background: '#f9fafb' }}>
                   <th style={th}>Order #</th>
                   <th style={th}>Distributor</th>
                   <th style={th}>Town</th>
                   {showRep && <th style={th}>Rep</th>}
+                  {showManager && <th style={th}>Manager</th>}
                   <th style={th}>Date</th>
                   <th style={th}>Value</th>
                   <th style={th}>Status</th>
@@ -131,6 +176,7 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
                       <td style={{ ...td, fontWeight: 600 }}>{o.distributor?.name}</td>
                       <td style={{ ...td, color: '#6b7280' }}>{o.distributor?.town || o.distributor?.area || '—'}</td>
                       {showRep && <td style={td}>{o.member?.name || '—'}</td>}
+                      {showManager && <td style={{ ...td, color: '#6b7280' }}>{managerForOrder(o) || '—'}</td>}
                       <td style={{ ...td, color: '#6b7280', whiteSpace: 'nowrap' }}>{new Date(o.order_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
                       <td style={{ ...td, fontWeight: 600 }}>{F(orderValue(o))}</td>
                       <td style={td}>
