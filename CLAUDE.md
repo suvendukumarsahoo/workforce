@@ -237,6 +237,24 @@ check) → Payment → Admin verify → `distributors.type` flips to `'Distribut
 `lead_stage='final_approved'`. Both screens' write paths are instrumented via `db.logActivity` (see
 Activity Log below).
 
+**Distributor-Created Celebration** — the instant `markPaymentReceived` (Admin's final "Payment
+Received" click) succeeds, an org-wide, any-role, live celebration broadcasts to every currently
+logged-in session: 5s of CSS-animated flying balloons, a synthesized cheer tone (Web Audio API,
+no audio asset), and the avatar of whichever member logged the *first* visit on that distributor
+(earliest `distributor_visits.visit_date` for that `distributor_id`, resolved client-side against
+the already-loaded `visits`/`members` from `useData()` — credits whoever originally found the lead,
+not necessarily who closed it). Own dedicated table + Supabase Realtime channel —
+`distributor_celebrations` (`db.createDistributorCelebration`/`subscribeDistributorCelebrations`,
+same `postgres_changes` INSERT-subscribe shape as `vehicle_locations`/`subscribeVehicleLocations`),
+**not** the existing `notifications` table (see Deferred/Known Issues below — that table is
+schema-drifted and already broken). Fire-and-forget from `DistributorApproval.jsx`, same
+non-blocking convention as `logActivity`. `src/components/CelebrationOverlay.jsx` is mounted once,
+globally, in `App.jsx` for every logged-in user regardless of role — `position:fixed`,
+`pointer-events:none`, queues multiple celebrations one at a time via a ref queue. Reuses `ui.jsx`'s
+existing `Av` avatar component; falls back to a plain 🎉 when the distributor has no visit on record
+(a real data gap, not treated as blocking — matches this app's "not a rep's problem to fix a
+data-master gap" convention from stock-take geofencing).
+
 ## Module: Distributor Secondary (Beats, Retail Outlets, Secondary Orders)
 
 Sales-Team-only field-sales tool (`src/pages/shared/DistributorSecondary.jsx`, reached via
@@ -480,6 +498,16 @@ DataMeet, static, non-interactive, state outline drawn in a deeper navy over the
 
 ## Deferred / Known Issues (not blocking, revisit later)
 
+- **`notifications` table is schema-drifted and every call site has likely been silently failing**
+  — `db.js`'s `createNotification`/`fetchNotifications`/`markNotificationRead` read/write
+  `target_roles`/`title`/`body`/`ref_id`/`read`, but the live table's actual columns (confirmed via
+  direct REST column probes) are `id`/`type`/`created_at`/`message`/`member_id`/`is_read` — an older
+  schema this code was never migrated to match. Every existing call site (idle-alert Phase 2,
+  stock-take rule change notifications) has been inserting/querying against columns that don't
+  exist. Found while building the Distributor-Created Celebration (which deliberately uses its own
+  `distributor_celebrations` table instead, see above) — not fixed as part of that work, since it's
+  unrelated in scope. Needs either a migration to add the columns the code expects, or a rewrite of
+  the code to match the live schema.
 - **`createUser()` needs a `service_role` key** — client-side `auth.admin.createUser()` fails "User
   not allowed" for every new employee. Real fix = Edge Function, parked. Manual workaround, every
   new employee:

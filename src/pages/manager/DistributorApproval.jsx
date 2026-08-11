@@ -106,6 +106,22 @@ const isManager = role?.name === 'Manager'
   if (error) { showToast('Error updating'); return }
   if (payment) await db.verifyPayment(payment.id)
   db.logActivity(currentUser?.id, 'approve', 'distributor', `Payment received — Distributor Created — ${lead.name}`, lead.id)
+  // Credit whoever logged the *first* visit on this lead (not necessarily who closed it) with the
+  // org-wide celebration broadcast. Fire-and-forget, same as logActivity above — never blocks the
+  // actor's own success toast.
+  const distVisits = (visits || []).filter(v => v.distributor_id === lead.id)
+  const firstVisit = distVisits.length
+    ? distVisits.reduce((earliest, v) => new Date(v.visit_date) < new Date(earliest.visit_date) ? v : earliest)
+    : null
+  const firstMember = firstVisit ? (members || []).find(m => m.id === firstVisit.member_id) : null
+  db.createDistributorCelebration({
+    distributor_id: lead.id,
+    distributor_name: lead.name,
+    member_id: firstMember?.id || null,
+    member_name: firstMember?.name || null,
+    avatar: firstMember?.avatar || null,
+    color: firstMember?.color || null,
+  })
   await loadAll()
   setSelected(null)
   showToast('Payment received — Distributor Created')

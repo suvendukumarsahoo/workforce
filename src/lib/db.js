@@ -818,6 +818,30 @@ export function subscribeVehicleLocations(onInsert) {
   return () => supabase.removeChannel(channel)
 }
 
+// ─── DISTRIBUTOR CELEBRATIONS (org-wide broadcast on new Distributor creation) ─────────────────
+// Deliberately its own table/channel rather than the `notifications` table — that table's live
+// schema doesn't match what createNotification/fetchNotifications assume (see CLAUDE.md), so every
+// existing call site there has been silently failing. name/avatar/color are denormalized onto the
+// row at write time since the celebrating member may not be in every receiving client's own scoped
+// data, and this is a fire-once broadcast row, not something that needs to stay in sync later.
+
+export async function createDistributorCelebration({ distributor_id, distributor_name, member_id, member_name, avatar, color }) {
+  const { data, error } = await supabase
+    .from('distributor_celebrations')
+    .insert({ distributor_id, distributor_name, member_id, member_name, avatar, color })
+    .select()
+    .single()
+  return { data, error }
+}
+
+export function subscribeDistributorCelebrations(onInsert) {
+  const channel = supabase
+    .channel('distributor-celebrations-live')
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'distributor_celebrations' }, payload => onInsert(payload.new))
+    .subscribe()
+  return () => supabase.removeChannel(channel)
+}
+
 // ─── EXPENSES ─────────────────────────────────────────────────────────────────
 
 export async function fetchExpenses() {

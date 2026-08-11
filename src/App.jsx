@@ -6,6 +6,7 @@ import Login from './pages/Login.jsx'
 import TeamApp from './pages/team/TeamApp.jsx'
 import WebApp from './pages/WebApp.jsx'
 import PunchInGate from './components/PunchInGate.jsx'
+import CelebrationOverlay from './components/CelebrationOverlay.jsx'
 
 export default function App() {
   const { currentUser, loading: authLoading } = useAuth()
@@ -50,6 +51,7 @@ export default function App() {
         </Routes>
       </PunchInGate>
       {toast && <Toast msg={toast} />}
+      <CelebrationOverlay />
     </>
   )
 }
