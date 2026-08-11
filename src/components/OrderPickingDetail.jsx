@@ -117,7 +117,11 @@ export default function OrderPickingDetail({ order, products, categories, paymen
     db.logActivity(currentUser?.id, 'update', 'order', `Confirmed & sent order #${order.id} to warehouse — ${order.distributor?.name || order.distributor_id}`, order.id)
     setBusy(false)
     showToast && showToast('Order sent to Warehouse for picking')
-    onClose()
+    // Both call sites (OrderApproval.jsx, PickingPendingTile.jsx) pass an onChanged(keepOpen) that
+    // reloads their own orders list before closing — calling bare onClose() here instead skipped
+    // that reload entirely, so the parent's list/total kept showing whatever it had before this
+    // save (the deleted item still counted, the added item missing) until a full page reload.
+    onChanged ? onChanged(false) : onClose()
   }
 
   return (
