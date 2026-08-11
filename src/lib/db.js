@@ -1575,13 +1575,32 @@ export async function returnToWarehouseManager(orderId) {
     .select('picking_round')
     .single()
   if (error) return { data: null, error }
+  // Whoever actually confirmed this (Admin directly, or a delegated Manager/order-creator review —
+  // see sendOrderForReview below) resolves the delegation the same way: clearing it here means the
+  // order drops out of whichever "for your review" queue it was sitting in the instant it's sent
+  // back to the warehouse, regardless of who did it.
   const { data: incremented, error: incError } = await supabase
     .from('distributor_orders')
-    .update({ picking_round: (data.picking_round || 1) + 1 })
+    .update({ picking_round: (data.picking_round || 1) + 1, review_assigned_to: null, review_requested_at: null, review_requested_by: null })
     .eq('id', orderId)
     .select()
     .single()
   return { data: incremented, error: incError }
+}
+
+// Admin delegates a not-fully-picked order's review to the order creator's Manager
+// (members.manager_id — same manager-lookup pattern as OrderStatus.jsx's scoping) or, if that rep
+// has no manager mapped, straight to the order creator themselves. Locks the order read-only for
+// Admin (OrderPickingDetail.jsx's isPendingReviewByOther) until the assignee acts —
+// returnToWarehouseManager above is what clears it again.
+export async function sendOrderForReview(orderId, assignedToUserId, requestedByUserId) {
+  const { data, error } = await supabase
+    .from('distributor_orders')
+    .update({ review_assigned_to: assignedToUserId, review_requested_at: new Date().toISOString(), review_requested_by: requestedByUserId })
+    .eq('id', orderId)
+    .select()
+    .single()
+  return { data, error }
 }
 
 export async function confirmPicking(orderId) {

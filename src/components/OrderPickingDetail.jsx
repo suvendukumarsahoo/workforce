@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useAuth } from '../hooks/useAuth.jsx'
+import { useData } from '../hooks/useData.jsx'
 import { Card, CH, Btn, Sheet, F, Inp } from './ui.jsx'
 import * as db from '../lib/db.js'
 
@@ -15,8 +16,17 @@ const timeAgo = (isoDate) => {
   return `${days} day${days === 1 ? '' : 's'} ago`
 }
 
-export default function OrderPickingDetail({ order, products, categories, payment, isAdmin, showToast, onClose, onChanged }) {
+// `isAdmin` has only ever meant "can this viewer edit" (gates Add Item/qty input/Delete/Confirm &
+// Send uniformly) — `canEdit` below folds that in with the new `isReviewer` case (a Manager or the
+// order creator opening an order specifically delegated to them via sendOrderForReview) rather than
+// renaming every call site's prop name.
+export default function OrderPickingDetail({ order, products, categories, payment, isAdmin, isReviewer, showToast, onClose, onChanged }) {
   const { currentUser } = useAuth()
+  const { members, users } = useData()
+  const assigneeNameFor = (userId) => (users || []).find(u => String(u.id) === String(userId))?.name || null
+  const canEdit = isReviewer || (isAdmin && !order.review_assigned_to)
+  const isPendingReviewByOther = isAdmin && !!order.review_assigned_to && !isReviewer
+  const assigneeName = order.review_assigned_to ? assigneeNameFor(order.review_assigned_to) : null
   const [addingItem, setAddingItem] = useState(false)
   const [pickProduct, setPickProduct] = useState('')
   const [pickQty, setPickQty] = useState('')
@@ -124,6 +134,19 @@ export default function OrderPickingDetail({ order, products, categories, paymen
     onChanged ? onChanged(false) : onClose()
   }
 
+  const sendForReview = async () => {
+    const member = (members || []).find(m => m.id === order.member_id)
+    const targetUserId = member?.manager_id || (users || []).find(u => u.member_id === order.member_id)?.id
+    if (!targetUserId) { showToast && showToast('Could not resolve a reviewer for this order'); return }
+    setBusy(true)
+    const { error } = await db.sendOrderForReview(order.id, targetUserId, currentUser?.id)
+    setBusy(false)
+    if (error) { showToast && showToast('Error sending for review'); return }
+    db.logActivity(currentUser?.id, 'update', 'order', `Sent order #${order.id} for review — ${assigneeNameFor(targetUserId)}`, order.id)
+    showToast && showToast(`Sent for review to ${assigneeNameFor(targetUserId)}`)
+    onChanged ? onChanged(false) : onClose()
+  }
+
   return (
     <Sheet title={`Order #${order.id} — ${order.distributor?.name}`} sub={`Last updated ${timeAgo(order.picking_updated_at)}`} onClose={onClose}>
 
@@ -145,8 +168,16 @@ export default function OrderPickingDetail({ order, products, categories, paymen
         </Card>
       )}
 
+      {isPendingReviewByOther && (
+        <Card style={{ background: '#fffbeb', border: '1px solid #fde68a' }}>
+          <div style={{ padding: 12, fontSize: 12, fontWeight: 600, color: '#92400e' }}>
+            ⏳ Pending review by {assigneeName || 'assigned reviewer'}
+          </div>
+        </Card>
+      )}
+
       <Card>
-        <CH title="Items" sub="Changes shown here are not saved until you send to Warehouse" right={isAdmin && <Btn sm v="pri" onClick={() => setAddingItem(true)}>+ Add Item</Btn>} />
+        <CH title="Items" sub="Changes shown here are not saved until you send to Warehouse" right={canEdit && <Btn sm v="pri" onClick={() => setAddingItem(true)}>+ Add Item</Btn>} />
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 480 }}>
             <thead>
@@ -154,7 +185,7 @@ export default function OrderPickingDetail({ order, products, categories, paymen
                 <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Product</th>
                 <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Qty</th>
                 <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Availability</th>
-                {isAdmin && <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Action</th>}
+                {canEdit && <th style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>Action</th>}
               </tr>
             </thead>
             <tbody>
@@ -162,7 +193,7 @@ export default function OrderPickingDetail({ order, products, categories, paymen
                 <tr key={it.id} style={{ background: it._isNew ? '#eff6ff' : 'transparent' }}>
                   <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{productName(it.product_id)}{it._isNew ? ' (new)' : ''}</td>
                   <td style={{ padding: '8px 10px' }}>
-                    {isAdmin ? (
+                    {canEdit ? (
                       <input
                         type="number"
                         value={it.final_qty}
@@ -175,7 +206,7 @@ export default function OrderPickingDetail({ order, products, categories, paymen
                   <td style={{ padding: '8px 10px', fontSize: 12, color: it.availability ? 'inherit' : '#9ca3af' }}>
                     {it.availability ? `${it.availability}${it.availability === 'Wait' && it.wait_days ? ` (${it.wait_days}d)` : ''}` : '— Pending'}
                   </td>
-                  {isAdmin && (
+                  {canEdit && (
                     <td style={{ padding: '8px 10px' }}>
                       <Btn sm v="bad" disabled={busy} onClick={() => deleteItem(it.id)}>Delete</Btn>
                     </td>
@@ -213,10 +244,15 @@ export default function OrderPickingDetail({ order, products, categories, paymen
         </Card>
       )}
 
-      {isAdmin && (
-        <Btn v="pri" full disabled={busy || (payment && currentOrderValue() > paymentAmount)} onClick={confirmAndSend}>
-          {busy ? 'Sending...' : 'Confirm & Send to Warehouse'}
-        </Btn>
+      {canEdit && (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <Btn v="pri" full disabled={busy || (payment && currentOrderValue() > paymentAmount)} onClick={confirmAndSend}>
+            {busy ? 'Sending...' : 'Confirm & Send to Warehouse'}
+          </Btn>
+          {isAdmin && !order.review_assigned_to && (
+            <Btn full disabled={busy} onClick={sendForReview}>Send for Review</Btn>
+          )}
+        </div>
       )}
     </Sheet>
   )

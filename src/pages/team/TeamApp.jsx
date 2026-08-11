@@ -17,6 +17,7 @@ import DistributorSecondaryReport from '../shared/DistributorSecondaryReport.jsx
 import DistributorStockSalesReport from '../shared/DistributorStockSalesReport.jsx'
 import StockTakeEntry from './StockTakeEntry.jsx'
 import StockTakeScheduleCard from '../../components/StockTakeScheduleCard.jsx'
+import OrdersForReviewCard from '../../components/OrdersForReviewCard.jsx'
 
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 const netS = s => (s.basic||0)+(s.hra||0)+(s.ta||0)+(s.da||0)-(s.pf||0)-(s.tds||0)
@@ -286,6 +287,7 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
         {/* DASHBOARD */}
         {tab === 'dashboard' && (
           <>
+            <OrdersForReviewCard currentUser={currentUser} products={products} categories={categories} showToast={showToast} />
             {actionNeededLeads.length > 0 && (
               <Card style={{ background: '#eff6ff', border: '1px solid #bfdbfe' }}>
                 <CH title="Action Needed" sub={`${actionNeededLeads.length} distributor(s) waiting on you`} />

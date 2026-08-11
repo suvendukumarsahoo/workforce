@@ -30,6 +30,7 @@ export default function OrderApproval() {
 const [addingItem, setAddingItem] = useState(false)
 const [allPayments, setAllPayments] = useState([])
   const [completedOrder, setCompletedOrder] = useState(null)
+  const [reviewOrder, setReviewOrder] = useState(null)
   const [pickProduct, setPickProduct] = useState('')
   const [pickQty, setPickQty] = useState('')
 
@@ -157,6 +158,7 @@ const advanceToPicking = async () => {
   }
   if (orders.length === 0) loadOrders()
 const completedPicklist = orders.filter(o => ['ready_for_load', 'picking_done'].includes(o.picking_status) && !o.load_id)
+  const reviewQueue = orders.filter(o => String(o.review_assigned_to) === String(currentUser?.id))
   const catSummary = selected ? categorySummary(selected) : {}
   const gt = selected ? grandTotal(selected) : { qty: 0, weight: 0, volume: 0, value: 0 }
 
@@ -177,6 +179,48 @@ const completedPicklist = orders.filter(o => ['ready_for_load', 'picking_done'].
           </div>
         ))}
       </Card>
+      {isManager && (
+        <Card>
+          <CH title="Sent for Your Review" sub={`${reviewQueue.length} order(s) delegated to you by Admin`} />
+          {reviewQueue.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No orders pending your review</div>}
+          {reviewQueue.map(o => (
+            <div key={o.id} onClick={() => setReviewOrder(o)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>Order #{o.id} — {o.distributor?.name}{o.distributor?.town ? `, ${o.distributor.town}` : ''}</div>
+                <div style={{ fontSize: 11, color: '#9ca3af' }}>{o.member?.name} · Requested {o.review_requested_at ? new Date(o.review_requested_at).toLocaleString('en-IN') : ''}</div>
+              </div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#f59e0b' }}>Needs Review</div>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      {reviewOrder && (() => {
+        const orderPayment = allPayments.find(p => p.order_id === reviewOrder.id)
+        return (
+          <OrderPickingDetail
+            key={`${reviewOrder.id}-${reviewOrder.picking_updated_at}`}
+            order={reviewOrder}
+            products={products}
+            categories={categories}
+            payment={orderPayment}
+            isAdmin={false}
+            isReviewer={true}
+            showToast={showToast}
+            onClose={() => setReviewOrder(null)}
+            onChanged={async (keepOpen) => {
+              const freshOrders = await loadOrders()
+              if (!keepOpen) {
+                setReviewOrder(null)
+              } else {
+                const refreshed = freshOrders.find(o => o.id === reviewOrder.id)
+                if (refreshed) setReviewOrder(refreshed)
+              }
+            }}
+          />
+        )
+      })()}
+
       {isAdmin && (
         <Card>
           <CH title="Completed Picklist" sub={`${completedPicklist.length} order(s) ready for load creation`} />

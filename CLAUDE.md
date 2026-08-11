@@ -93,8 +93,10 @@ any non-Available item) → `ready_for_load` (all Available) — Admin creates a
   `stock_status`).
 - `OrderApproval.jsx` (Manager+Admin approve → `OrderFullDetail` read-only+CreateLoad if clean, or
   `OrderPickingDetail` editable if not).
-- `OrderPickingDetail.jsx` (Admin cancel/add/qty-edit — local draft only, nothing hits DB until
-  "Confirm & Send to Warehouse," which diffs+batches all changes).
+- `OrderPickingDetail.jsx` (cancel/add/qty-edit — local draft only, nothing hits DB until
+  "Confirm & Send to Warehouse," which diffs+batches all changes). Shared by three audiences via a
+  `canEdit = isReviewer || (isAdmin && !order.review_assigned_to)` derivation — `isAdmin` alone no
+  longer gates editing (see Delegated Order Review below).
 - `WMDashboard.jsx`: tiles — Orders Ready to Pick, Pending Picking, Picking Complete, Load List,
   Vehicle Parked for Loading, Loading In Progress.
 - `OrderFullDetail.jsx`: shared read-only detail (Order Status, Picklist, Delivery card). Used by
@@ -103,6 +105,23 @@ any non-Available item) → `ready_for_load` (all Available) — Admin creates a
   Vehicle (capacity check, driver dropdown filters out **locked** drivers — see Driver Lock-out
   below) → direction-conflict warning → `vehicle_allocations` row. `RouteMapSheet.jsx`: Leaflet+OSRM
   (no Google Maps key — migration point is this one component).
+
+**Delegated Order Review** (`distributor_orders.review_assigned_to`/`review_requested_at`/
+`review_requested_by`) — when Admin opens a not-fully-picked order from Order Approval's "Completed
+Picklist," Admin can either edit it directly (unchanged default) or delegate that review via a new
+"Send for Review" button: `db.sendOrderForReview` resolves the target as the order creator's Manager
+(`members.manager_id`, same manager-lookup pattern as `OrderStatus.jsx`) or, if that rep has no
+manager mapped, the order creator's own `users.id` — and stamps all 3 columns. Once delegated,
+Admin's own view of that order goes read-only with a "⏳ Pending review by {name}" banner
+(`isPendingReviewByOther`) until the assignee acts; no re-delegation chain (the "Send for Review"
+button itself is hidden once `review_assigned_to` is set, from every viewer). The delegate lands in
+their own queue: Manager gets a new "Sent for Your Review" card on `OrderApproval.jsx`
+(`isReviewer={true}` passed into the same `OrderPickingDetail.jsx`); the order-creator fallback
+surfaces on their own Home tab via `src/components/OrdersForReviewCard.jsx` (mirrors
+`StockTakeScheduleCard.jsx`'s self-contained fetch+card shape), dropped into `TeamApp.jsx`'s
+dashboard tab. Whoever actually confirms — Admin directly, the Manager, or the rep — the existing
+`returnToWarehouseManager` call (unchanged otherwise) also clears all 3 review columns, dropping the
+order out of whichever queue it was sitting in. No notification on delegation (v1 scope).
 
 **Driver (r7) flow** — own bottom-tab shell in `WebApp.jsx` (`isDriver = role?.id==='r7'`), 3 tabs:
 `assignedLoads` (`AssignedLoads.jsx` — accept load, confirm vehicle parked), `driverLoadingConfirm`
