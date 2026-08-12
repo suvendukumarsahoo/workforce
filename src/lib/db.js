@@ -842,6 +842,18 @@ export function subscribeDistributorCelebrations(onInsert) {
   return () => supabase.removeChannel(channel)
 }
 
+// Catch-up path for whoever wasn't logged in at the moment a celebration fired live (the Realtime
+// subscription above only reaches sessions already open at that instant). Called once per login
+// with the user's own last-seen watermark — see CelebrationOverlay.jsx.
+export async function fetchDistributorCelebrationsSince(sinceISO) {
+  const { data, error } = await supabase
+    .from('distributor_celebrations')
+    .select('*')
+    .gt('created_at', sinceISO)
+    .order('created_at', { ascending: true })
+  return { data, error }
+}
+
 // ─── EXPENSES ─────────────────────────────────────────────────────────────────
 
 export async function fetchExpenses() {

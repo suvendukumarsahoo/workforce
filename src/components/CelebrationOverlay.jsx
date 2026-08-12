@@ -1,6 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
 import { Av } from './ui.jsx'
+import { useAuth } from '../hooks/useAuth.jsx'
 import * as db from '../lib/db.js'
+
+const LAST_SEEN_KEY_PREFIX = 'wf_celebration_lastSeen_'
 
 const BALLOON_COLORS = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6']
 const BALLOON_COUNT = 14
@@ -35,8 +38,10 @@ function playCheer() {
 // Mounted once, globally, in App.jsx for every logged-in user regardless of role. Subscribes to
 // distributor_celebrations INSERTs (Supabase Realtime) so the moment Admin marks a lead's payment
 // received and it becomes a real Distributor, every other open session sees it live — not just the
-// actor's own toast. Queues celebrations one at a time if two land close together.
+// actor's own toast. Also catches up anyone who wasn't logged in at that moment on their next login
+// (see the second effect below). Queues celebrations one at a time if two land close together.
 export default function CelebrationOverlay() {
+  const { currentUser } = useAuth()
   const [active, setActive] = useState(null)
   const [balloons, setBalloons] = useState([])
   const queueRef = useRef([])
@@ -69,6 +74,32 @@ export default function CelebrationOverlay() {
       if (timerRef.current) clearTimeout(timerRef.current)
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Catch-up: the subscription above only reaches sessions already open at the exact moment a
+  // celebration fires. Runs once per login (not on every tab-refocus — `currentUser` only changes
+  // identity on a real sign-in, see useAuth.jsx) and plays anything created since this user's own
+  // last-seen watermark, so someone who wasn't logged in yet still sees it the next time they are.
+  // Keyed per user (not just per browser) since devices get shared across roles in this app.
+  useEffect(() => {
+    if (!currentUser) return
+    const key = LAST_SEEN_KEY_PREFIX + currentUser.id
+    const lastSeen = localStorage.getItem(key)
+    const now = new Date().toISOString()
+
+    if (!lastSeen) {
+      // First time this user+browser has been tracked — establish a baseline instead of replaying
+      // the app's entire celebration history at them.
+      localStorage.setItem(key, now)
+      return
+    }
+
+    db.fetchDistributorCelebrationsSince(lastSeen).then(({ data }) => {
+      localStorage.setItem(key, now) // advance the watermark regardless, so the same gap is never re-checked
+      if (!data || !data.length) return
+      data.forEach(row => queueRef.current.push(row))
+      if (!timerRef.current) playNext()
+    })
+  }, [currentUser]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!active) return null
 

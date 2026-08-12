@@ -274,6 +274,20 @@ existing `Av` avatar component; falls back to a plain 🎉 when the distributor 
 (a real data gap, not treated as blocking — matches this app's "not a rep's problem to fix a
 data-master gap" convention from stock-take geofencing).
 
+**Catch-up for late logins** — the Realtime subscription above only reaches sessions already open at
+the exact moment a celebration fires; anyone not logged in yet misses it with no way to see it later.
+`CelebrationOverlay.jsx`'s second effect covers this: on every login (keyed off `currentUser` from
+`useAuth`, so it fires once per real sign-in, never on a background tab-refocus — see the
+`TOKEN_REFRESHED` fix above) it reads a per-user `localStorage` watermark
+(`wf_celebration_lastSeen_{userId}`, keyed per user not per browser since devices get shared across
+roles in this app) and calls `db.fetchDistributorCelebrationsSince(lastSeen)` to enqueue anything
+missed into the same playback queue. The very first time a given user+browser is ever seen, no
+watermark exists yet — that run only sets the baseline to "now" and plays nothing, so shipping this
+feature (or a brand-new user's first-ever login) never floods them with the app's entire celebration
+history; only genuinely-missed events from that point forward ever catch up. The watermark always
+advances to "now" after each check regardless of whether anything was found, so the same gap is never
+re-queried twice.
+
 ## Module: Distributor Secondary (Beats, Retail Outlets, Secondary Orders)
 
 Sales-Team-only field-sales tool (`src/pages/shared/DistributorSecondary.jsx`, reached via
