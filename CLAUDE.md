@@ -58,6 +58,25 @@ commercial launch).
    `<PolarAngleAxis type="number" domain={[0,100]} angleAxisId={0} tick={false} />`, a single-point
    gauge always renders as a full circle regardless of real percent (already fixed everywhere
    `MeterGauge` is used, but any new radial gauge needs this too).
+10. **A background `TOKEN_REFRESHED` auth event must never reach `setLoading(true)` in
+    `useAuth.jsx`** — Supabase silently fires this via `onAuthStateChange` whenever a backgrounded
+    tab regains focus, indistinguishable from a real sign-in unless the event name is checked.
+    `App.jsx` unmounts the *entire* app tree (`WebApp`/`TeamApp`/`PunchInGate` and everything under
+    them) while `authLoading` is true, so letting a token refresh trip that flag wipes any
+    in-progress form/cart/draft the instant someone switches tabs and comes back. Fixed once
+    (`db.js`'s `onAuthChange` now forwards the real event name; `useAuth.jsx` ignores
+    `TOKEN_REFRESHED` outright and only ever shows the splash on the true first load via
+    `hasLoadedRef`) — any future auth-related edit must preserve this filter.
+11. **No table besides `vehicle_locations`/`distributor_celebrations` gets live cross-user
+    updates** — `useData.jsx`'s `loadAll()` only ran once per login; one user's change was invisible
+    to another already-logged-in session until something forced a refetch (previously only the
+    token-refresh remount above did this, unreliably). `DataProvider` now also silently
+    (`loadAll(true)`, no spinner, no unmount) re-fetches everything on `visibilitychange` (tab
+    regains focus) plus a 60s floor poll while logged in, guarded against overlapping calls via
+    `loadingRef`. This is a polling/focus-refresh floor, not true Realtime — up to ~60s lag is
+    expected; if that's ever not good enough for a specific table, extend it with a real
+    `postgres_changes` subscription (same pattern as the two tables above) rather than shortening
+    the poll interval further.
 
 ## Data Model Quick Reference
 - **Roles**: `r1` Admin, `r2` Manager, `r3` Accounts, `r4` HR, `r5` Sales Team, `r6` Warehouse
