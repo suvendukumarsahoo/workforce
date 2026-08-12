@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useMemo } from 'react'
+import { createContext, useContext, useEffect, useState, useMemo, useRef } from 'react'
 import { useAuth } from './useAuth'
 import * as db from '../lib/db'
 import { computeAchievements, getGoalOverallStatus } from '../lib/achievementEngine'
@@ -31,14 +31,38 @@ export function DataProvider({ children }) {
   const [payments, setPayments] = useState([])
   const [approvedAttendanceRules, setApprovedAttendanceRules] = useState([])
   const [currentPeriod] = useState(getCurrentPeriod())
+  const loadingRef = useRef(false) // guards against overlapping loadAll() calls
 
   useEffect(() => {
     if (!currentUser) return
     loadAll()
+
+    // Nothing in this app pushes live updates for ordinary business data (only
+    // vehicle_locations/distributor_celebrations use Supabase Realtime) — so
+    // without this, one user's change is invisible to everyone else already
+    // logged in until something happens to force a refetch. Cover that with a
+    // silent background refresh: immediately when a tab regains focus (the
+    // common "switched tabs, came back, other user's change isn't here yet"
+    // case), plus a floor poll for tabs simply left open. Both call loadAll(true)
+    // — silent means it updates state in place and never touches `loading`,
+    // so it can never unmount/reset whatever the user is doing on screen.
+    function onVisible() {
+      if (document.visibilityState === 'visible') loadAll(true)
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    const poll = setInterval(() => loadAll(true), 60000)
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      clearInterval(poll)
+    }
   }, [currentUser])
 
-  async function loadAll() {
-    setLoading(true)
+  async function loadAll(silent = false) {
+    if (loadingRef.current) return // a refresh is already in flight — skip, don't stack
+    loadingRef.current = true
+    if (!silent) setLoading(true)
+    try {
     const [
   { data: r }, { data: u }, { data: m }, { data: c }, { data: p },
   { data: dist }, { data: pa }, { data: g }, { data: inv }, { data: exp },
@@ -79,7 +103,10 @@ export function DataProvider({ children }) {
     if (exp) setExpenses(exp)
     if (sal) setSalaries(sal)
     if (att) setAttendance(att)
-    setLoading(false)
+    } finally {
+      setLoading(false)
+      loadingRef.current = false
+    }
   }
 
   const achievements = useMemo(
