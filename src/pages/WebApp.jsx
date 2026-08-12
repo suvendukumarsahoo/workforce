@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useAuth } from '../hooks/useAuth.jsx'
 import { useData } from '../hooks/useData.jsx'
 import { Btn, Av } from '../components/ui.jsx'
-import NotificationBell from '../components/NotificationBell.jsx'
+import PendingTasksBell from '../components/PendingTasksBell.jsx'
 
 // Pages
 import Dashboard     from './shared/Dashboard.jsx'
@@ -216,7 +216,7 @@ export default function WebApp() {
             <div style={{ color: '#fff', fontWeight: 700, fontSize: 14 }}>{curLabel}</div>
             <div style={{ color: '#94a3b8', fontSize: 11 }}>{currentUser?.name}</div>
           </div>
-          <NotificationBell onNavigate={goTo} />
+          <PendingTasksBell onNavigate={goTo} />
           <button onClick={logout} title="Sign out" style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>⏻</button>
         </div>
 
@@ -279,7 +279,7 @@ export default function WebApp() {
         <div style={{ background: '#fff', borderBottom: '1px solid #e5e7eb', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
           <button onClick={() => setSideOpen(true)} className="wf-hamburger" style={{ background: 'none', border: '1px solid #e5e7eb', borderRadius: 8, padding: '6px 10px', cursor: 'pointer', fontSize: 16, flexShrink: 0 }}>☰</button>
           <div style={{ fontWeight: 700, fontSize: 15, flex: 1 }}>{curLabel}</div>
-          <NotificationBell onNavigate={goTo} />
+          <PendingTasksBell onNavigate={goTo} />
           <div style={{ fontSize: 11, color: '#6b7280', background: '#f3f4f6', padding: '3px 8px', borderRadius: 6 }}>
             {new Date().toLocaleDateString('en-IN', { month: 'short', year: 'numeric' })}
           </div>

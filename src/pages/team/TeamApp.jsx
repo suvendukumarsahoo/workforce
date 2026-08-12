@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Av, Btn, Inp, GBadge, SBadge, Sheet } from '../../components/ui.jsx'
+import PendingTasksBell from '../../components/PendingTasksBell.jsx'
 import MyAttendanceCalendar from '../../components/MyAttendanceCalendar.jsx'
 import { formatPeriodLabel, monthElapsedRatio } from '../../lib/period.js'
 import { aggregateForMembers } from '../../lib/goalAggregation.js'
@@ -263,7 +264,10 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
           <div style={{ fontWeight: 700 }}>{currentUser?.name}</div>
           <div style={{ fontSize: 11, color: '#94a3b8' }}>Sales Team</div>
         </div>
-        <Btn sm onClick={logout} style={{ background: '#1e293b', color: '#fff', border: 'none' }}>Logout</Btn>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <PendingTasksBell onNavigate={setTab} />
+          <Btn sm onClick={logout} style={{ background: '#1e293b', color: '#fff', border: 'none' }}>Logout</Btn>
+        </div>
       </div>
 
       <div style={{ padding: 14 }}>

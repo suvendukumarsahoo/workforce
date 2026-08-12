@@ -77,6 +77,17 @@ commercial launch).
     expected; if that's ever not good enough for a specific table, extend it with a real
     `postgres_changes` subscription (same pattern as the two tables above) rather than shortening
     the poll interval further.
+12. **A statement ending without a semicolon, immediately followed by a line starting with `(`,
+    silently merges into a function call on the previous line** — classic JS ASI trap, hit building
+    `pendingTasks.js`: `const stages = cond ? A : B\n(distributors || []).filter(...)` parsed as
+    `(cond ? A : B)(distributors || [])`, i.e. calling whichever array `A`/`B` was as a function. The
+    symptom is a runtime `TypeError: X is not a function` naming something that is very obviously
+    not meant to be called — not a lint error (the file is syntactically valid, just not what was
+    meant). Only a risk when a `(`/`[`/backtick-led line follows a real statement (an assignment,
+    a call) — the same pattern immediately after an opening `{` is always safe (nothing precedes it
+    to merge with). Semicolon (or a leading `;` on the new line) fixes it; this codebase's style
+    otherwise omits semicolons freely, so this is worth a second look specifically wherever a
+    multi-line chain starts with `(`.
 
 ## Data Model Quick Reference
 - **Roles**: `r1` Admin, `r2` Manager, `r3` Accounts, `r4` HR, `r5` Sales Team, `r6` Warehouse
@@ -528,6 +539,49 @@ boundary overlays (`public/data/odisha-districts.geojson`/`odisha-state.geojson`
 DataMeet, static, non-interactive, state outline drawn in a deeper navy over the district hairlines).
 
 **`VehicleLiveMap.jsx`** (menu `vehicleLiveMap`, "Live Tracking") — see Journey Phase 2 above.
+
+## Module: Pending Tasks Bell
+
+Cross-cutting, every role — the bell icon (`src/components/PendingTasksBell.jsx`) mounted in
+`WebApp.jsx` (desktop sidebar top, mobile top bar, and the Driver shell's own top bar — all 3
+non-Team layout branches) and `TeamApp.jsx` (Sales Team's header, next to Logout — this shell had no
+bell at all before). Replaces the old `NotificationBell.jsx`, deleted outright — that component read
+the `notifications` table, which CLAUDE.md's Deferred/Known Issues section already flagged as
+schema-drifted and silently empty for every call site; this isn't built on `notifications` at all.
+
+**`src/lib/pendingTasks.js`** — `fetchPendingTasks({ currentUser, role, hasMenu, context })`, pure
+aggregation of every "needs your action" queue this app already has: Order/Goal/Invoice/Expense/
+Distributor/Journey/Stock-Take-Rule/Attendance/Waiver approvals, Sales Team's own Order-Review/
+Pending-Visits/Stock-Take-overdue items, Warehouse's Ready-to-Pick/Pending-Picking, Driver's
+Assigned-Loads-awaiting-acceptance. Each category reuses the **exact same fetch + filter** its own
+source page already uses (e.g. Expense Approval's `expenses.filter(e => e.status === 'pending')` is
+identical to `WebApp.jsx`'s own sidebar badge computation) — deliberately, so this can never drift
+from what the source page itself shows (the same drift risk flagged for menu lists in Recurring Bug
+Pattern #6 applies to any duplicated filter, not just menu arrays). Categories backed by data already
+in `useData()` context (goals/invoices/expenses/distributors) cost no extra fetch; everything else
+(orders, journey/stock-take-rule/attendance/waiver approvals, picking, driver allocations) is a
+lightweight role-gated fetch — a category's queries only fire at all if `hasMenu(itsMenuId)` is true
+for the current role, so a given user only ever triggers the handful of fetches relevant to them.
+
+**v1 scope, deliberately**: tapping a task navigates to that category's existing page/tab (`nav`, a
+plain menu/tab id both `WebApp.jsx`'s `goTo` and `TeamApp.jsx`'s `setTab` already understand) — not a
+deep link into the exact record. True per-record auto-open ("land on this one order, already
+scrolled/expanded") would require adding "open record X" support to each of the ~12 target pages
+individually (none of them support it today — `navParams` is otherwise only consumed by
+`DistributorSecondaryReport.jsx`, for a date-range prefill, not record-level opening); deferred as
+its own follow-up rather than done all at once.
+
+**Refresh**: `PendingTasksBell.jsx` fetches on mount (once `useData()`'s own `loading` flag confirms
+the global context has actually populated — see the race-condition note below), on `visibilitychange`,
+and on a 60s poll — same freshness floor as `useData.jsx`'s own live-refresh mechanism, not true
+Realtime. An in-flight/dirty-flag guard (`inFlightRef`/`dirtyRef`) makes a call that arrives while one
+is already running re-fire immediately after the current one finishes, instead of silently dropping —
+without this, the very first fetch (which starts the instant `currentUser` is set, before `useData()`'s
+own initial `loadAll()` has necessarily resolved) would compute against empty `goals`/`expenses`/etc,
+then get permanently stuck on that empty snapshot once `useData()` populates moments later, since a
+naive "skip if already loading" guard just drops that update instead of queuing a redo. Caught this
+exact bug live during verification (badge showed 0 while the sidebar's own Expense Approvals badge
+showed a real 4) before shipping.
 
 ## Deferred / Known Issues (not blocking, revisit later)
 
