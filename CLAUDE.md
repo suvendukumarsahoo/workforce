@@ -106,6 +106,19 @@ commercial launch).
     instead of red. Caught by inspection while building Order Delivery, not by any tool. The full
     variant set is `def`/`pri`/`ok`/`bad`/`gh`/`warn` — check `BTN_STYLES` in `ui.jsx` rather than
     guessing a variant name for any new destructive/warning action.
+14. **Grouping/matching by a date string instead of the entity's real id silently conflates two
+    different records that happen to share a date** — `computeStockTakePeriods`'s periods only
+    carried `from`/`to` as date strings until this was hit; both the Discrepancy Report generator
+    (`StockTakeEntry.jsx`, matched a just-created period via `p.to === take.take_date`) and the Stock
+    & Sales Report's Detail tab (grouped rows via `` `${from}|${to}` ``) picked up **every** period
+    ending on that date once two physical stock takes for the same distributor landed on the same
+    calendar day (a same-day recount is a completely normal thing to do) — silently merging two
+    distinct periods' numbers into one, no error, no crash, just wrong/duplicated rows. The
+    Detail-tab version was worse: with no distributor in the key at all, two *different* distributors
+    counted on the same day would have merged too. Fixed by adding a real `takeId` to each period
+    object and keying/matching on that instead — caught live during verification (two rows for the
+    same product with conflicting numbers), not by inspection. Whenever a period/event has both a
+    date and a real row id, key on the id; a date string is never guaranteed unique on its own.
 
 ## Data Model Quick Reference
 - **Roles**: `r1` Admin, `r2` Manager, `r3` Accounts, `r4` HR, `r5` Sales Team, `r6` Warehouse
@@ -118,7 +131,8 @@ commercial launch).
 - **Generated ID formats** (sequential, count-then-pad, per day/entity): `LD-DDMMYYYY-NN` (loads),
   `SO-DDMMYYYY-NN` (secondary orders), `BT-NNNN` (beats), `RO-NNNN` (retail outlets),
   `DS-{memberId}-DDMMYYYY-{seq}` (Distributor Secondary day-summary/retailing-complete batches, one
-  member can have several per day).
+  member can have several per day), `PST-DDMMYYYY-NN` (physical stock takes), `DL-DDMMYYYY-NN`
+  (secondary order deliveries), `SDR-DDMMYYYY-NN` (stock discrepancy reports).
 - **No leave/holiday calendar anywhere in the app** — "Absent" simply means "no punch recorded for a
   past calendar day," weekends included.
 - **RLS disabled across all tables** — flagged pre-launch requirement, not yet addressed.
@@ -456,6 +470,25 @@ row — same due-status logic as the gate, so the two can never disagree). Take 
 real current local date (`createStockTake`'s count-then-pad `PST-DDMMYYYY-NN`, same local-date
 convention as `SO-`/`LD-`) — never user-editable.
 
+**Pending-deliveries confirmation gate** — since Sales is now real (sourced from Order Delivery, see
+below), a count taken while this distributor still has undelivered batches won't have those orders'
+outcomes reflected in that period's Sales yet. `StockTakeEntry.jsx` checks
+`db.fetchPendingDeliveryBatchesForDistributor` on mount; if any exist, it shows them (grouped by
+batch, with order count + value) in place of the count form, with a "Confirm & Proceed" button —
+soft, same convention as the geofence warning below, not a block. Skipped entirely (straight to the
+count form) when there's nothing pending, so it never adds friction to the common case.
+
+**Discrepancy report generation** — the moment `createStockTake` succeeds, `StockTakeEntry.jsx`
+fires (fire-and-forget, a failure here must never undo or hold up a stock take that already saved)
+`generateDiscrepancyReport`: re-fetches this one distributor's stock takes/receipts/secondary-
+orders/opening-stock and runs the exact same pure `computeStockTakePeriods` the live report itself
+uses, pulls out the period that just closed (`to === take.take_date`), and persists it via
+`db.createDiscrepancyReport` into `stock_discrepancy_reports`/`_items` (id `SDR-DDMMYYYY-NN`, same
+count-then-pad local-date convention as every other generated id here). Each report is an
+**immutable snapshot** — the numbers are stored as computed at that moment, not re-derived later, so
+a later-edited invoice or return can't silently rewrite history. Viewable via the Stock & Sales
+Report's own "Discrepancy Reports" tab (below).
+
 **Geofencing (distributor proximity, separate from the punch-in overdue gate above)** — on save,
 `StockTakeEntry.jsx` captures the rep's current position and compares it to the distributor's
 `confirmed_latitude`/`confirmed_longitude` via `haversineMeters` (`src/lib/geo.js`, same helper
@@ -474,17 +507,17 @@ fix a Distributor-master data gap).
 **Stock & Sales Report (`src/pages/shared/DistributorStockSalesReport.jsx`, menu
 `distributorStockSalesReport`, same 3-way audience as the Secondary Order Report)** — periods are
 still anchored to **real stock-take dates**, not a user-chosen range (no date-range filter;
-Distributor + Product + Sales Rep instead), and **Physical Closing** is still that take's real
-physical count (ground truth, never calculated) — none of the physical-count schedule/punch-gate
-machinery above changed. What changed is which side of the ledger is "real": **Sales** is no longer
-a derived plug — it's genuine delivered quantity from Distributor Secondary's Order Delivery
-tracking (`delivery_status in ('full','partial')`, minus any per-item `returned_qty` for a partial —
-see the Order Delivery module below), dated to when the delivery outcome was actually marked, via
-`db.fetchDeliveredSecondaryOrdersForStockReport`. With Sales now real, a **Calculated Closing**
-(`Opening + Receipts − Sales`) can be computed independently of the physical count and compared
-against it — **Variance** (`Physical Closing − Calculated Closing`) is that comparison, the itemwise
-reconciliation this report always intended to build ("a match design", flagged as deferred when the
-report first shipped).
+Distributor + Product + Sales Rep instead) — none of the physical-count schedule/punch-gate
+machinery above changed. What changed is which side of the ledger is "real" and which the report
+actually shows as **Closing**: **Sales** is no longer a derived plug — it's genuine delivered
+quantity from Distributor Secondary's Order Delivery tracking (`delivery_status in
+('full','partial')`, minus any per-item `returned_qty` for a partial — see the Order Delivery module
+below), dated to when the delivery outcome was actually marked, via
+`db.fetchDeliveredSecondaryOrdersForStockReport`. With Sales now real, **Closing** shown throughout
+this report is the **Calculated** figure (`Opening + Receipts − Sales`), not the physical count —
+the physical count and its variance against Calculated Closing moved entirely into the new
+Discrepancy Reports tab below (a live report column felt redundant once every stock take generates
+its own persisted snapshot of exactly that comparison).
 
 **Receipts** now sources from `invoices` (`db.fetchReceiptsForStockReport`), not
 `distributor_order_items.final_qty` directly — the invoice is the authoritative billed-quantity
@@ -495,26 +528,44 @@ gate as before, just checked via the invoice's embedded order rather than the or
 legacy invoice has nothing to confirm against, so it counts as soon as it's `status='approved'`.
 
 **Opening Stock (`distributor_opening_stocks`/`_items`)** — the very first period for a distributor
-still defaults Opening to 0 unless a **one-time manual baseline** has been entered and approved.
-`distributor_id` is that table's own primary key (not a generated id) — this is what enforces
-"entered once, ever" at the database level; a second submission attempt simply fails the insert.
-Anyone with report access can start the entry (`db.submitOpeningStock`, one qty field per product,
-inline in `DistributorStockSalesReport.jsx` rather than a separate page — it only ever matters in
-this report's context) — needs **Manager then Admin** sign-off, sequential, before
-`computeStockTakePeriods` will actually use it (`status`: `pending` → `manager_approved` →
-`approved`, `db.approveOpeningStockManager`/`approveOpeningStockAdmin`). No reject/edit path in v1,
-matching this app's general approve-only-flow convention.
+defaults Opening to 0 unless a **one-time manual baseline** has been entered and approved — missing
+one is never a blocker, just means 0. `distributor_id` is that table's own primary key (not a
+generated id) — this is what enforces "entered once, ever" at the database level; a second
+submission attempt simply fails the insert. Anyone with report access can start the entry
+(`db.submitOpeningStock`, one qty field per product, inline in `DistributorStockSalesReport.jsx`
+rather than a separate page — it only ever matters in this report's context) — needs **Manager then
+Admin** sign-off, sequential, before `computeStockTakePeriods` will actually use it (`status`:
+`pending` → `manager_approved` → `approved`,
+`db.approveOpeningStockManager`/`approveOpeningStockAdmin`). The UI gate is strict about the
+sequencing — Admin never sees (or can act on) a `pending`-stage row, only `manager_approved` ones,
+otherwise an Admin clicking through would silently record itself as the Manager-stage approver and
+the two-stage requirement would mean nothing. No reject/edit path in v1, matching this app's general
+approve-only-flow convention.
+
+**Discrepancy Reports tab** (3rd tab, alongside Summary/Detail) — lists every
+`stock_discrepancy_reports` row in scope (one per physical stock take, see the generation note
+above), each showing a variance-count badge; drilling into one shows its itemized
+Opening/Receipts/Sales/Calculated-Closing/Physical-Closing/Variance breakdown exactly as it was
+computed at that stock take's moment, unaffected by anything that's happened to the ledger since.
+
+**Period as a header, not columns** — the Detail tab groups its rows under a
+`Period: {from} → {to}` section header per stock-take-to-stock-take window instead of repeating
+From/To on every row; Summary (one row per distributor/product, each legitimately on its own
+different period) keeps Period as a single combined column instead. Both tabs' PDF/Excel exports
+stay flat regardless (Period as its own column) — that's a display convenience for the on-screen
+Detail tab, not something an export consumer wants collapsed away.
 
 All figures are already base-unit-equivalent (invoice lines and secondary-order items are both
 already base-unit-equivalent quantities; physical counts via `unitConversion.js`'s `toBaseQty`, same
 as Distributor Secondary's cart) — "report in the highest unit" is just display formatting: base-unit
 qty as-is, labeled with the product's Base Unit, rounded to 1 decimal (`stockReport.js`'s `round1`,
 display-time only — the underlying computation stays unrounded). `computeStockTakePeriods`
-(`src/lib/stockReport.js`, pure, mirrors `achievementEngine.js`'s shape) carries the last known
-Physical Closing forward across any take that skipped a product, rather than treating a skip as
-zero. Summary tab = latest period per (distributor, product); Detail tab = every period ever
-recorded. Export reuses `printSecondaryReport.js`'s generic `downloadReportPdf`/`downloadReportExcel`
-as-is.
+(`src/lib/stockReport.js`, pure, mirrors `achievementEngine.js`'s shape, unchanged by any of this —
+it already computed both Physical and Calculated Closing, only which one each consumer surfaces
+changed) carries the last known Physical Closing forward across any take that skipped a product,
+rather than treating a skip as zero. Summary tab = latest period per (distributor, product); Detail
+tab = every period ever recorded, grouped by period. Export reuses `printSecondaryReport.js`'s
+generic `downloadReportPdf`/`downloadReportExcel` as-is.
 
 ## Module: Attendance & HR
 

@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useData } from '../../hooks/useData.jsx'
-import { Card, CH, Btn } from '../../components/ui.jsx'
+import { Card, CH, Btn, F } from '../../components/ui.jsx'
 import { availableUnitsForProduct, toBaseQty } from '../../lib/unitConversion.js'
 import { haversineMeters } from '../../lib/geo.js'
+import { computeStockTakePeriods } from '../../lib/stockReport.js'
 import * as db from '../../lib/db.js'
 
 // Soft-warn only, for now — "later we will hard code it to not allow" (a future, deliberate flip
@@ -10,6 +11,8 @@ import * as db from '../../lib/db.js'
 // own named constant rather than inline so that flip is a one-line diff, not a re-derivation.
 const GEOFENCE_RADIUS_M = 100
 const GEOFENCE_HARD_BLOCK = false
+
+const orderValue = o => (o.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
 
 // A physical stock take is an EXHAUSTIVE count — unlike Distributor Secondary's order cart, every
 // active product gets a line (including explicit 0s), because "not counted" and "counted as zero"
@@ -21,6 +24,22 @@ export default function StockTakeEntry({ distributor, memberId, onDone, onCancel
   const [cart, setCart] = useState({}) // { [product_id]: { qty, unit } }, default qty 0, unit 'base'
   const [catFilter, setCatFilter] = useState('')
   const [saving, setSaving] = useState(false)
+  const [pendingBatches, setPendingBatches] = useState(null) // null = still checking, [] = none, [...] = some
+  const [confirmedPending, setConfirmedPending] = useState(false)
+
+  // Sales is now real, sourced from Order Delivery outcomes (see stockReport.js) — a count taken
+  // while this distributor still has undelivered batches is worth surfacing to the rep first (soft
+  // confirmation, not a block: they can still proceed, matching this file's own geofence convention).
+  useEffect(() => {
+    db.fetchPendingDeliveryBatchesForDistributor(distributor.id).then(({ data }) => {
+      const groups = {}
+      ;(data || []).forEach(o => {
+        if (!groups[o.batch_id]) groups[o.batch_id] = { batchId: o.batch_id, date: o.order_date, orders: [] }
+        groups[o.batch_id].orders.push(o)
+      })
+      setPendingBatches(Object.values(groups))
+    })
+  }, [distributor.id])
 
   const categoryName = cid => (categories || []).find(c => c.id === cid)?.name || 'Uncategorized'
   const visibleProducts = (products || []).filter(p => !catFilter || p.category_id === catFilter)
@@ -42,6 +61,37 @@ export default function StockTakeEntry({ distributor, memberId, onDone, onCancel
       { enableHighAccuracy: true, timeout: 10000 }
     )
   })
+
+  // Fire-and-forget — a failure here shouldn't undo or hold up a stock take that already saved
+  // successfully; same non-blocking convention as db.logActivity elsewhere in this app. Reuses the
+  // exact same pure computeStockTakePeriods() the live Stock & Sales Report itself runs, scoped to
+  // just this one distributor (cheap, and guarantees the snapshot can never compute differently from
+  // what the report would have shown at that moment).
+  const generateDiscrepancyReport = async (take) => {
+    const [{ data: stockTakes }, { data: invoices }, { data: secondaryOrders }, { data: openingStocks }] = await Promise.all([
+      db.fetchStockTakesForDistributors({ distributorIds: [distributor.id] }),
+      db.fetchReceiptsForStockReport({ distributorIds: [distributor.id] }),
+      db.fetchDeliveredSecondaryOrdersForStockReport({ distributorIds: [distributor.id] }),
+      db.fetchOpeningStocks({ distributorIds: [distributor.id] }),
+    ])
+    const { periods } = computeStockTakePeriods({
+      stockTakes: stockTakes || [], invoices: invoices || [], secondaryOrders: secondaryOrders || [], openingStocks: openingStocks || [],
+      distributorIds: [distributor.id], productIds: null,
+    })
+    // Match on takeId, not take_date — two stock takes for the same distributor can share a
+    // calendar date (a same-day recount), and a date-string match would ambiguously pick up both
+    // takes' periods, duplicating/conflicting rows in the generated report (caught live: a same-day
+    // recount during verification produced two rows for one product with different numbers).
+    const thisPeriods = periods.filter(p => p.takeId === take.id)
+    if (!thisPeriods.length) return
+    await db.createDiscrepancyReport({
+      distributorId: distributor.id, takeId: take.id, reportDate: take.take_date,
+      items: thisPeriods.map(p => ({
+        product_id: p.productId, opening: p.opening, receipts: p.receipts, sales: p.sales,
+        calculated_closing: p.calculatedClosing, physical_closing: p.closing, variance: p.variance,
+      })),
+    })
+  }
 
   const save = async () => {
     setSaving(true)
@@ -77,12 +127,13 @@ export default function StockTakeEntry({ distributor, memberId, onDone, onCancel
         entered_unit: entry.unit, entered_qty: entry.qty,
       }
     })
-    const { error } = await db.createStockTake(
+    const { data: take, error } = await db.createStockTake(
       { distributor_id: distributor.id, member_id: memberId, lat, lng, distance_m: distanceM, location_flag: locationFlag },
       items,
     )
     setSaving(false)
     if (error) { showToast('Error saving stock take'); return }
+    if (take) generateDiscrepancyReport(take).catch(() => {})
     showToast(geofenceWarning ? `Stock take saved · ${geofenceWarning}` : 'Physical stock take saved')
     onDone()
   }
@@ -93,6 +144,34 @@ export default function StockTakeEntry({ distributor, memberId, onDone, onCancel
     if (!groups[key]) groups[key] = []
     groups[key].push(p)
   })
+
+  if (pendingBatches === null) {
+    return <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>Checking pending deliveries...</div>
+  }
+
+  if (pendingBatches.length > 0 && !confirmedPending) {
+    return (
+      <div>
+        <Card style={{ background: '#fef3c7' }}>
+          <CH title="Pending Deliveries" sub={`${pendingBatches.length} batch(es) not yet delivered for ${distributor?.name}`} />
+          <div style={{ padding: '0 14px 12px', fontSize: 12, color: '#92400e' }}>
+            These orders haven't been marked delivered yet — Sales for this stock take's period won't
+            include them until they are. You can still proceed with the count.
+          </div>
+          {pendingBatches.map(b => (
+            <div key={b.batchId} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 14px', borderTop: '1px solid #fde68a', fontSize: 12 }}>
+              <div>{b.batchId} <span style={{ color: '#92400e' }}>· {b.date}</span></div>
+              <div style={{ fontWeight: 600 }}>{b.orders.length} order(s) · {F(b.orders.reduce((s, o) => s + orderValue(o), 0))}</div>
+            </div>
+          ))}
+        </Card>
+        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+          <Btn v="pri" full onClick={() => setConfirmedPending(true)}>Confirm & Proceed to Stock Take</Btn>
+          {onCancel && <Btn full onClick={onCancel}>Cancel</Btn>}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div>

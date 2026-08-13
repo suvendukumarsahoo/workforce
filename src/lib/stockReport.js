@@ -104,9 +104,13 @@ export function computeStockTakePeriods({
         const calculatedClosing = opening === null ? null : opening + receipts - sales
         const variance = (closing === null || calculatedClosing === null) ? null : round1(closing - calculatedClosing)
 
+        // takeId (not just `to`, a date string) is what a caller needs to identify "the period THIS
+        // specific stock take produced" — two takes for the same distributor can land on the same
+        // calendar date (a same-day recount, or a voluntary count landing the same day as a forced
+        // one), and matching on date string alone would ambiguously pick up both.
         const period = {
           distributorId, productId, productName: productMeta?.name || productId, unit: productMeta?.unit,
-          from, to, opening, receipts, sales, closing, calculatedClosing, variance,
+          from, to, takeId: take.id, opening, receipts, sales, closing, calculatedClosing, variance,
         }
         periods.push(period)
         if (closing !== null) lastKnownClosing = closing

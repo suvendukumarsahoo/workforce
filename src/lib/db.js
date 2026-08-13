@@ -2271,3 +2271,51 @@ export async function approveOpeningStockAdmin(distributorId, approvedBy) {
     .select().single()
   return { data, error }
 }
+
+// ─── STOCK & SALES DISCREPANCY REPORT ──────────────────────────────────────────
+// Pending Order Delivery batches for one distributor — shown as a soft confirmation gate in
+// StockTakeEntry.jsx before a physical count proceeds. Sales is now real (from Order Delivery), so a
+// stock take taken while deliveries are still pending is worth flagging to the rep, not blocking —
+// same soft-warn convention as this file's geofence check.
+export async function fetchPendingDeliveryBatchesForDistributor(distributorId) {
+  const { data, error } = await supabase
+    .from('secondary_orders')
+    .select('id, batch_id, order_date, items:secondary_order_items(qty, rate)')
+    .eq('distributor_id', distributorId)
+    .eq('cancelled', false)
+    .not('batch_id', 'is', null)
+    .eq('delivery_status', 'pending')
+  return { data, error }
+}
+
+// One snapshot per physical stock take (StockTakeEntry.jsx generates this right after createStockTake
+// succeeds), comparing that moment's ledger-calculated closing (Opening+Receipts-Sales) against the
+// just-submitted physical count. Immutable by design — stores the numbers as computed at save time,
+// not re-derived later, so a later-edited invoice or return can't silently rewrite history. id
+// `SDR-DDMMYYYY-NN`, same count-then-pad local-date convention as every other generated id here.
+export async function createDiscrepancyReport({ distributorId, takeId, reportDate, items }) {
+  const dateStr = reportDate.split('-').reverse().join('') // 'YYYY-MM-DD' -> 'DDMMYYYY'
+  const { count } = await supabase
+    .from('stock_discrepancy_reports')
+    .select('id', { count: 'exact', head: true })
+    .like('id', `SDR-${dateStr}-%`)
+  const id = `SDR-${dateStr}-${String((count || 0) + 1).padStart(2, '0')}`
+  const { data: report, error } = await supabase
+    .from('stock_discrepancy_reports')
+    .insert({ id, distributor_id: distributorId, take_id: takeId, report_date: reportDate })
+    .select().single()
+  if (error) return { data: null, error }
+  const itemRows = items.map(it => ({ report_id: id, ...it }))
+  const { error: itemError } = await supabase.from('stock_discrepancy_report_items').insert(itemRows)
+  return { data: report, error: itemError }
+}
+
+export async function fetchDiscrepancyReports({ distributorIds }) {
+  if (!distributorIds?.length) return { data: [], error: null }
+  const { data, error } = await supabase
+    .from('stock_discrepancy_reports')
+    .select('*, items:stock_discrepancy_report_items(*, product:products(id,name,unit)), distributor:distributors(id,name)')
+    .in('distributor_id', distributorIds)
+    .order('report_date', { ascending: false })
+  return { data, error }
+}
