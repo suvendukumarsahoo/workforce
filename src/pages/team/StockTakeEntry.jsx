@@ -63,10 +63,11 @@ export default function StockTakeEntry({ distributor, memberId, onDone, onCancel
   })
 
   // Fire-and-forget — a failure here shouldn't undo or hold up a stock take that already saved
-  // successfully; same non-blocking convention as db.logActivity elsewhere in this app. Reuses the
-  // exact same pure computeStockTakePeriods() the live Stock & Sales Report itself runs, scoped to
-  // just this one distributor (cheap, and guarantees the snapshot can never compute differently from
-  // what the report would have shown at that moment).
+  // successfully; same non-blocking convention as db.logActivity elsewhere in this app.
+  // computeStockTakePeriods (stock-take-anchored) is used ONLY here, never by the Stock & Sales
+  // Report page itself — that report is a plain date-range ledger with no relationship to stock-take
+  // dates at all (see stockReport.js's own header comment; conflating the two was a repeated mistake
+  // this file's history keeps correcting). Scoped to just this one distributor (cheap).
   const generateDiscrepancyReport = async (take) => {
     const [{ data: stockTakes }, { data: invoices }, { data: secondaryOrders }, { data: openingStocks }] = await Promise.all([
       db.fetchStockTakesForDistributors({ distributorIds: [distributor.id] }),

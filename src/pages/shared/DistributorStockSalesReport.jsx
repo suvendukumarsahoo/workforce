@@ -4,16 +4,16 @@ import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Btn, Sheet, F } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
 import { downloadReportPdf, downloadReportExcel } from '../../lib/printSecondaryReport.js'
-import { computeStockTakePeriods, round1 } from '../../lib/stockReport.js'
+import { computeStockLedger, round1 } from '../../lib/stockReport.js'
+import { getCurrentPeriod, monthRangeForPeriod } from '../../lib/period.js'
 
 const selStyle = { padding: '6px 9px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12, background: '#fff' }
 const uniqById = arr => Object.values(Object.fromEntries((arr || []).filter(Boolean).map(x => [x.id, x])))
 const fmtQty = (n, unit) => (n === null || n === undefined ? '—' : `${round1(n)} ${unit || ''}`.trim())
 
 // Stacked qty (primary) + value (secondary, currency) — used for every Opening/Receipts/Sales/
-// Closing cell in both this report and the Discrepancy Reports tab, so quantity and value are always
-// shown together without doubling the on-screen column count (exports still get them as separate
-// flat columns, see exportColumns below).
+// Closing cell in this report, so quantity and value are always shown together without doubling the
+// on-screen column count (exports still get them as separate flat columns, see exportColumns below).
 const QtyValue = ({ qty, value, unit }) => (
   <div>
     <div>{fmtQty(qty, unit)}</div>
@@ -21,17 +21,15 @@ const QtyValue = ({ qty, value, unit }) => (
   </div>
 )
 
-// Periods are anchored to real stock-take dates, not a user-chosen date range. Period joins
-// Distributor/Product/Sales Rep as a real filter (not a column grouping/header) — its options are
-// scoped to whichever Distributor is currently selected, since a period only means anything for one
-// specific distributor's own take-to-take timeline. Closing shown throughout is the CALCULATED
-// figure (Opening+Receipts-Sales) — the physical count and its variance against Calculated Closing
-// live in the Discrepancy Reports tab instead (one snapshot per physical stock take, generated
-// automatically by StockTakeEntry.jsx, no date filter there either — it's already just a flat
-// chronological list of discrete events). Opening Stock (one-time baseline entry, Manager→Admin
-// approval) is managed inline here rather than a separate page — it only ever matters in the context
-// of this report, and "entered once ever" per distributor means there's no ongoing workflow to
-// justify its own menu.
+// A plain date-range ledger — has NOTHING to do with physical stock-take dates (that machinery, and
+// the "Discrepancy Report" it generates, is entirely separate; see stockReport.js's own header
+// comment, since this exact conflation has been the recurring mistake in this report's history).
+// From/To are real, freely-editable dates (default: current calendar month, same convention as
+// DistributorSecondaryReport.jsx) — Closing is always the calculated figure (Opening+Receipts-Sales)
+// for whatever range is picked; this report never touches a physical count. Opening Stock (one-time
+// baseline entry, Manager→Admin approval) is managed inline here rather than a separate page — it
+// only ever matters in the context of this report, and "entered once ever" per distributor means
+// there's no ongoing workflow to justify its own menu.
 export default function DistributorStockSalesReport() {
   const { currentUser, role } = useAuth()
   const { members, users, distributors, products } = useData()
@@ -56,10 +54,13 @@ export default function DistributorStockSalesReport() {
   )
   const scopeDistributorIds = scopeDistributors.map(d => d.id)
 
+  const defaultRange = monthRangeForPeriod(getCurrentPeriod())
+  const [from, setFrom] = useState(defaultRange.from)
+  const [to, setTo] = useState(defaultRange.to)
   const [distributorId, setDistributorId] = useState('')
   const [productId, setProductId] = useState('')
-  const [periodTakeId, setPeriodTakeId] = useState('')
-  const [data, setData] = useState(null) // { periods, latest }
+  const [rawInvoices, setRawInvoices] = useState(null)
+  const [rawSecondaryOrders, setRawSecondaryOrders] = useState(null)
   const [openingStocks, setOpeningStocks] = useState(null)
   const [discrepancyReports, setDiscrepancyReports] = useState(null)
   const [viewReport, setViewReport] = useState(null)
@@ -68,35 +69,34 @@ export default function DistributorStockSalesReport() {
   const [entryQtys, setEntryQtys] = useState({})
   const [busy, setBusy] = useState(false)
 
+  // Receipts/Sales are fetched all-time (unbounded) — changing From/To is a pure client-side
+  // recompute below, no refetch needed. Only the rep-team scope actually needs a fresh fetch.
   const load = async () => {
-    setData(null)
-    const [{ data: stockTakes }, { data: invoices }, { data: secondaryOrders }, { data: os }, { data: sdr }] = await Promise.all([
-      db.fetchStockTakesForDistributors({ distributorIds: scopeDistributorIds }),
+    setRawInvoices(null)
+    setRawSecondaryOrders(null)
+    const [{ data: invoices }, { data: secondaryOrders }, { data: os }, { data: sdr }] = await Promise.all([
       db.fetchReceiptsForStockReport({ distributorIds: scopeDistributorIds }),
       db.fetchDeliveredSecondaryOrdersForStockReport({ distributorIds: scopeDistributorIds }),
       db.fetchOpeningStocks({ distributorIds: scopeDistributorIds }),
       db.fetchDiscrepancyReports({ distributorIds: scopeDistributorIds }),
     ])
+    setRawInvoices(invoices || [])
+    setRawSecondaryOrders(secondaryOrders || [])
     setOpeningStocks(os || [])
     setDiscrepancyReports(sdr || [])
-    setData(computeStockTakePeriods({
-      stockTakes: stockTakes || [], invoices: invoices || [], secondaryOrders: secondaryOrders || [], openingStocks: os || [],
-      products: products || [], distributorIds: scopeDistributorIds, productIds: null,
-    }))
   }
   useEffect(() => { if (scopeDistributorIds.length) load() }, [repId, scopeDistributorIds.join(',')]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const ledger = (rawInvoices && rawSecondaryOrders && openingStocks)
+    ? computeStockLedger({
+      invoices: rawInvoices, secondaryOrders: rawSecondaryOrders, openingStocks, products: products || [],
+      distributorIds: scopeDistributorIds, productIds: null, from, to,
+    })
+    : null
 
   const distributorName = id => (distributors || []).find(d => d.id === id)?.name || id
   const distributorOptions = uniqById(scopeDistributors)
   const productOptions = uniqById(products || [])
-  const periodOptions = distributorId
-    ? uniqById((data?.periods || []).filter(p => p.distributorId === distributorId).map(p => ({ id: p.takeId, from: p.from, to: p.to })))
-      .sort((a, b) => new Date(b.to) - new Date(a.to))
-    : []
-  // A period's From boundary is defined as the previous stock take's date, not an independently
-  // choosable value — so "To" is the real selector (pick which stock take you're viewing) and "From"
-  // just displays whatever that period's own start turns out to be.
-  const selectedPeriod = periodOptions.find(p => p.id === periodTakeId) || null
   const openingStockFor = distId => (openingStocks || []).find(os => os.distributor_id === distId)
 
   const submitEntry = async () => {
@@ -126,8 +126,8 @@ export default function DistributorStockSalesReport() {
   // Only distributors needing this viewer's attention: no entry yet (anyone can start one), or
   // awaiting the stage this specific role can act on (Manager for 'pending', Admin for
   // 'manager_approved'). Already-approved ones aren't shown — nothing left to do. Missing an
-  // approved entry simply means Opening defaults to 0 for that distributor's first period — never a
-  // blocker, just an optional baseline.
+  // approved entry simply means Opening defaults to 0 for that distributor — never a blocker, just
+  // an optional baseline.
   const openingStockActionRows = scopeDistributors.map(d => {
     const os = openingStockFor(d.id)
     if (!os) return { distributor: d, state: 'missing' }
@@ -139,52 +139,46 @@ export default function DistributorStockSalesReport() {
     return null
   }).filter(Boolean)
 
-  const filterRow = r => (!distributorId || r.distributorId === distributorId) && (!productId || r.productId === productId) && (!periodTakeId || r.takeId === periodTakeId)
-  const summaryRows = (data?.latest || []).filter(filterRow).map(r => ({ ...r, distributorName: distributorName(r.distributorId) }))
-  const detailRows = (data?.periods || []).filter(filterRow).map(r => ({ ...r, distributorName: distributorName(r.distributorId) }))
-    .sort((a, b) => new Date(b.to) - new Date(a.to))
+  const filterRow = r => (!distributorId || r.distributorId === distributorId) && (!productId || r.productId === productId)
+  const summaryRows = (ledger?.summary || []).filter(filterRow).map(r => ({ ...r, distributorName: distributorName(r.distributorId) }))
+  const detailRows = (ledger?.detail || []).filter(filterRow).map(r => ({ ...r, distributorName: distributorName(r.distributorId) }))
 
-  const withDisplay = rows => rows.map(r => ({ ...r, periodDisp: `${r.from || 'First'} → ${r.to}` }))
-  const summaryDisp = withDisplay(summaryRows)
-  const detailDisp = withDisplay(detailRows)
-
-  // Screen columns: qty+value stacked per cell (QtyValue). Export columns: flat, qty and value as
-  // their own separate columns — a PDF/Excel consumer wants that, not a display convenience collapsed
-  // into one cell.
-  const screenColumns = [
+  const summaryColumns = [
     { header: 'Distributor', key: 'distributorName' }, { header: 'Product', key: 'productName' },
-    { header: 'Period', key: 'periodDisp' }, { header: 'Opening', key: 'opening' },
-    { header: 'Receipts', key: 'receipts' }, { header: 'Delivered Sales', key: 'sales' },
-    { header: 'Closing', key: 'closing' },
+    { header: 'Opening', key: 'opening' }, { header: 'Receipts', key: 'receipts' },
+    { header: 'Delivered Sales', key: 'sales' }, { header: 'Closing', key: 'closing' },
   ]
-  const exportColumns = [
+  const detailColumns = [
+    { header: 'Distributor', key: 'distributorName' }, { header: 'Date', key: 'date' },
+    { header: 'Type', key: 'type' }, { header: 'Product', key: 'productName' },
+    { header: 'Qty', key: 'qtyDisp' }, { header: 'Value', key: 'valueDisp' },
+  ]
+
+  const withDetailDisplay = rows => rows.map(r => ({ ...r, qtyDisp: fmtQty(r.qty, r.unit), valueDisp: F(r.value) }))
+  const withSummaryExportDisplay = rows => rows.map(r => ({
+    ...r,
+    openingQtyDisp: fmtQty(r.opening, r.unit), openingValueDisp: r.openingValue == null ? '—' : F(r.openingValue),
+    receiptsQtyDisp: fmtQty(r.receipts, r.unit), receiptsValueDisp: r.receiptsValue == null ? '—' : F(r.receiptsValue),
+    salesQtyDisp: fmtQty(r.sales, r.unit), salesValueDisp: r.salesValue == null ? '—' : F(r.salesValue),
+    closingQtyDisp: fmtQty(r.closing, r.unit), closingValueDisp: r.closingValue == null ? '—' : F(r.closingValue),
+  }))
+  const summaryExportColumns = [
     { header: 'Distributor', key: 'distributorName' }, { header: 'Product', key: 'productName' },
-    { header: 'Period', key: 'periodDisp' },
     { header: 'Opening Qty', key: 'openingQtyDisp' }, { header: 'Opening Value', key: 'openingValueDisp' },
     { header: 'Receipts Qty', key: 'receiptsQtyDisp' }, { header: 'Receipts Value', key: 'receiptsValueDisp' },
     { header: 'Delivered Sales Qty', key: 'salesQtyDisp' }, { header: 'Delivered Sales Value', key: 'salesValueDisp' },
     { header: 'Closing Qty', key: 'closingQtyDisp' }, { header: 'Closing Value', key: 'closingValueDisp' },
   ]
-  const withExportDisplay = rows => rows.map(r => ({
-    ...r,
-    openingQtyDisp: fmtQty(r.opening, r.unit), openingValueDisp: r.openingValue == null ? '—' : F(r.openingValue),
-    receiptsQtyDisp: fmtQty(r.receipts, r.unit), receiptsValueDisp: r.receiptsValue == null ? '—' : F(r.receiptsValue),
-    salesQtyDisp: fmtQty(r.sales, r.unit), salesValueDisp: r.salesValue == null ? '—' : F(r.salesValue),
-    closingQtyDisp: fmtQty(r.calculatedClosing, r.unit), closingValueDisp: r.calculatedClosingValue == null ? '—' : F(r.calculatedClosingValue),
-  }))
 
-  const activeRows = tab === 'summary' ? summaryDisp : detailDisp
+  const activeRows = tab === 'summary' ? summaryRows : withDetailDisplay(detailRows)
+  const rangeLabel = `${from}_to_${to}`
 
-  const exportPdf = () => downloadReportPdf({
-    filename: `StockSalesReport-${tab === 'summary' ? 'Summary' : 'Detail'}.pdf`,
-    title: `Distributor Stock & Sales — ${tab === 'summary' ? 'Summary' : 'Detail'} Report`,
-    columns: exportColumns, rows: withExportDisplay(activeRows),
-  })
-  const exportExcel = () => downloadReportExcel({
-    filename: `StockSalesReport-${tab === 'summary' ? 'Summary' : 'Detail'}.xlsx`,
-    sheetName: tab === 'summary' ? 'Summary' : 'Detail',
-    columns: exportColumns, rows: withExportDisplay(activeRows),
-  })
+  const exportPdf = () => tab === 'summary'
+    ? downloadReportPdf({ filename: `StockSalesReport-Summary-${rangeLabel}.pdf`, title: `Distributor Stock & Sales — Summary (${from} to ${to})`, columns: summaryExportColumns, rows: withSummaryExportDisplay(summaryRows) })
+    : downloadReportPdf({ filename: `StockSalesReport-Detail-${rangeLabel}.pdf`, title: `Distributor Stock & Sales — Detail (${from} to ${to})`, columns: detailColumns, rows: activeRows })
+  const exportExcel = () => tab === 'summary'
+    ? downloadReportExcel({ filename: `StockSalesReport-Summary-${rangeLabel}.xlsx`, sheetName: 'Summary', columns: summaryExportColumns, rows: withSummaryExportDisplay(summaryRows) })
+    : downloadReportExcel({ filename: `StockSalesReport-Detail-${rangeLabel}.xlsx`, sheetName: 'Detail', columns: detailColumns, rows: activeRows })
 
   const reportRows = (discrepancyReports || []).filter(r => !distributorId || r.distributor_id === distributorId)
   const varianceCount = r => (r.items || []).filter(it => Number(it.variance) !== 0).length
@@ -218,9 +212,7 @@ export default function DistributorStockSalesReport() {
         <div style={{ padding: 12, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
           <div>
             <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Distributor</div>
-            {/* Changing (or clearing) the distributor invalidates whatever Period was selected — a
-                period only means anything for one specific distributor's own take-to-take timeline. */}
-            <select value={distributorId} onChange={e => { setDistributorId(e.target.value); setPeriodTakeId('') }} style={selStyle}>
+            <select value={distributorId} onChange={e => setDistributorId(e.target.value)} style={selStyle}>
               <option value="">All</option>
               {distributorOptions.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
@@ -235,19 +227,12 @@ export default function DistributorStockSalesReport() {
           {tab !== 'discrepancy' && (
             <>
               <div>
-                <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Period From</div>
-                {/* Derived, not independently selectable — a period's start is always the previous
-                    stock take's date, fixed by whichever "To" is chosen. */}
-                <select value={selectedPeriod?.from || ''} disabled style={selStyle}>
-                  <option value="">{selectedPeriod ? (selectedPeriod.from || 'First') : '—'}</option>
-                </select>
+                <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>From</div>
+                <input type="date" value={from} onChange={e => setFrom(e.target.value)} style={selStyle} />
               </div>
               <div>
-                <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Period To</div>
-                <select value={periodTakeId} onChange={e => setPeriodTakeId(e.target.value)} style={selStyle} disabled={!distributorId}>
-                  <option value="">{distributorId ? 'All' : 'Pick a distributor first'}</option>
-                  {periodOptions.map(p => <option key={p.id} value={p.id}>{p.to}</option>)}
-                </select>
+                <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>To</div>
+                <input type="date" value={to} onChange={e => setTo(e.target.value)} style={selStyle} />
               </div>
             </>
           )}
@@ -280,29 +265,56 @@ export default function DistributorStockSalesReport() {
         )}
       </div>
 
-      {data === null && tab !== 'discrepancy' && <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}>Loading...</div>}
+      {ledger === null && tab !== 'discrepancy' && <div style={{ textAlign: 'center', padding: 40, color: '#9ca3af' }}>Loading...</div>}
 
-      {data !== null && tab !== 'discrepancy' && (
+      {ledger !== null && tab === 'summary' && (
         <Card>
-          <CH title={tab === 'summary' ? 'Summary' : 'Detail'} sub={`${activeRows.length} row(s)`} />
-          {activeRows.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No physical stock takes recorded yet</div>}
+          <CH title="Summary" sub={`${from} to ${to} · ${summaryRows.length} row(s)`} />
+          {summaryRows.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No purchase/sale activity on record for this range</div>}
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 800 }}>
               <thead>
                 <tr style={{ background: '#f9fafb' }}>
-                  {screenColumns.map(c => <th key={c.key} style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>{c.header}</th>)}
+                  {summaryColumns.map(c => <th key={c.key} style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>{c.header}</th>)}
                 </tr>
               </thead>
               <tbody>
-                {activeRows.map((r, i) => (
+                {summaryRows.map((r, i) => (
                   <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
                     <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{r.distributorName}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.productName}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.periodDisp}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12 }}><QtyValue qty={r.opening} value={r.openingValue} unit={r.unit} /></td>
                     <td style={{ padding: '8px 10px', fontSize: 12, color: '#15803d' }}><QtyValue qty={r.receipts} value={r.receiptsValue} unit={r.unit} /></td>
                     <td style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c' }}><QtyValue qty={r.sales} value={r.salesValue} unit={r.unit} /></td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}><QtyValue qty={r.calculatedClosing} value={r.calculatedClosingValue} unit={r.unit} /></td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}><QtyValue qty={r.closing} value={r.closingValue} unit={r.unit} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {ledger !== null && tab === 'detail' && (
+        <Card>
+          <CH title="Detail" sub={`${from} to ${to} · ${detailRows.length} transaction(s)`} />
+          {detailRows.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No purchase/sale transactions in this range</div>}
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
+              <thead>
+                <tr style={{ background: '#f9fafb' }}>
+                  {detailColumns.map(c => <th key={c.key} style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>{c.header}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {withDetailDisplay(detailRows).map((r, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{r.distributorName}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.date}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, color: r.type === 'Receipt' ? '#15803d' : '#b91c1c' }}>{r.type}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.productName}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.qtyDisp}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{r.valueDisp}</td>
                   </tr>
                 ))}
               </tbody>
@@ -355,9 +367,8 @@ export default function DistributorStockSalesReport() {
         <Sheet title={`${viewReport.id} — ${viewReport.distributor?.name || viewReport.distributor_id}`}
           sub={`Period: ${viewReport.from_date || 'First'} → ${viewReport.report_date} · Stock take: ${fmtDateTime(viewReport.take?.created_at)}`}
           onClose={() => setViewReport(null)} zIndex={320}>
-          {/* Deliberately just the closing-stock comparison (Calculated vs Physical vs Variance) —
-              Opening/Receipts/Sales already live in the Stock & Sales Report itself; repeating them
-              here would just duplicate that report inside this one. */}
+          {/* Deliberately just the closing-stock comparison — Opening/Receipts/Sales already live in
+              the Stock & Sales Report itself; repeating them here would just duplicate that report. */}
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 500 }}>
               <thead>
