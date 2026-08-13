@@ -32,7 +32,18 @@ commercial launch).
    lies) — `retail_visits.member_id` and `secondary_orders.member_id` are both this trap; PostgREST
    embeds against `members` on these columns fail outright ("could not find a relationship") even
    though the values line up — resolve the name client-side against the already-loaded `members`
-   list instead of embedding.
+   list instead of embedding. Also hit when a table has its own denormalized pointer *back* into
+   something that also points at it — `secondary_orders.delivery_id → secondary_order_deliveries.id`
+   plus `secondary_order_deliveries.order_id → secondary_orders.id` gives PostgREST two valid paths
+   between the same two tables, so a plain `delivery:secondary_order_deliveries(...)` embed errors
+   with `PGRST201` (needs `secondary_order_deliveries!secondary_orders_delivery_id_fkey`). Unlike the
+   `member_id` case above, this one **doesn't fail loudly in the app** — `{ data, error }` still
+   returns from the client, and if the caller doesn't check `error` (as `stockReport.js`'s Sales
+   fetch didn't, initially), the embed just silently comes back `null`/empty and every downstream
+   number computes as if nothing happened — caught only by checking real numbers against hand
+   computed expectations during live verification, not by any crash or visible symptom. Whenever
+   adding a denormalized "back-pointer" column alongside an existing reverse FK, assume the ambiguity
+   and alias explicitly from the start rather than waiting to hit it.
 4. **Stale Vite module cache** surviving dev-server restart — if global search shows zero real
    references but a component still renders, delete `node_modules/.vite` or hard-refresh + restart.
 5. **`if (!loaded) fetchX()` render-time fetch pattern** — flagged in several older tile components,
@@ -462,23 +473,48 @@ fix a Distributor-master data gap).
 
 **Stock & Sales Report (`src/pages/shared/DistributorStockSalesReport.jsx`, menu
 `distributorStockSalesReport`, same 3-way audience as the Secondary Order Report)** — periods are
-anchored to **real stock-take dates**, not a user-chosen range (no date-range filter; Distributor +
-Product + Sales Rep instead). For each distributor's stock takes in `take_date` order:
-**Closing** = that take's physical count (ground truth, never calculated); **Opening** = the
-*previous* period's Closing (0 before the very first take — there is no manual baseline in this
-design); **Receipts** = auto-derived from `distributor_orders` where `delivered_at` is set (Journey
-Phase 3's Delivery Complete — *not* invoice approval) in between, via
-`db.fetchDeliveredOrdersForStockReport`; **Sales** is a *derived plug figure*,
-`Opening + Receipts − Closing` — reconciling that derived number against the real Distributor
-Secondary sales data itemwise is explicit **future work ("a match design"), not built**. All figures
-are already base-unit-equivalent (deliveries via `distributor_order_items.final_qty`; counts via
-`unitConversion.js`'s `toBaseQty`, same as Distributor Secondary's cart) — "report in the highest
-unit" is just display formatting: base-unit qty as-is, labeled with the product's Base Unit, rounded
-to 1 decimal (`stockReport.js`'s `round1`). `computeStockTakePeriods` (`src/lib/stockReport.js`,
-pure, mirrors `achievementEngine.js`'s shape) carries the last known Closing forward across any take
-that skipped a product, rather than treating a skip as zero. Summary tab = latest period per
-(distributor, product); Detail tab = every period ever recorded. Export reuses
-`printSecondaryReport.js`'s generic `downloadReportPdf`/`downloadReportExcel` as-is.
+still anchored to **real stock-take dates**, not a user-chosen range (no date-range filter;
+Distributor + Product + Sales Rep instead), and **Physical Closing** is still that take's real
+physical count (ground truth, never calculated) — none of the physical-count schedule/punch-gate
+machinery above changed. What changed is which side of the ledger is "real": **Sales** is no longer
+a derived plug — it's genuine delivered quantity from Distributor Secondary's Order Delivery
+tracking (`delivery_status in ('full','partial')`, minus any per-item `returned_qty` for a partial —
+see the Order Delivery module below), dated to when the delivery outcome was actually marked, via
+`db.fetchDeliveredSecondaryOrdersForStockReport`. With Sales now real, a **Calculated Closing**
+(`Opening + Receipts − Sales`) can be computed independently of the physical count and compared
+against it — **Variance** (`Physical Closing − Calculated Closing`) is that comparison, the itemwise
+reconciliation this report always intended to build ("a match design", flagged as deferred when the
+report first shipped).
+
+**Receipts** now sources from `invoices` (`db.fetchReceiptsForStockReport`), not
+`distributor_order_items.final_qty` directly — the invoice is the authoritative billed-quantity
+record, and can exist with no linked order at all (legacy/manual entries, `invoices.order_id null`,
+pre-dating the digital order pipeline). An order-linked invoice only counts once the driver has
+actually confirmed delivery (`order.delivered_at` set, Journey Phase 3's Delivery Complete — same
+gate as before, just checked via the invoice's embedded order rather than the order directly); a
+legacy invoice has nothing to confirm against, so it counts as soon as it's `status='approved'`.
+
+**Opening Stock (`distributor_opening_stocks`/`_items`)** — the very first period for a distributor
+still defaults Opening to 0 unless a **one-time manual baseline** has been entered and approved.
+`distributor_id` is that table's own primary key (not a generated id) — this is what enforces
+"entered once, ever" at the database level; a second submission attempt simply fails the insert.
+Anyone with report access can start the entry (`db.submitOpeningStock`, one qty field per product,
+inline in `DistributorStockSalesReport.jsx` rather than a separate page — it only ever matters in
+this report's context) — needs **Manager then Admin** sign-off, sequential, before
+`computeStockTakePeriods` will actually use it (`status`: `pending` → `manager_approved` →
+`approved`, `db.approveOpeningStockManager`/`approveOpeningStockAdmin`). No reject/edit path in v1,
+matching this app's general approve-only-flow convention.
+
+All figures are already base-unit-equivalent (invoice lines and secondary-order items are both
+already base-unit-equivalent quantities; physical counts via `unitConversion.js`'s `toBaseQty`, same
+as Distributor Secondary's cart) — "report in the highest unit" is just display formatting: base-unit
+qty as-is, labeled with the product's Base Unit, rounded to 1 decimal (`stockReport.js`'s `round1`,
+display-time only — the underlying computation stays unrounded). `computeStockTakePeriods`
+(`src/lib/stockReport.js`, pure, mirrors `achievementEngine.js`'s shape) carries the last known
+Physical Closing forward across any take that skipped a product, rather than treating a skip as
+zero. Summary tab = latest period per (distributor, product); Detail tab = every period ever
+recorded. Export reuses `printSecondaryReport.js`'s generic `downloadReportPdf`/`downloadReportExcel`
+as-is.
 
 ## Module: Attendance & HR
 

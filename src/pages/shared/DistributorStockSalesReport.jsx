@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
-import { Card, CH, Btn } from '../../components/ui.jsx'
+import { Card, CH, Btn, Sheet } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
 import { downloadReportPdf, downloadReportExcel } from '../../lib/printSecondaryReport.js'
 import { computeStockTakePeriods, round1 } from '../../lib/stockReport.js'
@@ -13,13 +13,18 @@ const fmtQty = (n, unit) => (n === null || n === undefined ? '—' : `${round1(n
 // Periods are anchored to real stock-take dates, not a user-chosen date range — no From/To filter
 // here, unlike DistributorSecondaryReport.jsx. Summary = latest period per (distributor,product);
 // Detail = every stock-take-to-stock-take period ever recorded (computeStockTakePeriods handles
-// both from the same fetch).
+// both from the same fetch). Opening Stock (one-time baseline entry, Manager→Admin approval) is
+// managed inline here rather than a separate page — it only ever matters in the context of this
+// report, and "entered once ever" per distributor means there's no ongoing workflow to justify its
+// own menu.
 export default function DistributorStockSalesReport() {
   const { currentUser, role } = useAuth()
   const { members, users, distributors, products } = useData()
 
   const isOwnView = role?.id === 'r5'
   const multiRep = !isOwnView
+  const isManager = role?.id === 'r2'
+  const isAdmin = role?.id === 'r1'
   const salesTeamMemberIds = new Set((users || []).filter(u => u.role_id === 'r5' && u.member_id != null).map(u => u.member_id))
   const scopeMembers = isOwnView
     ? (members || []).filter(m => m.id === currentUser?.member_id)
@@ -39,16 +44,23 @@ export default function DistributorStockSalesReport() {
   const [distributorId, setDistributorId] = useState('')
   const [productId, setProductId] = useState('')
   const [data, setData] = useState(null) // { periods, latest }
+  const [openingStocks, setOpeningStocks] = useState(null)
   const [tab, setTab] = useState('summary')
+  const [enterFor, setEnterFor] = useState(null) // distributor currently getting its one-time Opening Stock entry
+  const [entryQtys, setEntryQtys] = useState({})
+  const [busy, setBusy] = useState(false)
 
   const load = async () => {
     setData(null)
-    const [{ data: stockTakes }, { data: deliveredOrders }] = await Promise.all([
+    const [{ data: stockTakes }, { data: invoices }, { data: secondaryOrders }, { data: os }] = await Promise.all([
       db.fetchStockTakesForDistributors({ distributorIds: scopeDistributorIds }),
-      db.fetchDeliveredOrdersForStockReport({ distributorIds: scopeDistributorIds }),
+      db.fetchReceiptsForStockReport({ distributorIds: scopeDistributorIds }),
+      db.fetchDeliveredSecondaryOrdersForStockReport({ distributorIds: scopeDistributorIds }),
+      db.fetchOpeningStocks({ distributorIds: scopeDistributorIds }),
     ])
+    setOpeningStocks(os || [])
     setData(computeStockTakePeriods({
-      stockTakes: stockTakes || [], deliveredOrders: deliveredOrders || [],
+      stockTakes: stockTakes || [], invoices: invoices || [], secondaryOrders: secondaryOrders || [], openingStocks: os || [],
       distributorIds: scopeDistributorIds, productIds: null,
     }))
   }
@@ -57,6 +69,45 @@ export default function DistributorStockSalesReport() {
   const distributorName = id => (distributors || []).find(d => d.id === id)?.name || id
   const distributorOptions = uniqById(scopeDistributors)
   const productOptions = uniqById(products || [])
+  const openingStockFor = distId => (openingStocks || []).find(os => os.distributor_id === distId)
+
+  const submitEntry = async () => {
+    if (!enterFor) return
+    setBusy(true)
+    const items = (products || []).map(p => ({ product_id: p.id, qty: Number(entryQtys[p.id]) || 0 }))
+    const { error } = await db.submitOpeningStock({ distributorId: enterFor.id, enteredBy: currentUser?.id, items })
+    setBusy(false)
+    setEnterFor(null)
+    setEntryQtys({})
+    if (!error) load()
+  }
+
+  const approveManager = async (distId) => {
+    setBusy(true)
+    await db.approveOpeningStockManager(distId, currentUser?.id)
+    setBusy(false)
+    load()
+  }
+  const approveAdmin = async (distId) => {
+    setBusy(true)
+    await db.approveOpeningStockAdmin(distId, currentUser?.id)
+    setBusy(false)
+    load()
+  }
+
+  // Only distributors needing this viewer's attention: no entry yet (anyone can start one), or
+  // awaiting the stage this specific role can act on (Manager for 'pending', Admin for
+  // 'manager_approved'). Already-approved ones aren't shown — nothing left to do.
+  const openingStockActionRows = scopeDistributors.map(d => {
+    const os = openingStockFor(d.id)
+    if (!os) return { distributor: d, state: 'missing' }
+    // Strictly sequential — Admin must not see (let alone act on) a 'pending' entry, or clicking
+    // "Approve" there would record an Admin as the Manager-stage approver, defeating the point of
+    // having two distinct stages at all.
+    if (os.status === 'pending' && isManager) return { distributor: d, state: 'awaiting_manager', os }
+    if (os.status === 'manager_approved' && isAdmin) return { distributor: d, state: 'awaiting_admin', os }
+    return null
+  }).filter(Boolean)
 
   const filterRow = r => (!distributorId || r.distributorId === distributorId) && (!productId || r.productId === productId)
   const summaryRows = (data?.latest || []).filter(filterRow).map(r => ({ ...r, distributorName: distributorName(r.distributorId) }))
@@ -66,13 +117,16 @@ export default function DistributorStockSalesReport() {
     { header: 'Distributor', key: 'distributorName' }, { header: 'Product', key: 'productName' },
     { header: 'Period From', key: 'from' }, { header: 'Period To', key: 'to' },
     { header: 'Opening', key: 'openingDisp' }, { header: 'Receipts', key: 'receiptsDisp' },
-    { header: 'Sales', key: 'salesDisp' }, { header: 'Closing', key: 'closingDisp' },
+    { header: 'Delivered Sales', key: 'salesDisp' }, { header: 'Physical Closing', key: 'closingDisp' },
+    { header: 'Calculated Closing', key: 'calcClosingDisp' }, { header: 'Variance', key: 'varianceDisp' },
   ]
   const detailColumns = summaryColumns
 
   const withDisplay = rows => rows.map(r => ({
     ...r, from: r.from || '—', openingDisp: fmtQty(r.opening, r.unit), receiptsDisp: fmtQty(r.receipts, r.unit),
     salesDisp: fmtQty(r.sales, r.unit), closingDisp: fmtQty(r.closing, r.unit),
+    calcClosingDisp: fmtQty(r.calculatedClosing, r.unit),
+    varianceDisp: r.variance === null ? '—' : `${r.variance > 0 ? '+' : ''}${round1(r.variance)} ${r.unit || ''}`.trim(),
   }))
 
   const activeColumns = tab === 'summary' ? summaryColumns : detailColumns
@@ -91,6 +145,27 @@ export default function DistributorStockSalesReport() {
 
   return (
     <div>
+      {openingStockActionRows.length > 0 && (
+        <Card>
+          <CH title="Opening Stock" sub={`${openingStockActionRows.length} distributor(s) need attention`} />
+          {openingStockActionRows.map(({ distributor, state }) => (
+            <div key={distributor.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderBottom: '1px solid #f3f4f6' }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 13 }}>{distributor.name}</div>
+                <div style={{ fontSize: 11, color: '#9ca3af' }}>
+                  {state === 'missing' && 'No opening stock entered yet'}
+                  {state === 'awaiting_manager' && 'Awaiting Manager approval'}
+                  {state === 'awaiting_admin' && 'Awaiting Admin approval'}
+                </div>
+              </div>
+              {state === 'missing' && <Btn sm v="pri" onClick={() => setEnterFor(distributor)}>Enter Opening Stock</Btn>}
+              {state === 'awaiting_manager' && <Btn sm v="ok" disabled={busy} onClick={() => approveManager(distributor.id)}>Approve (Manager)</Btn>}
+              {state === 'awaiting_admin' && <Btn sm v="ok" disabled={busy} onClick={() => approveAdmin(distributor.id)}>Approve (Admin)</Btn>}
+            </div>
+          ))}
+        </Card>
+      )}
+
       <Card>
         <CH title="Filters" />
         <div style={{ padding: 12, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
@@ -142,7 +217,7 @@ export default function DistributorStockSalesReport() {
           <CH title={tab === 'summary' ? 'Summary' : 'Detail'} sub={`${activeRows.length} row(s)`} />
           {activeRows.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No physical stock takes recorded yet</div>}
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
               <thead>
                 <tr style={{ background: '#f9fafb' }}>
                   {activeColumns.map(c => <th key={c.key} style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>{c.header}</th>)}
@@ -159,12 +234,33 @@ export default function DistributorStockSalesReport() {
                     <td style={{ padding: '8px 10px', fontSize: 12, color: '#15803d' }}>{r.receiptsDisp}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c' }}>{r.salesDisp}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{r.closingDisp}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.calcClosingDisp}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: r.variance ? (r.variance < 0 ? '#b91c1c' : '#b45309') : '#15803d' }}>{r.varianceDisp}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </Card>
+      )}
+
+      {enterFor && (
+        <Sheet title={`Opening Stock — ${enterFor.name}`} sub="One-time entry, needs Manager then Admin approval" onClose={() => { setEnterFor(null); setEntryQtys({}) }}>
+          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>Enter the starting quantity on hand for each product (leave 0 for products not stocked).</div>
+          {(products || []).map(p => (
+            <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
+              <div style={{ fontSize: 13 }}>{p.name} <span style={{ color: '#9ca3af' }}>({p.unit})</span></div>
+              <input
+                type="number" min={0} step="any"
+                value={entryQtys[p.id] ?? ''}
+                onChange={e => setEntryQtys(q => ({ ...q, [p.id]: e.target.value }))}
+                placeholder="0"
+                style={{ width: 80, padding: '5px 8px', borderRadius: 6, border: '1px solid #e5e7eb', fontSize: 12 }}
+              />
+            </div>
+          ))}
+          <Btn v="pri" full disabled={busy} onClick={submitEntry} style={{ marginTop: 12 }}>Submit for Approval</Btn>
+        </Sheet>
       )}
     </div>
   )

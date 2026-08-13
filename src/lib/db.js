@@ -2181,22 +2181,93 @@ export async function bootstrapStockTakeAnchors(distributorIds, today) {
   return { error }
 }
 
-// Every delivered order (Journey Phase 3's "Delivery Complete", distributor_orders.delivered_at
-// set) for the given distributors, all-time — feeds the Stock & Sales Report's Receipts side. No
-// server-side date filter: delivered_at is a full timestamptz written via toISOString(), so
-// bucketing by local calendar date against a date-only from/to boundary happens client-side in
-// stockReport.js via period.js's localDateStr(), never a server-side toISOString() date slice (see
-// CLAUDE.md's IST-boundary bug pattern).
-// No `member:members(...)` embed by default — distributor_orders has 2 FKs into other tables
-// (member_id, manager_id) so PostgREST needs explicit constraint aliasing; fetchOrdersAwaitingInvoice
-// above already established the working alias (`distributor_orders_member_id_fkey`), reused here.
-export async function fetchDeliveredOrdersForStockReport({ distributorIds }) {
+// Receipts side of the Stock & Sales Report — sourced from `invoices` (the authoritative billed-
+// quantity record, not distributor_order_items.final_qty directly), scoped to approved invoices for
+// the given distributors, all-time. An order-linked invoice only counts once the driver has actually
+// confirmed delivery (order.delivered_at set, Journey Phase 3's "Delivery Complete") — stockReport.js
+// gates on that client-side. A legacy/manual invoice (order_id null — pre-dates the digital order
+// pipeline, see CLAUDE.md's Invoicing note) has nothing to "confirm" and counts as soon as approved.
+// No server-side date filter for the same IST-boundary reasoning as fetchDeliveredOrdersForStockReport
+// used to carry — bucketing by local calendar date happens client-side in stockReport.js.
+export async function fetchReceiptsForStockReport({ distributorIds }) {
   if (!distributorIds?.length) return { data: [], error: null }
   const { data, error } = await supabase
-    .from('distributor_orders')
-    .select('*, distributor:distributors(id,name), member:members!distributor_orders_member_id_fkey(id,name), items:distributor_order_items(*, product:products(id,name))')
+    .from('invoices')
+    .select('*, lines:invoice_lines(*, product:products(id,name)), order:distributor_orders(id, delivered_at)')
     .in('distributor_id', distributorIds)
-    .not('delivered_at', 'is', null)
-    .order('delivered_at', { ascending: false })
+    .eq('status', 'approved')
+  return { data, error }
+}
+
+// Sales side of the Stock & Sales Report — real delivered secondary-order quantity (replacing the
+// old Opening+Receipts-Closing derived plug), scoped to completed batches (matches every other
+// Distributor Secondary "real activity" gate in this app) with a resolved delivery outcome. Embeds
+// the delivery row + its per-item returns directly — unlike secondary_orders.member_id, delivery_id
+// is a real FK with no PostgREST embedding trap, so this reads in one query rather than needing a
+// client-side resolve.
+export async function fetchDeliveredSecondaryOrdersForStockReport({ distributorIds }) {
+  if (!distributorIds?.length) return { data: [], error: null }
+  // secondary_orders <-> secondary_order_deliveries has 2 FK paths (deliveries.order_id, and this
+  // table's own denormalized delivery_id) — PostgREST can't pick one without the explicit
+  // !constraint_name alias below (see CLAUDE.md's Recurring Bug Pattern #3; this fetch fell into
+  // that exact trap once already: the embed failed outright, and since nothing surfaces that error
+  // to the UI, Sales just silently computed as 0 everywhere — caught only by checking real numbers
+  // during verification, not by any crash or visible symptom).
+  const { data, error } = await supabase
+    .from('secondary_orders')
+    .select('*, items:secondary_order_items(*), delivery:secondary_order_deliveries!secondary_orders_delivery_id_fkey(id, marked_at, delivery_items:secondary_order_delivery_items(order_item_id, returned_qty))')
+    .in('distributor_id', distributorIds)
+    .eq('cancelled', false)
+    .not('batch_id', 'is', null)
+    .in('delivery_status', ['full', 'partial'])
+  return { data, error }
+}
+
+// ─── DISTRIBUTOR OPENING STOCK (one-time baseline, per distributor) ────────────
+// A distributor's very first Stock & Sales Report period has no prior physical count to inherit an
+// Opening balance from — this fills that gap with a one-time manual entry instead of defaulting to
+// 0. distributor_id is the table's own primary key (not a generated id), which is what enforces
+// "entered once, ever" at the database level — the insert below simply fails on a second attempt for
+// the same distributor. Needs Manager then Admin sign-off (sequential, same shape as every other
+// 2-stage approval in this app) before stockReport.js will actually use it as a baseline.
+export async function fetchOpeningStocks({ distributorIds }) {
+  if (!distributorIds?.length) return { data: [], error: null }
+  const { data, error } = await supabase
+    .from('distributor_opening_stocks')
+    .select('*, items:distributor_opening_stock_items(*), distributor:distributors(id,name)')
+    .in('distributor_id', distributorIds)
+  return { data, error }
+}
+
+export async function submitOpeningStock({ distributorId, enteredBy, items }) {
+  const { data: header, error } = await supabase
+    .from('distributor_opening_stocks')
+    .insert({ distributor_id: distributorId, entered_by: enteredBy })
+    .select().single()
+  if (error) return { data: null, error }
+  const itemRows = (items || []).filter(it => Number(it.qty) > 0)
+    .map(it => ({ distributor_id: distributorId, product_id: it.product_id, qty: it.qty }))
+  if (itemRows.length) {
+    const { error: itemError } = await supabase.from('distributor_opening_stock_items').insert(itemRows)
+    if (itemError) return { data: null, error: itemError }
+  }
+  return { data: header, error: null }
+}
+
+export async function approveOpeningStockManager(distributorId, approvedBy) {
+  const { data, error } = await supabase
+    .from('distributor_opening_stocks')
+    .update({ status: 'manager_approved', manager_approved_by: approvedBy, manager_approved_at: new Date().toISOString() })
+    .eq('distributor_id', distributorId).eq('status', 'pending')
+    .select().single()
+  return { data, error }
+}
+
+export async function approveOpeningStockAdmin(distributorId, approvedBy) {
+  const { data, error } = await supabase
+    .from('distributor_opening_stocks')
+    .update({ status: 'approved', admin_approved_by: approvedBy, admin_approved_at: new Date().toISOString() })
+    .eq('distributor_id', distributorId).eq('status', 'manager_approved')
+    .select().single()
   return { data, error }
 }
