@@ -88,6 +88,13 @@ commercial launch).
     to merge with). Semicolon (or a leading `;` on the new line) fixes it; this codebase's style
     otherwise omits semicolons freely, so this is worth a second look specifically wherever a
     multi-line chain starts with `(`.
+13. **`ui.jsx`'s `Btn` destructive-action variant is `v="bad"`, not `v="danger"`** — `Btn` falls back
+    silently to the default gray style (`BTN_STYLES[v] || BTN_STYLES.def`) for any unrecognized `v`,
+    so passing `"danger"` produces no error and no visual warning at all that anything's wrong — a
+    "Reject"/"Not Delivered"/destructive button just quietly renders as a plain default button
+    instead of red. Caught by inspection while building Order Delivery, not by any tool. The full
+    variant set is `def`/`pri`/`ok`/`bad`/`gh`/`warn` — check `BTN_STYLES` in `ui.jsx` rather than
+    guessing a variant name for any new destructive/warning action.
 
 ## Data Model Quick Reference
 - **Roles**: `r1` Admin, `r2` Manager, `r3` Accounts, `r4` HR, `r5` Sales Team, `r6` Warehouse
@@ -335,7 +342,8 @@ genuinely base-unit quantities untouched by which unit the rep picked.
 `distributorSecondaryReport`, reachable by all 3 audiences — Sales Team's own activity, Manager's own
 team, Admin org-wide with an added Sales Rep filter) — **Summary** tab: one row per (batch ×
 distributor × beat) combination, drilling into an order-no-wise list → full read-only order detail
-(`SecondaryOrderDetailSheet`, reuses `printSecondaryOrder.js`'s existing PDF). **Detail** tab: flat
+(`src/components/SecondaryOrderDetailSheet.jsx`, a shared component — also used by Order Delivery
+below — reuses `printSecondaryOrder.js`'s existing PDF). **Detail** tab: flat
 itemwise rows. Both filterable (Distributor/Beat/Sales Rep/date range) and exportable to PDF
 (`jspdf-autotable`, this app's first paginated-table PDF) and Excel (`xlsx`, first Excel export ever
 in this app — carries 2 known high-severity npm-registry CVEs SheetJS no longer patches; accepted
@@ -353,6 +361,40 @@ arrive unlocked, pre-filled to whichever Today/Month/Year tab was active. `TeamA
 
 **`src/lib/printSecondaryOrder.js`** — single-order PDF + batch ZIP (`jszip`, real individual PDF
 files, not one combined document). **`src/lib/printDaySummary.js`** — per-batch/day-summary PDF.
+
+**Order Delivery** (`src/pages/shared/SecondaryOrderDelivery.jsx`, menu id `secondaryOrderDelivery`,
+same 3-way audience as the Order Report — Sales Team's own, Manager's own team, Admin org-wide)
+tracks whether a locked secondary order's goods actually reached the retail outlet, separately from
+the order itself. **Pending** = `batch_id is not null && cancelled = false && delivery_status =
+'pending'` — same "completed batch" scope as the achievement engine/Order Report, but deliberately
+**no age limit**: stays pending indefinitely until acted on
+(`db.fetchSecondaryOrdersForReport`'s `from`/`to` are optional for exactly this — Order Delivery is
+the one caller that omits them). Only the rep who took the order marks its delivery (they're the one
+who'd actually know, e.g. on a next visit) — Manager/Admin get a read-only rep-wise rollup that
+drills into the same batch/order views but without any action buttons.
+
+**Schema**: `secondary_orders.delivery_status` (`pending`/`full`/`partial`/`not_delivered` — deliber-
+ately not reusing `cancelled`, which already means something else entirely: the order itself voided
+*before* it locked) + `delivery_id`, denormalized onto the order row so the dashboard can filter/sum
+directly off `secondary_orders` (already global `useData()` context) with no second query or embed —
+same reasoning as the `member_id` FK-embed trap in Recurring Bug Pattern #3, applied pre-emptively.
+One `secondary_order_deliveries` row per order (id `DL-DDMMYYYY-NN`, same count-then-pad local-date
+convention as `SO-`/`LD-`/`PST-`/`DS-`) records who/when/what outcome — created even for a bulk batch
+action, just many at once, so "a delivery id against an order id" always holds 1:1 regardless of how
+it was reached. `secondary_order_delivery_items` (`order_item_id`, `returned_qty`) only gets rows for
+a **partial** delivery, and only for lines that actually had a return — full/not-delivered orders need
+no item rows at all (0 returned / fully returned is implicit, not stored).
+
+**Reduce-taps flow**: pending orders group by `batch_id` (one Retailing Complete run). The fast path —
+tapping a pending batch offers **Mark All Fully Delivered** / **Mark All Not Delivered** in one action
+across every still-pending order in it (`db.markOrdersDelivered`, bulk insert + per-order update).
+**Partial** at the batch level does no bulk write at all — it just opens that batch's order list,
+where the same three-way choice repeats *per order* (Full/Not Delivered fire immediately; only an
+order-level **Partial** opens the item-qty entry sheet, `db.markOrderPartiallyDelivered`). The
+order-drill sheet holds a local snapshot of its orders (not a live view), so both action paths splice
+the just-processed order(s) out of that snapshot immediately (closing the sheet outright once nothing
+pending remains in it) rather than waiting on the next background reload to stop showing them as
+actionable — caught as a real staleness bug during build, fixed before shipping.
 
 ## Module: Distributor Physical Stock Take & Stock/Sales Report
 

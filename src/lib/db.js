@@ -1910,6 +1910,8 @@ export async function fetchDaySummariesForDate(memberId, date) {
 // client-side by batch/distributor/beat) and the Detail tab (flattened to one row per item).
 // Scoped to completed batches only (batch_id not null, i.e. locked) — still-ongoing orders aren't
 // part of any batch and belong to the live Day Summary rollup instead, not this report.
+// from/to are optional (Order Delivery's "no age limit" scope omits them entirely, for an unbounded
+// fetch across every completed batch ever) — every other existing caller still passes both, unchanged.
 export async function fetchSecondaryOrdersForReport({ memberIds, distributorId, beatId, from, to }) {
   // No `member:members(...)` embed here — secondary_orders.member_id's FK constraint actually
   // points to users(id), even though the app stores members.id values in it in practice (same
@@ -1920,14 +1922,85 @@ export async function fetchSecondaryOrdersForReport({ memberIds, distributorId, 
     .from('secondary_orders')
     .select('*, outlet:retail_outlets(id,name), beat:beats(id,name), distributor:distributors(id,name), items:secondary_order_items(*, product:products(id,name))')
     .in('member_id', memberIds)
-    .gte('order_date', from)
-    .lte('order_date', to)
     .eq('cancelled', false)
     .not('batch_id', 'is', null)
     .order('order_date', { ascending: false })
+  if (from) q = q.gte('order_date', from)
+  if (to) q = q.lte('order_date', to)
   if (distributorId) q = q.eq('distributor_id', distributorId)
   if (beatId) q = q.eq('beat_id', beatId)
   const { data, error } = await q
+  return { data, error }
+}
+
+// ─── SECONDARY ORDER DELIVERY ──────────────────────────────────────────────────
+// Delivery to the retail outlet is tracked separately from the order itself, one
+// secondary_order_deliveries row per order (id `DL-DDMMYYYY-NN`, same count-then-pad local-date
+// convention as SO-/LD-/PST-/DS-), referenced back via secondary_orders.delivery_id/delivery_status
+// — kept denormalized onto the order row so the dashboard can filter/count directly off
+// secondary_orders (already the app's global useData() context) without a second query or a
+// PostgREST embed (this table's own FK gotchas, see Recurring Bug Pattern #3, are exactly why the
+// read path avoids embedding these two tables together). Only the rep who took the order marks it —
+// see CLAUDE.md's Order Delivery module. No unmark/undo path in v1, matching this app's general
+// approve-only-flow convention (see Journey Approvals' own no-reject-path note).
+async function genDeliveryIds(count) {
+  const today = new Date()
+  const dateStr = `${String(today.getDate()).padStart(2, '0')}${String(today.getMonth() + 1).padStart(2, '0')}${today.getFullYear()}`
+  const { count: existing } = await supabase
+    .from('secondary_order_deliveries')
+    .select('id', { count: 'exact', head: true })
+    .like('id', `DL-${dateStr}-%`)
+  return Array.from({ length: count }, (_, i) => `DL-${dateStr}-${String((existing || 0) + i + 1).padStart(2, '0')}`)
+}
+
+// status: 'full' | 'not_delivered' — the two outcomes that need no per-item breakdown. Covers both
+// the batch-level bulk action (many orderIds at once, the "reduce tasks" fast path for the common
+// case) and a single order marked from the drill-down, via the same function either way.
+export async function markOrdersDelivered({ orderIds, batchId, status, memberId }) {
+  if (!orderIds?.length) return { data: [], error: null }
+  const ids = await genDeliveryIds(orderIds.length)
+  const rows = orderIds.map((order_id, i) => ({ id: ids[i], order_id, batch_id: batchId, status, member_id: memberId }))
+  const { data: deliveries, error } = await supabase.from('secondary_order_deliveries').insert(rows).select()
+  if (error) return { data: null, error }
+  const updates = await Promise.all(
+    deliveries.map(d => supabase.from('secondary_orders').update({ delivery_status: status, delivery_id: d.id }).eq('id', d.order_id))
+  )
+  return { data: deliveries, error: updates.find(u => u.error)?.error || null }
+}
+
+// One order, marked 'partial' — items: [{ order_item_id, returned_qty }], only for lines that
+// actually had a return (0 for everything else is the implicit default, no row needed).
+export async function markOrderPartiallyDelivered({ orderId, batchId, memberId, items }) {
+  const [id] = await genDeliveryIds(1)
+  const { data: delivery, error } = await supabase
+    .from('secondary_order_deliveries')
+    .insert({ id, order_id: orderId, batch_id: batchId, status: 'partial', member_id: memberId })
+    .select().single()
+  if (error) return { data: null, error }
+  const itemRows = (items || []).filter(it => Number(it.returned_qty) > 0)
+    .map(it => ({ delivery_id: id, order_item_id: it.order_item_id, returned_qty: it.returned_qty }))
+  if (itemRows.length) {
+    const { error: itemError } = await supabase.from('secondary_order_delivery_items').insert(itemRows)
+    if (itemError) return { data: null, error: itemError }
+  }
+  const { error: updateError } = await supabase.from('secondary_orders').update({ delivery_status: 'partial', delivery_id: id }).eq('id', orderId)
+  return { data: delivery, error: updateError }
+}
+
+// Return-qty breakdown for a partially-delivered order's detail view — a direct fetch by order_id,
+// not a PostgREST embed off secondary_orders (same reasoning as the module comment above).
+export async function fetchDeliveryDetail(deliveryId) {
+  const { data, error } = await supabase
+    .from('secondary_order_delivery_items')
+    .select('*, item:secondary_order_items(id, qty, rate, product:products(id, name))')
+    .eq('delivery_id', deliveryId)
+  return { data, error }
+}
+
+// Who/when for the "marked by X" line in SecondaryOrderDetailSheet — member_id/marked_at live on
+// this row, not denormalized onto secondary_orders itself (only delivery_status/delivery_id are).
+export async function fetchDeliveryById(deliveryId) {
+  const { data, error } = await supabase.from('secondary_order_deliveries').select('*').eq('id', deliveryId).single()
   return { data, error }
 }
 

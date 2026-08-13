@@ -16,6 +16,7 @@ import DistributorOrder from '../shared/DistributorOrder.jsx'
 import DistributorSecondary from '../shared/DistributorSecondary.jsx'
 import DistributorSecondaryReport from '../shared/DistributorSecondaryReport.jsx'
 import DistributorStockSalesReport from '../shared/DistributorStockSalesReport.jsx'
+import SecondaryOrderDelivery from '../shared/SecondaryOrderDelivery.jsx'
 import StockTakeEntry from './StockTakeEntry.jsx'
 import StockTakeScheduleCard from '../../components/StockTakeScheduleCard.jsx'
 import OrdersForReviewCard from '../../components/OrdersForReviewCard.jsx'
@@ -227,6 +228,7 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
   hasMenu('distributorSecondaryReport') && { id: 'distributorSecondaryReport', icon: '📈', label: 'Secondary Order Report' },
   hasMenu('stockTakeEntry') && { id: 'stockTakeEntry', icon: '📋', label: 'Physical Stock Take' },
   hasMenu('distributorStockSalesReport') && { id: 'distributorStockSalesReport', icon: '📦', label: 'Stock & Sales Report' },
+  hasMenu('secondaryOrderDelivery') && { id: 'secondaryOrderDelivery', icon: '🚚', label: 'Order Delivery' },
 ].filter(Boolean)
   const TABS = [
     hasMenu('dashboard')    && { id: 'dashboard',    icon: '🏠', label: 'Home'     },
@@ -619,6 +621,7 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
         {tab === 'distributorSecondary' && <DistributorSecondary />}
         {tab === 'distributorSecondaryReport' && <DistributorSecondaryReport navParams={reportParams} />}
         {tab === 'distributorStockSalesReport' && <DistributorStockSalesReport />}
+        {tab === 'secondaryOrderDelivery' && <SecondaryOrderDelivery />}
         {tab === 'stockTakeEntry' && (
           <StockTakePicker
             mid={mid} distributors={customers}

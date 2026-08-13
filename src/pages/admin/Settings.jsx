@@ -45,6 +45,7 @@ const ALL_MENUS = [
   { id:'stockTakeSchedule',    label:'Stock Take Schedule'     },
   { id:'stockTakeRuleApprovals', label:'Stock Take Approvals'  },
   { id:'distributorStockSalesReport', label:'Distributor Stock & Sales Report' },
+  { id:'secondaryOrderDelivery', label:'Order Delivery'        },
   { id:'assignedLoads',        label:'My Loads (Driver)'       },
   { id:'driverLoadingConfirm', label:'Confirm Loading (Driver)'},
   { id:'driverJourney',        label:'Journey (Driver)'        },

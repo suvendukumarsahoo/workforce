@@ -42,6 +42,7 @@ import DistributorSecondaryReport from './shared/DistributorSecondaryReport.jsx'
 import DistributorStockSalesReport from './shared/DistributorStockSalesReport.jsx'
 import StockTakeSchedule from './manager/StockTakeSchedule.jsx'
 import StockTakeRuleApprovals from './shared/StockTakeRuleApprovals.jsx'
+import SecondaryOrderDelivery from './shared/SecondaryOrderDelivery.jsx'
 
 const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard',        icon:'📊', sec:'Overview'  },
@@ -79,6 +80,7 @@ const ALL_MENUS = [
 { id:'stockTakeSchedule', label:'Stock Take Schedule', icon:'🗓️', sec:'Distributor Functions' },
 { id:'stockTakeRuleApprovals', label:'Stock Take Approvals', icon:'✅', sec:'Distributor Functions' },
 { id:'distributorStockSalesReport', label:'Distributor Stock & Sales Report', icon:'📦', sec:'Distributor Functions' },
+{ id:'secondaryOrderDelivery', label:'Order Delivery', icon:'🚚', sec:'Distributor Functions' },
 { id:'assignedLoads', label:'My Loads', icon:'🚚', sec:'Overview' },
 { id:'driverLoadingConfirm', label:'Confirm Loading', icon:'📦', sec:'Overview' },
 { id:'driverJourney', label:'Journey', icon:'🧭', sec:'Overview' },
@@ -117,6 +119,7 @@ distributorSecondaryReport: DistributorSecondaryReport,
 stockTakeSchedule: StockTakeSchedule,
 stockTakeRuleApprovals: StockTakeRuleApprovals,
 distributorStockSalesReport: DistributorStockSalesReport,
+secondaryOrderDelivery: SecondaryOrderDelivery,
 stockUpdate: StockUpdate,
 productionIssues: ProductionIssues,
 assignedLoads: AssignedLoads,

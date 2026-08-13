@@ -4,8 +4,8 @@ import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Btn, Sheet, F } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
 import { downloadReportPdf, downloadReportExcel } from '../../lib/printSecondaryReport.js'
-import { downloadSecondaryOrderPdf } from '../../lib/printSecondaryOrder.js'
 import { getCurrentPeriod, monthRangeForPeriod } from '../../lib/period.js'
+import SecondaryOrderDetailSheet from '../../components/SecondaryOrderDetailSheet.jsx'
 
 const selStyle = { padding: '6px 9px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12, background: '#fff' }
 const uniqById = arr => Object.values(Object.fromEntries((arr || []).filter(Boolean).map(x => [x.id, x])))
@@ -264,35 +264,5 @@ export default function DistributorSecondaryReport({ navParams }) {
         <SecondaryOrderDetailSheet order={viewOrder} onClose={() => setViewOrder(null)} zIndex={330} />
       )}
     </div>
-  )
-}
-
-// Read-only full detail for one locked order — reached by drilling Summary row → order-no-wise
-// list → this. Reuses printSecondaryOrder.js's existing downloadSecondaryOrderPdf as-is.
-function SecondaryOrderDetailSheet({ order, onClose, zIndex }) {
-  const items = order.items || []
-  const total = items.reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
-  const productName = pid => items.find(it => it.product_id === pid)?.product?.name || pid
-
-  return (
-    <Sheet title={order.id} sub={order.order_date} onClose={onClose} zIndex={zIndex}>
-      <div style={{ fontSize: 12, color: '#374151', marginBottom: 4 }}>Distributor: <strong>{order.distributor?.name || order.distributor_id}</strong></div>
-      <div style={{ fontSize: 12, color: '#374151', marginBottom: 4 }}>Beat: <strong>{order.beat?.name || order.beat_id}</strong></div>
-      <div style={{ fontSize: 12, color: '#374151', marginBottom: 14 }}>Outlet: <strong>{order.outlet?.name || order.outlet_id}</strong></div>
-
-      {items.map(it => (
-        <div key={it.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid #f3f4f6', fontSize: 13 }}>
-          <span>{it.product?.name || it.product_id} × {it.qty}</span>
-          <span style={{ fontWeight: 600 }}>{F((Number(it.qty) || 0) * (Number(it.rate) || 0))}</span>
-        </div>
-      ))}
-      <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 0', fontSize: 14, fontWeight: 700 }}>
-        <span>Total</span><span>{F(total)}</span>
-      </div>
-
-      <Btn v="pri" full onClick={() => downloadSecondaryOrderPdf({ order, outletName: order.outlet?.name || order.outlet_id, productName })} style={{ marginTop: 10 }}>
-        ⬇ PDF
-      </Btn>
-    </Sheet>
   )
 }
