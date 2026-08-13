@@ -10,6 +10,11 @@ import { getCurrentPeriod, monthRangeForPeriod } from '../../lib/period.js'
 const selStyle = { padding: '6px 9px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12, background: '#fff' }
 const uniqById = arr => Object.values(Object.fromEntries((arr || []).filter(Boolean).map(x => [x.id, x])))
 const fmtQty = (n, unit) => (n === null || n === undefined ? '—' : `${round1(n)} ${unit || ''}`.trim())
+// A qty total is only meaningful when every summed row shares one unit (summing "3 Litres + 5
+// Units" is nonsense) — value (₹) has no such restriction, so a totals row always sums value but
+// only sums quantity when the rows in scope happen to be all one unit (e.g. a single-product filter).
+const allSameUnit = rows => rows.length > 0 && rows.every(r => (r.unit || '') === (rows[0].unit || ''))
+const sumBy = (rows, key) => rows.reduce((s, r) => s + (Number(r[key]) || 0), 0)
 
 // Stacked qty (primary) + value (secondary, currency) — used for every Opening/Receipts/Sales/
 // Closing cell in this report, so quantity and value are always shown together without doubling the
@@ -290,6 +295,25 @@ export default function DistributorStockSalesReport() {
                   </tr>
                 ))}
               </tbody>
+              {summaryRows.length > 0 && (
+                <tfoot>
+                  <tr style={{ background: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }} colSpan={2}>Total</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>
+                      <QtyValue qty={allSameUnit(summaryRows) ? sumBy(summaryRows, 'opening') : null} value={sumBy(summaryRows, 'openingValue')} unit={summaryRows[0].unit} />
+                    </td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#15803d' }}>
+                      <QtyValue qty={allSameUnit(summaryRows) ? sumBy(summaryRows, 'receipts') : null} value={sumBy(summaryRows, 'receiptsValue')} unit={summaryRows[0].unit} />
+                    </td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b91c1c' }}>
+                      <QtyValue qty={allSameUnit(summaryRows) ? sumBy(summaryRows, 'sales') : null} value={sumBy(summaryRows, 'salesValue')} unit={summaryRows[0].unit} />
+                    </td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>
+                      <QtyValue qty={allSameUnit(summaryRows) ? sumBy(summaryRows, 'closing') : null} value={sumBy(summaryRows, 'closingValue')} unit={summaryRows[0].unit} />
+                    </td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </Card>
@@ -318,6 +342,15 @@ export default function DistributorStockSalesReport() {
                   </tr>
                 ))}
               </tbody>
+              {detailRows.length > 0 && (
+                <tfoot>
+                  <tr style={{ background: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }} colSpan={4}>Total</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{allSameUnit(detailRows) ? fmtQty(sumBy(detailRows, 'qty'), detailRows[0].unit) : '—'}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(sumBy(detailRows, 'value'))}</td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </Card>
@@ -390,6 +423,27 @@ export default function DistributorStockSalesReport() {
                   </tr>
                 ))}
               </tbody>
+              {(viewReport.items || []).length > 0 && (() => {
+                const items = (viewReport.items || []).map(it => ({ ...it, unit: it.product?.unit }))
+                const sameUnit = allSameUnit(items)
+                const varianceValueTotal = sumBy(items, 'variance_value')
+                return (
+                  <tfoot>
+                    <tr style={{ background: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>Total</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>
+                        <QtyValue qty={sameUnit ? sumBy(items, 'calculated_closing') : null} value={sumBy(items, 'calculated_closing_value')} unit={items[0].unit} />
+                      </td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>
+                        <QtyValue qty={sameUnit ? sumBy(items, 'physical_closing') : null} value={sumBy(items, 'physical_closing_value')} unit={items[0].unit} />
+                      </td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: varianceValueTotal === 0 ? '#15803d' : (varianceValueTotal < 0 ? '#b91c1c' : '#b45309') }}>
+                        <QtyValue qty={sameUnit ? sumBy(items, 'variance') : null} value={varianceValueTotal} unit={items[0].unit} />
+                      </td>
+                    </tr>
+                  </tfoot>
+                )
+              })()}
             </table>
           </div>
         </Sheet>

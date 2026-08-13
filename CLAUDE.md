@@ -562,6 +562,13 @@ cell) — Receipts/Sales value comes from the real per-line transaction rate (al
 line / delivered order item); Opening/Closing have no transaction of their own (point-in-time
 balances, not events), so those are valued off the product's master `price` instead.
 
+**Totals row** (bottom of Summary, Detail, and each Discrepancy Report's item table, on-screen only —
+exports unchanged) — always sums the ₹ **value** columns, since value is comparable across products;
+quantity is only summed alongside it when every row currently in view shares one `unit`
+(`allSameUnit` in `DistributorStockSalesReport.jsx` — summing "3 Litres + 5 Units" would be
+meaningless), otherwise the quantity cell shows `—` while value still totals correctly (e.g. all
+distributors/all products shows `—` qty + a real ₹ total; filtering to one Product shows both).
+
 **Receipts** now sources from `invoices` (`db.fetchReceiptsForStockReport`), not
 `distributor_order_items.final_qty` directly — the invoice is the authoritative billed-quantity
 record, and can exist with no linked order at all (legacy/manual entries, `invoices.order_id null`,
