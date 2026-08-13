@@ -84,13 +84,13 @@ export default function StockTakeEntry({ distributor, memberId, onDone, onCancel
     // recount during verification produced two rows for one product with different numbers).
     const thisPeriods = periods.filter(p => p.takeId === take.id)
     if (!thisPeriods.length) return
+    // Deliberately just the closing-stock comparison — Opening/Receipts/Sales already live in the
+    // Stock & Sales Report itself; this snapshot only needs to record what it's actually for
+    // (Calculated vs Physical vs Variance), not duplicate that report's own numbers.
     await db.createDiscrepancyReport({
       distributorId: distributor.id, takeId: take.id, reportDate: take.take_date, fromDate: thisPeriods[0]?.from,
       items: thisPeriods.map(p => ({
         product_id: p.productId,
-        opening: p.opening, opening_value: p.openingValue,
-        receipts: p.receipts, receipts_value: p.receiptsValue,
-        sales: p.sales, sales_value: p.salesValue,
         calculated_closing: p.calculatedClosing, calculated_closing_value: p.calculatedClosingValue,
         physical_closing: p.closing, physical_closing_value: p.closingValue,
         variance: p.variance, variance_value: p.varianceValue,

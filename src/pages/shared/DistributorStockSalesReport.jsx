@@ -93,6 +93,10 @@ export default function DistributorStockSalesReport() {
     ? uniqById((data?.periods || []).filter(p => p.distributorId === distributorId).map(p => ({ id: p.takeId, from: p.from, to: p.to })))
       .sort((a, b) => new Date(b.to) - new Date(a.to))
     : []
+  // A period's From boundary is defined as the previous stock take's date, not an independently
+  // choosable value — so "To" is the real selector (pick which stock take you're viewing) and "From"
+  // just displays whatever that period's own start turns out to be.
+  const selectedPeriod = periodOptions.find(p => p.id === periodTakeId) || null
   const openingStockFor = distId => (openingStocks || []).find(os => os.distributor_id === distId)
 
   const submitEntry = async () => {
@@ -229,13 +233,23 @@ export default function DistributorStockSalesReport() {
             </select>
           </div>
           {tab !== 'discrepancy' && (
-            <div>
-              <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Period</div>
-              <select value={periodTakeId} onChange={e => setPeriodTakeId(e.target.value)} style={selStyle} disabled={!distributorId}>
-                <option value="">{distributorId ? 'All' : 'Pick a distributor first'}</option>
-                {periodOptions.map(p => <option key={p.id} value={p.id}>{p.from || 'First'} → {p.to}</option>)}
-              </select>
-            </div>
+            <>
+              <div>
+                <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Period From</div>
+                {/* Derived, not independently selectable — a period's start is always the previous
+                    stock take's date, fixed by whichever "To" is chosen. */}
+                <select value={selectedPeriod?.from || ''} disabled style={selStyle}>
+                  <option value="">{selectedPeriod ? (selectedPeriod.from || 'First') : '—'}</option>
+                </select>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>Period To</div>
+                <select value={periodTakeId} onChange={e => setPeriodTakeId(e.target.value)} style={selStyle} disabled={!distributorId}>
+                  <option value="">{distributorId ? 'All' : 'Pick a distributor first'}</option>
+                  {periodOptions.map(p => <option key={p.id} value={p.id}>{p.to}</option>)}
+                </select>
+              </div>
+            </>
           )}
           {multiRep && (
             <div>
@@ -341,11 +355,14 @@ export default function DistributorStockSalesReport() {
         <Sheet title={`${viewReport.id} — ${viewReport.distributor?.name || viewReport.distributor_id}`}
           sub={`Period: ${viewReport.from_date || 'First'} → ${viewReport.report_date} · Stock take: ${fmtDateTime(viewReport.take?.created_at)}`}
           onClose={() => setViewReport(null)} zIndex={320}>
+          {/* Deliberately just the closing-stock comparison (Calculated vs Physical vs Variance) —
+              Opening/Receipts/Sales already live in the Stock & Sales Report itself; repeating them
+              here would just duplicate that report inside this one. */}
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 500 }}>
               <thead>
                 <tr style={{ background: '#f9fafb' }}>
-                  {['Product', 'Opening', 'Receipts', 'Sales', 'Calculated Closing', 'Physical Closing', 'Variance'].map(h => (
+                  {['Product', 'Calculated Closing', 'Physical Closing', 'Variance'].map(h => (
                     <th key={h} style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>{h}</th>
                   ))}
                 </tr>
@@ -354,9 +371,6 @@ export default function DistributorStockSalesReport() {
                 {(viewReport.items || []).map(it => (
                   <tr key={it.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
                     <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{it.product?.name || it.product_id}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}><QtyValue qty={it.opening} value={it.opening_value} unit={it.product?.unit} /></td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#15803d' }}><QtyValue qty={it.receipts} value={it.receipts_value} unit={it.product?.unit} /></td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c' }}><QtyValue qty={it.sales} value={it.sales_value} unit={it.product?.unit} /></td>
                     <td style={{ padding: '8px 10px', fontSize: 12 }}><QtyValue qty={it.calculated_closing} value={it.calculated_closing_value} unit={it.product?.unit} /></td>
                     <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}><QtyValue qty={it.physical_closing} value={it.physical_closing_value} unit={it.product?.unit} /></td>
                     <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: Number(it.variance) === 0 ? '#15803d' : (Number(it.variance) < 0 ? '#b91c1c' : '#b45309') }}>

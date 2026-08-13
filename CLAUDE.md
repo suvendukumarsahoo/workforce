@@ -518,16 +518,19 @@ the physical count and its variance against Calculated Closing moved entirely in
 Discrepancy Reports tab below (a live report column felt redundant once every stock take generates
 its own persisted snapshot of exactly that comparison).
 
-**Period is a filter, not a column grouping** — joins Distributor/Product/Sales Rep as a real
-dropdown in the Filters card (an earlier pass tried grouping Detail's rows under a period *header*
-instead — wrong call, reverted). Its options are scoped to whichever Distributor is currently
-selected (disabled with a "Pick a distributor first" hint otherwise) — a period only means anything
-for one specific distributor's own take-to-take timeline, so a global cross-distributor period list
-would be meaningless. Summary still only ever holds the *latest* period per (distributor, product) —
-filtering it to an older period correctly shows nothing there; Detail (every period ever recorded)
-is where picking an older period actually narrows visible rows. Both tabs' PDF/Excel exports stay
-flat (Period as its own text column, qty and value as separate columns each) regardless of the
-on-screen qty+value stacking below.
+**Period is a filter, not a column grouping** — two dropdowns, **Period From** and **Period To**, in
+the Filters card alongside Distributor/Product/Sales Rep (two earlier passes got this wrong: first a
+period *header* grouping the Detail rows, then a single combined "{from} → {to}" dropdown — both
+reverted). To is the real selector (lists this distributor's actual stock-take dates); From is
+derived and disabled, not independently pickable — a period's start is always defined as the
+*previous* stock take's date, never an arbitrary free choice. Options are scoped to whichever
+Distributor is currently selected (disabled with a "Pick a distributor first" hint otherwise) — a
+period only means anything for one specific distributor's own take-to-take timeline, so a global
+cross-distributor period list would be meaningless. Summary still only ever holds the *latest*
+period per (distributor, product) — filtering it to an older period correctly shows nothing there;
+Detail (every period ever recorded) is where picking an older period actually narrows visible rows.
+Both tabs' PDF/Excel exports stay flat (Period as its own text column, qty and value as separate
+columns each) regardless of the on-screen qty+value stacking below.
 
 **Every quantity also shows its value** (`QtyValue` component, stacked qty-then-₹-value in the same
 cell) — Receipts/Sales value comes from the real per-line transaction rate (already on the invoice
@@ -566,9 +569,15 @@ identifying info (id, distributor, period, and the stock take's real date **and 
 embedded `take:distributor_stock_takes` — `db.fetchDiscrepancyReports` — since `take_id` has no
 reverse FK back from `distributor_stock_takes`, unlike the `secondary_order_deliveries` case, this
 embed is unambiguous) sits in the Sheet's header/title as narration, not repeated per row; the table
-itself carries only Product + Opening/Receipts/Sales/Calculated-Closing/Physical-Closing/Variance
-(each cell qty+value stacked, same `QtyValue` component as the main report) — exactly as computed at
-that stock take's moment, unaffected by anything that's happened to the ledger since.
+itself is **deliberately just the closing-stock comparison** — Product +
+Calculated-Closing/Physical-Closing/Variance (each cell qty+value stacked, same `QtyValue` component
+as the main report), no Opening/Receipts/Sales columns. An earlier pass included those too; reverted
+— they already live in the Stock & Sales Report itself, and repeating them here just duplicated that
+report instead of giving this one a clear, single job. `StockTakeEntry.jsx`'s generator only computes
+and stores the closing-stock fields for the same reason (the unused opening/receipts/sales columns on
+`stock_discrepancy_report_items` are left in the schema for old rows, just no longer written to).
+Numbers shown are exactly as computed at that stock take's moment, unaffected by anything that's
+happened to the ledger since.
 
 All figures are already base-unit-equivalent (invoice lines and secondary-order items are both
 already base-unit-equivalent quantities; physical counts via `unitConversion.js`'s `toBaseQty`, same
