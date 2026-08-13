@@ -13,6 +13,12 @@
  * a Calculated Closing (Opening + Receipts − Sales) can be computed independently of the physical
  * count and compared against it — `variance` is that comparison, the itemwise reconciliation this
  * report always intended to build ("a match design", originally deferred).
+ *
+ * Every quantity figure also carries a parallel *Value figure (currency). Receipts/Sales value comes
+ * from the real per-line transaction rate (already on the invoice line / order item — an actual price
+ * something changed hands at). Opening/Closing/CalculatedClosing have no transaction of their own
+ * (they're point-in-time balances, not events) — those are valued off the product's master price
+ * instead, passed in via `products`.
  */
 
 import { localDateStr } from './period.js'
@@ -24,14 +30,18 @@ export const round1 = n => (n === null || n === undefined ? null : Math.round((N
 //   `order.delivered_at`). secondaryOrders: fetchDeliveredSecondaryOrdersForStockReport() rows (each
 //   with `items` + embedded `delivery.marked_at`/`delivery.delivery_items`). openingStocks:
 //   fetchOpeningStocks() rows (each with `items`; only `status === 'approved'` ones are used).
+// products: useData() context products (for master `price`, used to value Opening/Closing balances).
 // distributorIds: distributors in scope. productIds: optional explicit product filter — when
 // omitted, every product that appears in any of that distributor's takes is included.
 export function computeStockTakePeriods({
-  stockTakes = [], invoices = [], secondaryOrders = [], openingStocks = [],
+  stockTakes = [], invoices = [], secondaryOrders = [], openingStocks = [], products = [],
   distributorIds = [], productIds = null,
 }) {
   const periods = [] // flat list, one row per (distributor, product, period) — Detail tab source
   const latestByKey = {} // `${distributorId}|${productId}` -> most recent period — Summary tab source
+
+  const priceByProduct = {}
+  products.forEach(p => { priceByProduct[p.id] = Number(p.price) || 0 })
 
   const takesByDistributor = {}
   stockTakes.forEach(t => {
@@ -48,13 +58,15 @@ export function computeStockTakePeriods({
     const date = inv.order?.delivered_at ? localDateStr(new Date(inv.order.delivered_at)) : localDateStr(new Date(inv.date))
     ;(inv.lines || []).forEach(l => {
       if (!receiptsByDistributor[inv.distributor_id]) receiptsByDistributor[inv.distributor_id] = []
-      receiptsByDistributor[inv.distributor_id].push({ productId: l.product_id, qty: Number(l.qty) || 0, date })
+      const qty = Number(l.qty) || 0
+      receiptsByDistributor[inv.distributor_id].push({ productId: l.product_id, qty, value: qty * (Number(l.rate) || 0), date })
     })
   })
 
   // Sales: delivered qty (ordered qty minus any returned qty from a partial delivery), dated to
   // when the delivery outcome was actually marked — not the original order date, matching Receipts'
-  // own "dated to the confirming event, not the paperwork" convention.
+  // own "dated to the confirming event, not the paperwork" convention. Value is delivered qty at
+  // that line's own rate (a partial's returned portion carries no value, it never actually sold).
   const salesByDistributor = {}
   secondaryOrders.forEach(o => {
     if (!o.delivery?.marked_at) return
@@ -64,7 +76,7 @@ export function computeStockTakePeriods({
     ;(o.items || []).forEach(it => {
       const delivered = Math.max(0, (Number(it.qty) || 0) - (returnedByItem[it.id] || 0))
       if (!salesByDistributor[o.distributor_id]) salesByDistributor[o.distributor_id] = []
-      salesByDistributor[o.distributor_id].push({ productId: it.product_id, qty: delivered, date })
+      salesByDistributor[o.distributor_id].push({ productId: it.product_id, qty: delivered, value: delivered * (Number(it.rate) || 0), date })
     })
   })
 
@@ -74,12 +86,13 @@ export function computeStockTakePeriods({
     ;(os.items || []).forEach(it => { approvedOpeningByKey[`${os.distributor_id}|${it.product_id}`] = Number(it.qty) || 0 })
   })
 
-  // Sum a product's qty events within (fromExclusive, toInclusive] local-calendar-date bounds.
+  // Sum a product's qty+value events within (fromExclusive, toInclusive] local-calendar-date bounds.
   // fromExclusive === null means "no lower bound" (this distributor/product's very first period).
-  const sumFor = (bucket, distributorId, productId, fromExclusive, toInclusive) =>
-    (bucket[distributorId] || [])
+  const sumFor = (bucket, distributorId, productId, fromExclusive, toInclusive) => {
+    const matches = (bucket[distributorId] || [])
       .filter(d => d.productId === productId && d.date <= toInclusive && (fromExclusive === null || d.date > fromExclusive))
-      .reduce((s, d) => s + d.qty, 0)
+    return { qty: matches.reduce((s, d) => s + d.qty, 0), value: matches.reduce((s, d) => s + d.value, 0) }
+  }
 
   distributorIds.forEach(distributorId => {
     const takes = takesByDistributor[distributorId] || []
@@ -90,6 +103,7 @@ export function computeStockTakePeriods({
     scopeProducts.forEach(productId => {
       let lastKnownClosing = null // carries the last real physical count forward across a take that skipped this product
       let productMeta = null
+      const price = priceByProduct[productId] || 0
 
       takes.forEach((take, i) => {
         const item = (take.items || []).find(it => it.product_id === productId)
@@ -101,7 +115,7 @@ export function computeStockTakePeriods({
         const receipts = sumFor(receiptsByDistributor, distributorId, productId, from, to)
         const sales = sumFor(salesByDistributor, distributorId, productId, from, to)
         const closing = item ? Number(item.physical_qty) || 0 : null // physical count, ground truth — never calculated
-        const calculatedClosing = opening === null ? null : opening + receipts - sales
+        const calculatedClosing = opening === null ? null : opening + receipts.qty - sales.qty
         const variance = (closing === null || calculatedClosing === null) ? null : round1(closing - calculatedClosing)
 
         // takeId (not just `to`, a date string) is what a caller needs to identify "the period THIS
@@ -110,7 +124,13 @@ export function computeStockTakePeriods({
         // one), and matching on date string alone would ambiguously pick up both.
         const period = {
           distributorId, productId, productName: productMeta?.name || productId, unit: productMeta?.unit,
-          from, to, takeId: take.id, opening, receipts, sales, closing, calculatedClosing, variance,
+          from, to, takeId: take.id,
+          opening, openingValue: opening === null ? null : opening * price,
+          receipts: receipts.qty, receiptsValue: receipts.value,
+          sales: sales.qty, salesValue: sales.value,
+          closing, closingValue: closing === null ? null : closing * price,
+          calculatedClosing, calculatedClosingValue: calculatedClosing === null ? null : calculatedClosing * price,
+          variance, varianceValue: variance === null ? null : round1(variance * price),
         }
         periods.push(period)
         if (closing !== null) lastKnownClosing = closing

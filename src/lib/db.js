@@ -2293,7 +2293,7 @@ export async function fetchPendingDeliveryBatchesForDistributor(distributorId) {
 // just-submitted physical count. Immutable by design — stores the numbers as computed at save time,
 // not re-derived later, so a later-edited invoice or return can't silently rewrite history. id
 // `SDR-DDMMYYYY-NN`, same count-then-pad local-date convention as every other generated id here.
-export async function createDiscrepancyReport({ distributorId, takeId, reportDate, items }) {
+export async function createDiscrepancyReport({ distributorId, takeId, reportDate, fromDate, items }) {
   const dateStr = reportDate.split('-').reverse().join('') // 'YYYY-MM-DD' -> 'DDMMYYYY'
   const { count } = await supabase
     .from('stock_discrepancy_reports')
@@ -2302,7 +2302,7 @@ export async function createDiscrepancyReport({ distributorId, takeId, reportDat
   const id = `SDR-${dateStr}-${String((count || 0) + 1).padStart(2, '0')}`
   const { data: report, error } = await supabase
     .from('stock_discrepancy_reports')
-    .insert({ id, distributor_id: distributorId, take_id: takeId, report_date: reportDate })
+    .insert({ id, distributor_id: distributorId, take_id: takeId, report_date: reportDate, from_date: fromDate || null })
     .select().single()
   if (error) return { data: null, error }
   const itemRows = items.map(it => ({ report_id: id, ...it }))
@@ -2312,9 +2312,12 @@ export async function createDiscrepancyReport({ distributorId, takeId, reportDat
 
 export async function fetchDiscrepancyReports({ distributorIds }) {
   if (!distributorIds?.length) return { data: [], error: null }
+  // Embeds the stock take itself (single, unambiguous FK — take_id has no reverse pointer back from
+  // distributor_stock_takes, unlike the secondary_orders/secondary_order_deliveries trap) so the
+  // report can show the real date+time the physical count was taken, not just report_date.
   const { data, error } = await supabase
     .from('stock_discrepancy_reports')
-    .select('*, items:stock_discrepancy_report_items(*, product:products(id,name,unit)), distributor:distributors(id,name)')
+    .select('*, items:stock_discrepancy_report_items(*, product:products(id,name,unit)), distributor:distributors(id,name), take:distributor_stock_takes(id,take_date,created_at)')
     .in('distributor_id', distributorIds)
     .order('report_date', { ascending: false })
   return { data, error }

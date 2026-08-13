@@ -506,11 +506,10 @@ fix a Distributor-master data gap).
 
 **Stock & Sales Report (`src/pages/shared/DistributorStockSalesReport.jsx`, menu
 `distributorStockSalesReport`, same 3-way audience as the Secondary Order Report)** — periods are
-still anchored to **real stock-take dates**, not a user-chosen range (no date-range filter;
-Distributor + Product + Sales Rep instead) — none of the physical-count schedule/punch-gate
-machinery above changed. What changed is which side of the ledger is "real" and which the report
-actually shows as **Closing**: **Sales** is no longer a derived plug — it's genuine delivered
-quantity from Distributor Secondary's Order Delivery tracking (`delivery_status in
+still anchored to **real stock-take dates**, not a user-chosen range — none of the physical-count
+schedule/punch-gate machinery above changed. What changed is which side of the ledger is "real" and
+which the report actually shows as **Closing**: **Sales** is no longer a derived plug — it's genuine
+delivered quantity from Distributor Secondary's Order Delivery tracking (`delivery_status in
 ('full','partial')`, minus any per-item `returned_qty` for a partial — see the Order Delivery module
 below), dated to when the delivery outcome was actually marked, via
 `db.fetchDeliveredSecondaryOrdersForStockReport`. With Sales now real, **Closing** shown throughout
@@ -518,6 +517,22 @@ this report is the **Calculated** figure (`Opening + Receipts − Sales`), not t
 the physical count and its variance against Calculated Closing moved entirely into the new
 Discrepancy Reports tab below (a live report column felt redundant once every stock take generates
 its own persisted snapshot of exactly that comparison).
+
+**Period is a filter, not a column grouping** — joins Distributor/Product/Sales Rep as a real
+dropdown in the Filters card (an earlier pass tried grouping Detail's rows under a period *header*
+instead — wrong call, reverted). Its options are scoped to whichever Distributor is currently
+selected (disabled with a "Pick a distributor first" hint otherwise) — a period only means anything
+for one specific distributor's own take-to-take timeline, so a global cross-distributor period list
+would be meaningless. Summary still only ever holds the *latest* period per (distributor, product) —
+filtering it to an older period correctly shows nothing there; Detail (every period ever recorded)
+is where picking an older period actually narrows visible rows. Both tabs' PDF/Excel exports stay
+flat (Period as its own text column, qty and value as separate columns each) regardless of the
+on-screen qty+value stacking below.
+
+**Every quantity also shows its value** (`QtyValue` component, stacked qty-then-₹-value in the same
+cell) — Receipts/Sales value comes from the real per-line transaction rate (already on the invoice
+line / delivered order item); Opening/Closing/Calculated-Closing have no transaction of their own
+(point-in-time balances, not events), so those are valued off the product's master `price` instead.
 
 **Receipts** now sources from `invoices` (`db.fetchReceiptsForStockReport`), not
 `distributor_order_items.final_qty` directly — the invoice is the authoritative billed-quantity
@@ -542,30 +557,30 @@ otherwise an Admin clicking through would silently record itself as the Manager-
 the two-stage requirement would mean nothing. No reject/edit path in v1, matching this app's general
 approve-only-flow convention.
 
-**Discrepancy Reports tab** (3rd tab, alongside Summary/Detail) — lists every
-`stock_discrepancy_reports` row in scope (one per physical stock take, see the generation note
-above), each showing a variance-count badge; drilling into one shows its itemized
-Opening/Receipts/Sales/Calculated-Closing/Physical-Closing/Variance breakdown exactly as it was
-computed at that stock take's moment, unaffected by anything that's happened to the ledger since.
-
-**Period as a header, not columns** — the Detail tab groups its rows under a
-`Period: {from} → {to}` section header per stock-take-to-stock-take window instead of repeating
-From/To on every row; Summary (one row per distributor/product, each legitimately on its own
-different period) keeps Period as a single combined column instead. Both tabs' PDF/Excel exports
-stay flat regardless (Period as its own column) — that's a display convenience for the on-screen
-Detail tab, not something an export consumer wants collapsed away.
+**Discrepancy Reports tab** (3rd tab, alongside Summary/Detail — **no Period filter here**, it's
+already just a flat chronological list of discrete events, one per physical stock take) — each row
+is a title (report id + distributor name) and its period (`{from_date}` → `report_date`, both stored
+on the header row at generation time since every item in one report shares the same period), plus a
+variance-count badge. Clicking one opens the itemized breakdown as a genuine **table** — the report's
+identifying info (id, distributor, period, and the stock take's real date **and time** via the
+embedded `take:distributor_stock_takes` — `db.fetchDiscrepancyReports` — since `take_id` has no
+reverse FK back from `distributor_stock_takes`, unlike the `secondary_order_deliveries` case, this
+embed is unambiguous) sits in the Sheet's header/title as narration, not repeated per row; the table
+itself carries only Product + Opening/Receipts/Sales/Calculated-Closing/Physical-Closing/Variance
+(each cell qty+value stacked, same `QtyValue` component as the main report) — exactly as computed at
+that stock take's moment, unaffected by anything that's happened to the ledger since.
 
 All figures are already base-unit-equivalent (invoice lines and secondary-order items are both
 already base-unit-equivalent quantities; physical counts via `unitConversion.js`'s `toBaseQty`, same
 as Distributor Secondary's cart) — "report in the highest unit" is just display formatting: base-unit
 qty as-is, labeled with the product's Base Unit, rounded to 1 decimal (`stockReport.js`'s `round1`,
 display-time only — the underlying computation stays unrounded). `computeStockTakePeriods`
-(`src/lib/stockReport.js`, pure, mirrors `achievementEngine.js`'s shape, unchanged by any of this —
-it already computed both Physical and Calculated Closing, only which one each consumer surfaces
-changed) carries the last known Physical Closing forward across any take that skipped a product,
-rather than treating a skip as zero. Summary tab = latest period per (distributor, product); Detail
-tab = every period ever recorded, grouped by period. Export reuses `printSecondaryReport.js`'s
-generic `downloadReportPdf`/`downloadReportExcel` as-is.
+(`src/lib/stockReport.js`, pure, mirrors `achievementEngine.js`'s shape) carries the last known
+Physical Closing forward across any take that skipped a product, rather than treating a skip as
+zero, and now also takes `products` (for master price) to compute every value figure alongside its
+quantity. Summary tab = latest period per (distributor, product); Detail tab = every period ever
+recorded. Export reuses `printSecondaryReport.js`'s generic `downloadReportPdf`/`downloadReportExcel`
+as-is.
 
 ## Module: Attendance & HR
 

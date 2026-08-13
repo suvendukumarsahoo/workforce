@@ -76,7 +76,7 @@ export default function StockTakeEntry({ distributor, memberId, onDone, onCancel
     ])
     const { periods } = computeStockTakePeriods({
       stockTakes: stockTakes || [], invoices: invoices || [], secondaryOrders: secondaryOrders || [], openingStocks: openingStocks || [],
-      distributorIds: [distributor.id], productIds: null,
+      products: products || [], distributorIds: [distributor.id], productIds: null,
     })
     // Match on takeId, not take_date — two stock takes for the same distributor can share a
     // calendar date (a same-day recount), and a date-string match would ambiguously pick up both
@@ -85,10 +85,15 @@ export default function StockTakeEntry({ distributor, memberId, onDone, onCancel
     const thisPeriods = periods.filter(p => p.takeId === take.id)
     if (!thisPeriods.length) return
     await db.createDiscrepancyReport({
-      distributorId: distributor.id, takeId: take.id, reportDate: take.take_date,
+      distributorId: distributor.id, takeId: take.id, reportDate: take.take_date, fromDate: thisPeriods[0]?.from,
       items: thisPeriods.map(p => ({
-        product_id: p.productId, opening: p.opening, receipts: p.receipts, sales: p.sales,
-        calculated_closing: p.calculatedClosing, physical_closing: p.closing, variance: p.variance,
+        product_id: p.productId,
+        opening: p.opening, opening_value: p.openingValue,
+        receipts: p.receipts, receipts_value: p.receiptsValue,
+        sales: p.sales, sales_value: p.salesValue,
+        calculated_closing: p.calculatedClosing, calculated_closing_value: p.calculatedClosingValue,
+        physical_closing: p.closing, physical_closing_value: p.closingValue,
+        variance: p.variance, variance_value: p.varianceValue,
       })),
     })
   }
