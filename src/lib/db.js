@@ -1956,10 +1956,14 @@ async function genDeliveryIds(count) {
 // status: 'full' | 'not_delivered' — the two outcomes that need no per-item breakdown. Covers both
 // the batch-level bulk action (many orderIds at once, the "reduce tasks" fast path for the common
 // case) and a single order marked from the drill-down, via the same function either way.
-export async function markOrdersDelivered({ orderIds, batchId, status, memberId }) {
+// deliveredDate: the real date delivery happened (rep-entered, defaults to today in the UI but
+// editable — see SecondaryOrderDelivery.jsx) — distinct from marked_at (below, an automatic
+// timestamp of when the app action itself happened, for audit purposes only). The Stock & Sales
+// Report's Sales figure is dated by delivered_date, never marked_at.
+export async function markOrdersDelivered({ orderIds, batchId, status, memberId, deliveredDate }) {
   if (!orderIds?.length) return { data: [], error: null }
   const ids = await genDeliveryIds(orderIds.length)
-  const rows = orderIds.map((order_id, i) => ({ id: ids[i], order_id, batch_id: batchId, status, member_id: memberId }))
+  const rows = orderIds.map((order_id, i) => ({ id: ids[i], order_id, batch_id: batchId, status, member_id: memberId, delivered_date: deliveredDate }))
   const { data: deliveries, error } = await supabase.from('secondary_order_deliveries').insert(rows).select()
   if (error) return { data: null, error }
   const updates = await Promise.all(
@@ -1970,11 +1974,11 @@ export async function markOrdersDelivered({ orderIds, batchId, status, memberId 
 
 // One order, marked 'partial' — items: [{ order_item_id, returned_qty }], only for lines that
 // actually had a return (0 for everything else is the implicit default, no row needed).
-export async function markOrderPartiallyDelivered({ orderId, batchId, memberId, items }) {
+export async function markOrderPartiallyDelivered({ orderId, batchId, memberId, items, deliveredDate }) {
   const [id] = await genDeliveryIds(1)
   const { data: delivery, error } = await supabase
     .from('secondary_order_deliveries')
-    .insert({ id, order_id: orderId, batch_id: batchId, status: 'partial', member_id: memberId })
+    .insert({ id, order_id: orderId, batch_id: batchId, status: 'partial', member_id: memberId, delivered_date: deliveredDate })
     .select().single()
   if (error) return { data: null, error }
   const itemRows = (items || []).filter(it => Number(it.returned_qty) > 0)
@@ -2215,7 +2219,7 @@ export async function fetchDeliveredSecondaryOrdersForStockReport({ distributorI
   // during verification, not by any crash or visible symptom).
   const { data, error } = await supabase
     .from('secondary_orders')
-    .select('*, items:secondary_order_items(*), delivery:secondary_order_deliveries!secondary_orders_delivery_id_fkey(id, marked_at, delivery_items:secondary_order_delivery_items(order_item_id, returned_qty))')
+    .select('*, items:secondary_order_items(*), delivery:secondary_order_deliveries!secondary_orders_delivery_id_fkey(id, marked_at, delivered_date, delivery_items:secondary_order_delivery_items(order_item_id, returned_qty))')
     .in('distributor_id', distributorIds)
     .eq('cancelled', false)
     .not('batch_id', 'is', null)

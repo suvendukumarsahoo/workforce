@@ -63,8 +63,12 @@ function flattenReceipts(invoices) {
 function flattenSales(secondaryOrders) {
   const byDistributor = {}
   secondaryOrders.forEach(o => {
-    if (!o.delivery?.marked_at) return
-    const date = localDateStr(new Date(o.delivery.marked_at))
+    if (!o.delivery?.delivered_date) return
+    // delivered_date is a plain `date` column (rep-entered, defaults to today but editable — see
+    // SecondaryOrderDelivery.jsx), already a bare 'YYYY-MM-DD' with no timezone component, unlike
+    // marked_at (a timestamptz audit stamp of when the app action happened, never used for dating a
+    // Sale — see this file's own header comment on why Sales must reflect the real delivery date).
+    const date = o.delivery.delivered_date
     const returnedByItem = {}
     ;(o.delivery.delivery_items || []).forEach(di => { returnedByItem[di.order_item_id] = Number(di.returned_qty) || 0 })
     ;(o.items || []).forEach(it => {

@@ -410,6 +410,23 @@ it was reached. `secondary_order_delivery_items` (`order_item_id`, `returned_qty
 a **partial** delivery, and only for lines that actually had a return — full/not-delivered orders need
 no item rows at all (0 returned / fully returned is implicit, not stored).
 
+**Two different dates, on purpose**: `marked_at` (timestamptz, always `now()`) is an audit stamp of
+when the app action happened — never used to date anything downstream. `delivered_date` (plain
+`date`, rep-entered via a date field on every mark-delivered action, defaulting to today but
+editable) is the real fact — the Stock & Sales Report's Sales figure is dated by this, exclusively
+(see that module below). Validated client-side against two independent floors, whichever is later
+wins (`effectiveMinDate` in `SecondaryOrderDelivery.jsx`): never before the order's own `order_date`
+(for a batch-level bulk action or the shared field on the order-drill sheet, that's the *latest*
+`order_date` among every order the date applies to, since a date valid for the latest is
+automatically valid for every earlier one too) — **and never on or before that distributor's latest
+physical stock take date**, hard-blocked (disabled Save, not a soft warning) with a specific message
+naming the discrepancy report that already exists for that period. That second floor exists because
+a Discrepancy Report is an immutable snapshot the moment a stock take happens — a delivery
+back-dated to on/before that date would silently change what Sales *should* have been for an already
+-frozen period without ever updating the report, permanently diverging the live ledger from its own
+snapshot. Fetched per distributor actually appearing in the rep's own pending orders
+(`db.fetchStockTakesForDistributors`, latest `take_date` per distributor), not the whole scope.
+
 **Reduce-taps flow**: pending orders group by `batch_id` (one Retailing Complete run). The fast path —
 tapping a pending batch offers **Mark All Fully Delivered** / **Mark All Not Delivered** in one action
 across every still-pending order in it (`db.markOrdersDelivered`, bulk insert + per-order update).

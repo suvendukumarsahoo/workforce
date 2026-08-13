@@ -47,7 +47,10 @@ export default function SecondaryOrderDetailSheet({ order, onClose, zIndex }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
         <span style={{ background: badge.bg, color: badge.color, borderRadius: 20, padding: '3px 10px', fontSize: 11, fontWeight: 700 }}>{badge.label}</span>
         {delivery && (
-          <span style={{ fontSize: 11, color: '#9ca3af' }}>by {memberName(delivery.member_id)} · {new Date(delivery.marked_at).toLocaleDateString('en-IN')}</span>
+          // delivered_date is the real fact (rep-entered, what the Stock & Sales Report's Sales
+          // figure is actually dated by) — marked_at is just an audit stamp of when the app action
+          // happened, not shown here to avoid implying it's the delivery date too.
+          <span style={{ fontSize: 11, color: '#9ca3af' }}>Delivered {delivery.delivered_date} · by {memberName(delivery.member_id)}</span>
         )}
       </div>
 
