@@ -621,7 +621,9 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
         {tab === 'newCustomerVisit' && <NewCustomerVisit />}
         {tab === 'distributorOrder' && <DistributorOrder />}
         {tab === 'distributorSecondary' && <DistributorSecondary />}
-        {tab === 'distributorSecondaryReport' && <DistributorSecondaryReport navParams={reportParams} />}
+        {tab === 'distributorSecondaryReport' && (
+          <DistributorSecondaryReport navParams={reportParams} onNavigate={(id, params) => { setReportParams(params); setTab(id) }} />
+        )}
         {tab === 'distributorStockSalesReport' && (
           <DistributorStockSalesReport onNavigate={(id, params) => { setReportParams(params); setTab(id) }} />
         )}

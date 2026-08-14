@@ -13,13 +13,17 @@ const uniqById = arr => Object.values(Object.fromEntries((arr || []).filter(Bool
 // Pieces ÷ 50/Base = 0.2) — long floating-point tails (127.04761904761905) look broken on screen
 // and in exports, so round to 2 decimals wherever a qty/qty-sum is shown.
 const round2 = n => Math.round((Number(n) || 0) * 100) / 100
+// Money is rounded to whole rupees, not qty's 2 decimals — same "round at data-construction time"
+// convention as round2 above (so both the on-screen table and the PDF/Excel export inherit it,
+// rather than only the render call).
+const round0 = n => Math.round(Number(n) || 0)
 
 // Reached three ways: direct menu click (defaults to the current month, unlocked), or a click-
 // through from Dashboard.jsx's DistributorSecondarySection / TeamSnapshot.jsx's own panel (pre-
 // filled to that panel's active Today/Month/Year range, still unlocked) / GoalsStatus.jsx's
 // Distributor Secondary goal panel (pre-filled AND locked to that period's month, since a Goals
 // figure only means anything for the exact month it was computed over).
-export default function DistributorSecondaryReport({ navParams }) {
+export default function DistributorSecondaryReport({ navParams, onNavigate }) {
   const { currentUser, role } = useAuth()
   const { members, users } = useData()
 
@@ -72,7 +76,7 @@ export default function DistributorSecondaryReport({ navParams }) {
   const groups = {}
   filtered.forEach(o => {
     const key = multiRep ? `${o.batch_id}|${o.distributor_id}|${o.beat_id}|${o.member_id}` : `${o.batch_id}|${o.distributor_id}|${o.beat_id}`
-    if (!groups[key]) groups[key] = { batchId: o.batch_id, distributorName: o.distributor?.name || o.distributor_id, beatName: o.beat?.name || o.beat_id, memberName: memberName(o.member_id), date: o.order_date, orders: [] }
+    if (!groups[key]) groups[key] = { batchId: o.batch_id, distributorId: o.distributor_id, distributorName: o.distributor?.name || o.distributor_id, beatName: o.beat?.name || o.beat_id, memberName: memberName(o.member_id), date: o.order_date, orders: [] }
     groups[key].orders.push(o)
   })
   // Stock Return / Stock Delivered / Delivery Pending — splits each order's full value by its
@@ -102,7 +106,7 @@ export default function DistributorSecondaryReport({ navParams }) {
         b.pendingCount += 1; b.pendingValue += orderValue
       }
     })
-    return b
+    return { returnCount: b.returnCount, returnValue: round0(b.returnValue), deliveredCount: b.deliveredCount, deliveredValue: round0(b.deliveredValue), pendingCount: b.pendingCount, pendingValue: round0(b.pendingValue) }
   }
 
   const summaryRows = Object.values(groups).map(g => ({
@@ -112,7 +116,7 @@ export default function DistributorSecondaryReport({ navParams }) {
     // add together different products' different units (Litres + Units + Pieces) into a meaningless
     // decimal figure (caught live: "132.05" for a mixed-unit batch).
     totalItems: g.orders.reduce((s, o) => s + (o.items || []).length, 0),
-    totalValue: g.orders.reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0), 0),
+    totalValue: round0(g.orders.reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0), 0)),
     ...deliveryBreakdown(g.orders),
   })).sort((a, b) => new Date(b.date) - new Date(a.date))
 
@@ -120,7 +124,7 @@ export default function DistributorSecondaryReport({ navParams }) {
     date: o.order_date, batchId: o.batch_id, distributorName: o.distributor?.name || o.distributor_id,
     beatName: o.beat?.name || o.beat_id, memberName: memberName(o.member_id),
     orderId: o.id, outlet: o.outlet?.name || o.outlet_id, product: it.product?.name || it.product_id,
-    qty: round2(it.qty), rate: it.rate, value: (Number(it.qty) || 0) * (Number(it.rate) || 0),
+    qty: round2(it.qty), rate: it.rate, value: round0((Number(it.qty) || 0) * (Number(it.rate) || 0)),
   })))
 
   const summaryColumns = [
@@ -239,8 +243,8 @@ export default function DistributorSecondaryReport({ navParams }) {
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.totalOrders}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.totalItems}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(g.totalValue)}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c' }}>{g.returnCount}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c' }}>{F(g.returnValue)}</td>
+                    <td onClick={e => { e.stopPropagation(); onNavigate?.('secondaryReturnReport', { distributorId: g.distributorId, from: g.date, to: g.date }) }} title="View these returned orders — Secondary Return Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}>{g.returnCount}</td>
+                    <td onClick={e => { e.stopPropagation(); onNavigate?.('secondaryReturnReport', { distributorId: g.distributorId, from: g.date, to: g.date }) }} title="View these returned orders — Secondary Return Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}>{F(g.returnValue)}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, color: '#15803d' }}>{g.deliveredCount}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, color: '#15803d' }}>{F(g.deliveredValue)}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, color: '#b45309' }}>{g.pendingCount}</td>
@@ -316,7 +320,7 @@ export default function DistributorSecondaryReport({ navParams }) {
       {drillGroup && (
         <Sheet title={`${drillGroup.distributorName} — ${drillGroup.beatName}`} sub={`Batch ${drillGroup.batchId}`} onClose={() => setDrillGroup(null)}>
           {drillGroup.orders.map(o => {
-            const value = (o.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
+            const value = round0((o.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0))
             return (
               <div key={o.id} onClick={() => setViewOrder(o)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 4px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
                 <div>
