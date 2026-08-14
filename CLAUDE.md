@@ -389,7 +389,20 @@ team, Admin org-wide with an added Sales Rep filter) — **Summary** tab: one ro
 distributor × beat) combination, with a **Total Items** column that counts item *lines* across the
 group's orders, not a summed quantity — summing qty across different products would add mismatched
 units together (Litres + Units + Pieces), the same class of mistake the Stock & Sales Report's own
-totals row (`allSameUnit`) exists to avoid; caught live as a nonsensical "132.05 items" figure.
+totals row (`allSameUnit`) exists to avoid; caught live as a nonsensical "132.05 items" figure. Also
+carries a per-row **Stock Return / Stock Delivered / Delivery Pending** breakdown (orders + value each)
+splitting that group's Total Value by delivery outcome — same delivered-net-of-returns math as
+`stockReport.js`'s `flattenSales`/`achievementEngine.js`'s Value gating (see Goals & Performance
+above), computed inline in `DistributorSecondaryReport.jsx` rather than shared, since this report
+needs it per-row/per-group rather than per-member. A `'full'` order's whole value counts as
+Delivered; `'not_delivered'` counts its whole value as Return (nothing reached the outlet, so it
+effectively all came back); `'partial'` splits across **both** — its net-of-return portion under
+Delivered and its returned portion under Return — so a partial order is counted in both the Return
+and Delivered "orders" tallies at once, and those two counts (plus Pending) deliberately don't sum
+back to Total Orders; unset/`'pending'` status counts its whole value as Pending (outcome not yet
+marked). Verified live: every row's Delivered value + Return value + Pending value sums exactly back
+to that row's Total Value. `fetchSecondaryOrdersForReport` (db.js) embeds `delivery` the same way as
+every other reader of this relationship (`!secondary_orders_delivery_id_fkey` alias, Bug Pattern #3).
 Drilling into a row opens an order-no-wise list → full read-only order detail
 (`src/components/SecondaryOrderDetailSheet.jsx`, a shared component — also used by Order Delivery
 below — reuses `printSecondaryOrder.js`'s existing PDF). **Detail** tab: flat

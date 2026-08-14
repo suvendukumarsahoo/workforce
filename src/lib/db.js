@@ -1918,9 +1918,12 @@ export async function fetchSecondaryOrdersForReport({ memberIds, distributorId, 
   // known quirk as retail_visits.member_id) — PostgREST can't embed a relationship that doesn't
   // exist at the constraint level. Callers resolve the member's name client-side against the
   // already-loaded `members` list from useData() instead.
+  // delivery embed (delivery_items → returned_qty per item) feeds the Summary tab's Stock
+  // Return/Delivered/Pending breakdown — same !secondary_orders_delivery_id_fkey alias as every
+  // other embed of this relationship (2 ambiguous FK paths otherwise, CLAUDE.md Bug Pattern #3).
   let q = supabase
     .from('secondary_orders')
-    .select('*, outlet:retail_outlets(id,name), beat:beats(id,name), distributor:distributors(id,name), items:secondary_order_items(*, product:products(id,name))')
+    .select('*, outlet:retail_outlets(id,name), beat:beats(id,name), distributor:distributors(id,name), items:secondary_order_items(*, product:products(id,name)), delivery:secondary_order_deliveries!secondary_orders_delivery_id_fkey(delivered_date, delivery_items:secondary_order_delivery_items(order_item_id, returned_qty))')
     .in('member_id', memberIds)
     .eq('cancelled', false)
     .not('batch_id', 'is', null)
