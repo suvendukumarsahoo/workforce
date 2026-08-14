@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
-import { Card, CH, Btn, Sheet, F } from '../../components/ui.jsx'
+import { Card, CH, Btn, Sheet, F, BackTo } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
 import { downloadReportPdf, downloadReportExcel } from '../../lib/printSecondaryReport.js'
 import { getCurrentPeriod, monthRangeForPeriod } from '../../lib/period.js'
@@ -20,7 +20,7 @@ const round2 = n => Math.round((Number(n) || 0) * 100) / 100
 // nothing came back from a full delivery, and a not-yet-actioned order has no return to report yet.
 // Same delivered/returned split math as DistributorSecondaryReport.jsx's own deliveryBreakdown and
 // stockReport.js's flattenSales — verified to reconcile with both.
-export default function SecondaryReturnReport({ navParams }) {
+export default function SecondaryReturnReport({ navParams, onNavigate }) {
   const { currentUser, role } = useAuth()
   const { members, users } = useData()
 
@@ -144,6 +144,7 @@ export default function SecondaryReturnReport({ navParams }) {
 
   return (
     <div>
+      <BackTo backTo={navParams?.backTo} onNavigate={onNavigate} />
       <Card>
         <CH title="Filters" />
         <div style={{ padding: 12, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>

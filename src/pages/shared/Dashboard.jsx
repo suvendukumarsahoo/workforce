@@ -294,7 +294,7 @@ function DistributorSecondarySection({ memberIds, retailOutlets, secondaryOrders
         <DarkStat icon="💰" label={`Value — ${DS_TABS.find(([k]) => k === tab)[1]}`} value={F(secondaryValueSum)} color="#a78bfa" />
       </div>
       {onNavigate && (
-        <DarkFooterLinks links={[['View Report', () => onNavigate('distributorSecondaryReport', { from: isoDate(range.from), to: isoDate(range.to) })]]} />
+        <DarkFooterLinks links={[['View Report', () => onNavigate('distributorSecondaryReport', { from: isoDate(range.from), to: isoDate(range.to), backTo: { id: 'dashboard', label: 'Dashboard', params: {} } })]]} />
       )}
     </div>
   )

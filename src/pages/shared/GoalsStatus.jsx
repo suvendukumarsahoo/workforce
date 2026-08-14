@@ -168,7 +168,7 @@ export default function GoalsStatus({ onNavigate }) {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={labelStyle}>Distributor Secondary — Goal vs Achieved (This Month)</div>
             {onNavigate && (
-              <button onClick={() => onNavigate('distributorSecondaryReport', { ...visitRange, locked: true })}
+              <button onClick={() => onNavigate('distributorSecondaryReport', { ...visitRange, locked: true, backTo: { id: 'targets', label: 'Goals Status', params: {} } })}
                 style={{ background: 'none', border: 'none', color: '#38bdf8', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
                 View Report →
               </button>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
-import { Card, CH, Btn, Sheet, F } from '../../components/ui.jsx'
+import { Card, CH, Btn, Sheet, F, BackTo } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
 import { downloadReportPdf, downloadReportExcel } from '../../lib/printSecondaryReport.js'
 import { getCurrentPeriod, monthRangeForPeriod } from '../../lib/period.js'
@@ -146,6 +146,15 @@ export default function DistributorSecondaryReport({ navParams, onNavigate }) {
     { header: 'Rate', key: 'rate' }, { header: 'Value', key: 'value' },
   ]
 
+  // Carries this report's own current filter state as the Return Report's backTo.params, so its Back
+  // button lands here restored exactly as it was, not reset to defaults — same chaining convention
+  // as BackTo's own doc comment (this report's own navParams?.backTo, if any, rides along nested
+  // inside so a multi-hop drill can walk all the way back).
+  const goToReturnReport = g => onNavigate?.('secondaryReturnReport', {
+    distributorId: g.distributorId, from: g.date, to: g.date,
+    backTo: { id: 'distributorSecondaryReport', label: 'Distributor Secondary Report', params: { from, to, distributorId, locked, backTo: navParams?.backTo } },
+  })
+
   const activeColumns = tab === 'summary' ? summaryColumns : detailColumns
   const activeRows = tab === 'summary' ? summaryRows : detailRows
   const rangeLabel = `${from}_to_${to}`
@@ -164,6 +173,7 @@ export default function DistributorSecondaryReport({ navParams, onNavigate }) {
 
   return (
     <div>
+      <BackTo backTo={navParams?.backTo} onNavigate={onNavigate} />
       <Card>
         <CH title="Filters" />
         <div style={{ padding: 12, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
@@ -243,8 +253,8 @@ export default function DistributorSecondaryReport({ navParams, onNavigate }) {
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.totalOrders}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.totalItems}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(g.totalValue)}</td>
-                    <td onClick={e => { e.stopPropagation(); onNavigate?.('secondaryReturnReport', { distributorId: g.distributorId, from: g.date, to: g.date }) }} title="View these returned orders — Secondary Return Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}>{g.returnCount}</td>
-                    <td onClick={e => { e.stopPropagation(); onNavigate?.('secondaryReturnReport', { distributorId: g.distributorId, from: g.date, to: g.date }) }} title="View these returned orders — Secondary Return Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}>{F(g.returnValue)}</td>
+                    <td onClick={e => { e.stopPropagation(); goToReturnReport(g) }} title="View these returned orders — Secondary Return Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}>{g.returnCount}</td>
+                    <td onClick={e => { e.stopPropagation(); goToReturnReport(g) }} title="View these returned orders — Secondary Return Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}>{F(g.returnValue)}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, color: '#15803d' }}>{g.deliveredCount}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, color: '#15803d' }}>{F(g.deliveredValue)}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, color: '#b45309' }}>{g.pendingCount}</td>

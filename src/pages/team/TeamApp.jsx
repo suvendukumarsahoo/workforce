@@ -324,7 +324,7 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
               myOutlets={myOutlets}
               mySecondaryOrders={mySecondaryOrders}
               myRetailVisits={myRetailVisits}
-              onOpenSecondaryReport={(params) => { setReportParams(params); setTab('distributorSecondaryReport') }}
+              onOpenSecondaryReport={(params) => { setReportParams({ ...params, backTo: { id: 'dashboard', label: 'Home', params: {} } }); setTab('distributorSecondaryReport') }}
             />
 {selectedStage && (
               <LeadListSheet
@@ -625,10 +625,12 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
           <DistributorSecondaryReport navParams={reportParams} onNavigate={(id, params) => { setReportParams(params); setTab(id) }} />
         )}
         {tab === 'distributorStockSalesReport' && (
-          <DistributorStockSalesReport onNavigate={(id, params) => { setReportParams(params); setTab(id) }} />
+          <DistributorStockSalesReport navParams={reportParams} onNavigate={(id, params) => { setReportParams(params); setTab(id) }} />
         )}
         {tab === 'secondaryOrderDelivery' && <SecondaryOrderDelivery />}
-        {tab === 'secondaryReturnReport' && <SecondaryReturnReport navParams={reportParams} />}
+        {tab === 'secondaryReturnReport' && (
+          <SecondaryReturnReport navParams={reportParams} onNavigate={(id, params) => { setReportParams(params); setTab(id) }} />
+        )}
         {tab === 'stockTakeEntry' && (
           <StockTakePicker
             mid={mid} distributors={customers}

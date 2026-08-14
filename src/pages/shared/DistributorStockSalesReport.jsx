@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
-import { Card, CH, Btn, Sheet, F } from '../../components/ui.jsx'
+import { Card, CH, Btn, Sheet, F, BackTo } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
 import { downloadReportPdf, downloadReportExcel } from '../../lib/printSecondaryReport.js'
 import { computeStockLedger, round1 } from '../../lib/stockReport.js'
@@ -35,7 +35,7 @@ const QtyValue = ({ qty, value, unit }) => (
 // baseline entry, Manager→Admin approval) is managed inline here rather than a separate page — it
 // only ever matters in the context of this report, and "entered once ever" per distributor means
 // there's no ongoing workflow to justify its own menu.
-export default function DistributorStockSalesReport({ onNavigate }) {
+export default function DistributorStockSalesReport({ onNavigate, navParams }) {
   const { currentUser, role } = useAuth()
   const { members, users, distributors, products } = useData()
 
@@ -60,10 +60,14 @@ export default function DistributorStockSalesReport({ onNavigate }) {
   const scopeDistributorIds = scopeDistributors.map(d => d.id)
 
   const defaultRange = monthRangeForPeriod(getCurrentPeriod())
-  const [from, setFrom] = useState(defaultRange.from)
-  const [to, setTo] = useState(defaultRange.to)
-  const [distributorId, setDistributorId] = useState('')
-  const [productId, setProductId] = useState('')
+  // Restored from navParams when this report is reached via a Back click from something it was
+  // itself drilled out of (Sales → Secondary Order Report) — same shape as every other report's own
+  // navParams-restore, so returning here lands on the exact filters that were active before the
+  // drill out, not reset to defaults.
+  const [from, setFrom] = useState(navParams?.from || defaultRange.from)
+  const [to, setTo] = useState(navParams?.to || defaultRange.to)
+  const [distributorId, setDistributorId] = useState(navParams?.distributorId || '')
+  const [productId, setProductId] = useState(navParams?.productId || '')
   const [rawInvoices, setRawInvoices] = useState(null)
   const [rawSecondaryOrders, setRawSecondaryOrders] = useState(null)
   const [openingStocks, setOpeningStocks] = useState(null)
@@ -112,7 +116,10 @@ export default function DistributorStockSalesReport({ onNavigate }) {
   // navigates there (Secondary Order Report), pre-filtered to this row's distributor + this report's
   // active date range, rather than staying inside the Detail tab.
   const drillToDetail = row => { setDistributorId(row.distributorId); setProductId(row.productId); setTab('detail') }
-  const drillToSales = row => onNavigate?.('distributorSecondaryReport', { distributorId: row.distributorId, from, to })
+  const drillToSales = row => onNavigate?.('distributorSecondaryReport', {
+    distributorId: row.distributorId, from, to,
+    backTo: { id: 'distributorStockSalesReport', label: 'Stock & Sales Report', params: { from, to, distributorId, productId, backTo: navParams?.backTo } },
+  })
 
   const submitEntry = async () => {
     if (!enterFor) return
@@ -201,6 +208,7 @@ export default function DistributorStockSalesReport({ onNavigate }) {
 
   return (
     <div>
+      <BackTo backTo={navParams?.backTo} onNavigate={onNavigate} />
       {openingStockActionRows.length > 0 && (
         <Card>
           <CH title="Opening Stock" sub={`${openingStockActionRows.length} distributor(s) need attention`} />
