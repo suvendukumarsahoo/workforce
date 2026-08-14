@@ -17,6 +17,7 @@ import DistributorSecondary from '../shared/DistributorSecondary.jsx'
 import DistributorSecondaryReport from '../shared/DistributorSecondaryReport.jsx'
 import DistributorStockSalesReport from '../shared/DistributorStockSalesReport.jsx'
 import SecondaryOrderDelivery from '../shared/SecondaryOrderDelivery.jsx'
+import SecondaryReturnReport from '../shared/SecondaryReturnReport.jsx'
 import StockTakeEntry from './StockTakeEntry.jsx'
 import StockTakeScheduleCard from '../../components/StockTakeScheduleCard.jsx'
 import OrdersForReviewCard from '../../components/OrdersForReviewCard.jsx'
@@ -229,6 +230,7 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
   hasMenu('stockTakeEntry') && { id: 'stockTakeEntry', icon: '📋', label: 'Physical Stock Take' },
   hasMenu('distributorStockSalesReport') && { id: 'distributorStockSalesReport', icon: '📦', label: 'Stock & Sales Report' },
   hasMenu('secondaryOrderDelivery') && { id: 'secondaryOrderDelivery', icon: '🚚', label: 'Order Delivery' },
+  hasMenu('secondaryReturnReport') && { id: 'secondaryReturnReport', icon: '↩️', label: 'Return Report' },
 ].filter(Boolean)
   const TABS = [
     hasMenu('dashboard')    && { id: 'dashboard',    icon: '🏠', label: 'Home'     },
@@ -620,8 +622,11 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
         {tab === 'distributorOrder' && <DistributorOrder />}
         {tab === 'distributorSecondary' && <DistributorSecondary />}
         {tab === 'distributorSecondaryReport' && <DistributorSecondaryReport navParams={reportParams} />}
-        {tab === 'distributorStockSalesReport' && <DistributorStockSalesReport />}
+        {tab === 'distributorStockSalesReport' && (
+          <DistributorStockSalesReport onNavigate={(id, params) => { setReportParams(params); setTab(id) }} />
+        )}
         {tab === 'secondaryOrderDelivery' && <SecondaryOrderDelivery />}
+        {tab === 'secondaryReturnReport' && <SecondaryReturnReport navParams={reportParams} />}
         {tab === 'stockTakeEntry' && (
           <StockTakePicker
             mid={mid} distributors={customers}

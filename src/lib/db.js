@@ -1918,9 +1918,12 @@ export async function fetchSecondaryOrdersForReport({ memberIds, distributorId, 
   // known quirk as retail_visits.member_id) — PostgREST can't embed a relationship that doesn't
   // exist at the constraint level. Callers resolve the member's name client-side against the
   // already-loaded `members` list from useData() instead.
+  // delivery embed (delivery_items → returned_qty per item) feeds the Summary tab's Stock
+  // Return/Delivered/Pending breakdown — same !secondary_orders_delivery_id_fkey alias as every
+  // other embed of this relationship (2 ambiguous FK paths otherwise, CLAUDE.md Bug Pattern #3).
   let q = supabase
     .from('secondary_orders')
-    .select('*, outlet:retail_outlets(id,name), beat:beats(id,name), distributor:distributors(id,name), items:secondary_order_items(*, product:products(id,name))')
+    .select('*, outlet:retail_outlets(id,name), beat:beats(id,name), distributor:distributors(id,name), items:secondary_order_items(*, product:products(id,name)), delivery:secondary_order_deliveries!secondary_orders_delivery_id_fkey(delivered_date, delivery_items:secondary_order_delivery_items(order_item_id, returned_qty))')
     .in('member_id', memberIds)
     .eq('cancelled', false)
     .not('batch_id', 'is', null)
@@ -2028,8 +2031,17 @@ export async function fetchRetailOutlets(dateRange = null) {
   return { data, error }
 }
 
+// Embeds the delivery outcome (delivered_date + per-item returns) alongside every order — needed so
+// achievementEngine.js's Distributor Secondary fields (Total No. of Orders/Productive Outlets/Value)
+// can gate on "delivery confirmed" and date by delivered_date, same convention as the Stock & Sales
+// Report's own Sales figure (stockReport.js's flattenSales), rather than order-taking. Same
+// !secondary_orders_delivery_id_fkey alias as fetchDeliveredSecondaryOrdersForStockReport — the 2 FK
+// paths between these tables make PostgREST's embed ambiguous without it (CLAUDE.md Bug Pattern #3).
 export async function fetchSecondaryOrders(dateRange = null) {
-  let query = supabase.from('secondary_orders').select('*, items:secondary_order_items(qty, rate)')
+  // items.id is required here (not just qty/rate) — flattenSales-equivalent return-matching below
+  // joins delivery_items.order_item_id back to a specific item.id; without it every item silently
+  // keys to `undefined` and the returnedByItem lookup misapplies one item's return to all of them.
+  let query = supabase.from('secondary_orders').select('*, items:secondary_order_items(id, qty, rate), delivery:secondary_order_deliveries!secondary_orders_delivery_id_fkey(delivered_date, delivery_items:secondary_order_delivery_items(order_item_id, returned_qty))')
   if (dateRange) query = query.gte('order_date', dateRange.from).lte('order_date', dateRange.to)
   const { data, error } = await query
   return { data, error }

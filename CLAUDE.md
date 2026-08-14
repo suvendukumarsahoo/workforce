@@ -250,9 +250,29 @@ per-field-approved triggers achievement tracking for that field, every calendar 
   gated **per-field** (`goal.<field>_status === 'approved'`), not by the goal's overall status.
   `getGoalOverallStatus` returns `'partial'` if ANY field is rejected, regardless of other fields'
   states (a rejected field must always be user-editable). Distributor Secondary's `secondary_value`/
-  `secondary_orders`/`productive_outlets` loops only count orders/visits belonging to a **completed
-  batch** (`secondary_orders.batch_id` set) — an editable, still-ongoing order doesn't count as real
-  activity yet. "Distributors Created" achievement (`acq`) is deliberately **ungated** (counts the
+  `secondary_orders`/`productive_outlets` loops count an order only once its **delivery outcome is
+  confirmed** (`secondary_orders.delivery_status` is `'full'` or `'partial'`), dated by that order's
+  `delivery.delivered_date` — NOT merely once Retailing Complete locks it into a batch (dated by
+  `order_date`), which was the original rule. Changed so these three figures actually reconcile
+  against the Stock & Sales Report's own Sales figure (`stockReport.js`'s `flattenSales`) — both now
+  share the same "delivered, net of any partial-delivery returns, dated by delivered_date" math;
+  `secondary_value` explicitly nets out returned qty the same way. A `pending` (not yet marked either
+  way) or `not_delivered` order counts toward neither report — it hasn't moved any goods yet. Found
+  live: a rep's Secondary Value on Team Snapshot didn't match the Stock & Sales Report's Sales total
+  for the same distributor even after accounting for pending/not-delivered orders — root cause was
+  these fields being order-taking-based while Stock Report was delivery-based, two irreconcilable
+  definitions; not a numeric bug once traced. `fetchSecondaryOrders` (db.js) now embeds
+  `delivery:secondary_order_deliveries!secondary_orders_delivery_id_fkey(delivered_date,
+  delivery_items(...))` (same ambiguous-FK alias as the Stock Report's own fetch, Bug Pattern #3) so
+  every consumer of the global `secondaryOrders` context has what it needs. `TeamSnapshot.jsx`'s own
+  "Distributor Secondary" raw-activity stat tiles and `Dashboard.jsx`'s Admin/Manager rollup section
+  mirror this same gating by hand (not by calling into `achievementEngine.js`) — same duplicated-
+  filter drift risk as Recurring Bug Pattern #6, keep all three in sync on any future change here.
+  The **Distributor Secondary Order Report** (`DistributorSecondaryReport.jsx`, below) deliberately
+  keeps its own, different scope — every completed-batch order regardless of delivery outcome, dated
+  by `order_date` — since its job is showing what a rep *booked*, not what was delivered; it no longer
+  shares a definition with the achievement engine, unlike before this change. "Distributors Created"
+  achievement (`acq`) is deliberately **ungated** (counts the
   real pipeline event unconditionally) so it always matches the pipeline's own "Distributor Created"
   tile — only the *goal target* number still requires approval.
 - **`src/lib/goalAggregation.js`** — `aggregateForMembers(memberIds, slices, products, categories,
@@ -366,15 +386,35 @@ genuinely base-unit quantities untouched by which unit the rep picked.
 **Distributor Secondary Order Report** (`src/pages/shared/DistributorSecondaryReport.jsx`, menu id
 `distributorSecondaryReport`, reachable by all 3 audiences — Sales Team's own activity, Manager's own
 team, Admin org-wide with an added Sales Rep filter) — **Summary** tab: one row per (batch ×
-distributor × beat) combination, drilling into an order-no-wise list → full read-only order detail
+distributor × beat) combination, with a **Total Items** column that counts item *lines* across the
+group's orders, not a summed quantity — summing qty across different products would add mismatched
+units together (Litres + Units + Pieces), the same class of mistake the Stock & Sales Report's own
+totals row (`allSameUnit`) exists to avoid; caught live as a nonsensical "132.05 items" figure. Also
+carries a per-row **Stock Return / Stock Delivered / Delivery Pending** breakdown (orders + value each)
+splitting that group's Total Value by delivery outcome — same delivered-net-of-returns math as
+`stockReport.js`'s `flattenSales`/`achievementEngine.js`'s Value gating (see Goals & Performance
+above), computed inline in `DistributorSecondaryReport.jsx` rather than shared, since this report
+needs it per-row/per-group rather than per-member. A `'full'` order's whole value counts as
+Delivered; `'not_delivered'` counts its whole value as Return (nothing reached the outlet, so it
+effectively all came back); `'partial'` splits across **both** — its net-of-return portion under
+Delivered and its returned portion under Return — so a partial order is counted in both the Return
+and Delivered "orders" tallies at once, and those two counts (plus Pending) deliberately don't sum
+back to Total Orders; unset/`'pending'` status counts its whole value as Pending (outcome not yet
+marked). Verified live: every row's Delivered value + Return value + Pending value sums exactly back
+to that row's Total Value. `fetchSecondaryOrdersForReport` (db.js) embeds `delivery` the same way as
+every other reader of this relationship (`!secondary_orders_delivery_id_fkey` alias, Bug Pattern #3).
+Drilling into a row opens an order-no-wise list → full read-only order detail
 (`src/components/SecondaryOrderDetailSheet.jsx`, a shared component — also used by Order Delivery
 below — reuses `printSecondaryOrder.js`'s existing PDF). **Detail** tab: flat
 itemwise rows. Both filterable (Distributor/Beat/Sales Rep/date range) and exportable to PDF
 (`jspdf-autotable`, this app's first paginated-table PDF) and Excel (`xlsx`, first Excel export ever
 in this app — carries 2 known high-severity npm-registry CVEs SheetJS no longer patches; accepted
 since this feature only writes exports, never parses untrusted input). Report scope is **completed
-batches only** (`batch_id is not null`) — matches the achievement engine's own definition of "real"
-activity, not the live Day Summary's broader "everything today" view.
+batches only** (`batch_id is not null`), dated by `order_date`, regardless of delivery outcome — a
+deliberately different, order-taking scope than the achievement engine's own delivery-confirmed
+definition (see Goals & Performance above); this report's job is showing what a rep *booked*, the
+live Day Summary's is "everything today," neither is "what got delivered" (that's the Stock & Sales
+Report / Order Delivery module instead).
 
 Reachable via "View Report" links from all three Distributor Secondary dashboard panels above.
 `WebApp.jsx`'s `onNavigate`/`goTo` accepts an optional second `params` arg (threaded as a sibling
@@ -383,6 +423,22 @@ Reachable via "View Report" links from all three Distributor Secondary dashboard
 anything for the exact month it was computed over); `Dashboard.jsx`/`TeamSnapshot.jsx`'s links
 arrive unlocked, pre-filled to whichever Today/Month/Year tab was active. `TeamApp.jsx` (no generic
 `onNavigate`) mirrors the same concept locally via a `reportParams` state + callback prop.
+`navParams.distributorId` is also honored (pre-fills, doesn't lock, the Distributor filter) — used
+by the Stock & Sales Report's Sales-column drill-down below.
+
+**Secondary Return Report** (`src/pages/shared/SecondaryReturnReport.jsx`, menu id
+`secondaryReturnReport`, same 3-way audience/filters/export/Summary+Detail shape as the Order Report
+above, deliberately built as its sibling rather than a tab on it — reuses `db.fetchSecondaryOrdersForReport`
+as-is, just filtered client-side to `delivery_status in ('partial','not_delivered')`) — shows only
+what actually came back. A `'not_delivered'` order returns every item at its full ordered qty (no
+`delivery_item` rows exist for it — implicit full return, same convention documented on
+`SecondaryOrderDetailSheet.jsx`); a `'partial'` order returns only whichever lines have an actual
+`delivery_item` row with `returned_qty > 0`. **Summary** tab: one row per (batch × distributor ×
+beat) group, Return Orders/Items/Value. **Detail** tab: one row per actually-returned line, with
+Ordered Qty alongside Returned Qty and a Reason column (`Not Delivered` / `Partial Return`). Both
+tabs total their Value column. Verified live: this report's Return Value total reconciles exactly
+against the Order Report's own "Stock Return — Value" column total for the same scope (both derive
+from the identical return-split math).
 
 **`src/lib/printSecondaryOrder.js`** — single-order PDF + batch ZIP (`jszip`, real individual PDF
 files, not one combined document). **`src/lib/printDaySummary.js`** — per-batch/day-summary PDF.
@@ -568,6 +624,18 @@ quantity is only summed alongside it when every row currently in view shares one
 (`allSameUnit` in `DistributorStockSalesReport.jsx` — summing "3 Litres + 5 Units" would be
 meaningless), otherwise the quantity cell shows `—` while value still totals correctly (e.g. all
 distributors/all products shows `—` qty + a real ₹ total; filtering to one Product shows both).
+
+**Every Summary cell drills into whatever explains that number** — no figure is a dead end.
+Opening/Receipts/Closing (`drillToDetail`) narrow the report's own Distributor+Product filters and
+flip to its own Detail tab, which already lists every real Receipt/Sale transaction behind them (no
+separate "Receipts report" exists to send Receipts to). **Sales** (`drillToSales`) is different — it's
+sourced from delivered secondary orders, which already have their own dedicated report — so it
+navigates via `onNavigate('distributorSecondaryReport', { distributorId, from, to })` instead,
+landing pre-filtered to that row's distributor and this report's active date range (see the Order
+Report's own `navParams.distributorId` handling above). `DistributorStockSalesReport` now takes an
+`onNavigate` prop like every other page — `WebApp.jsx` already threads `goTo` into it for free
+(every `PageComponent` gets `onNavigate`/`navParams` generically); `TeamApp.jsx` wires its own
+`reportParams`/`setTab` pair the same way it does for every other cross-report link in that shell.
 
 **Receipts** now sources from `invoices` (`db.fetchReceiptsForStockReport`), not
 `distributor_order_items.final_qty` directly — the invoice is the authoritative billed-quantity

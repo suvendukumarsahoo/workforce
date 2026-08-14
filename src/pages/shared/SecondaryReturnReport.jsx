@@ -9,17 +9,18 @@ import SecondaryOrderDetailSheet from '../../components/SecondaryOrderDetailShee
 
 const selStyle = { padding: '6px 9px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12, background: '#fff' }
 const uniqById = arr => Object.values(Object.fromEntries((arr || []).filter(Boolean).map(x => [x.id, x])))
-// Quantities can be fractional (unit-conversion feature stores a base-unit-equivalent, e.g. 10
-// Pieces ÷ 50/Base = 0.2) — long floating-point tails (127.04761904761905) look broken on screen
-// and in exports, so round to 2 decimals wherever a qty/qty-sum is shown.
 const round2 = n => Math.round((Number(n) || 0) * 100) / 100
 
-// Reached three ways: direct menu click (defaults to the current month, unlocked), or a click-
-// through from Dashboard.jsx's DistributorSecondarySection / TeamSnapshot.jsx's own panel (pre-
-// filled to that panel's active Today/Month/Year range, still unlocked) / GoalsStatus.jsx's
-// Distributor Secondary goal panel (pre-filled AND locked to that period's month, since a Goals
-// figure only means anything for the exact month it was computed over).
-export default function DistributorSecondaryReport({ navParams }) {
+// Return-only counterpart to DistributorSecondaryReport.jsx — same shape (Summary batch-rollup +
+// Detail itemwise, same 3-way audience/filters/export), but scoped to only what came back: a
+// 'not_delivered' order returns every item in full (no delivery_item rows exist for it — "0
+// returned / fully returned is implicit, not stored", same convention documented for
+// SecondaryOrderDetailSheet.jsx); a 'partial' order returns only whichever lines actually have a
+// delivery_item row with returned_qty > 0. 'full' and still-'pending' orders never appear here —
+// nothing came back from a full delivery, and a not-yet-actioned order has no return to report yet.
+// Same delivered/returned split math as DistributorSecondaryReport.jsx's own deliveryBreakdown and
+// stockReport.js's flattenSales — verified to reconcile with both.
+export default function SecondaryReturnReport({ navParams }) {
   const { currentUser, role } = useAuth()
   const { members, users } = useData()
 
@@ -36,14 +37,13 @@ export default function DistributorSecondaryReport({ navParams }) {
   const defaultRange = monthRangeForPeriod(getCurrentPeriod())
   const [from, setFrom] = useState(navParams?.from || defaultRange.from)
   const [to, setTo] = useState(navParams?.to || defaultRange.to)
-  const locked = !!navParams?.locked
   const [distributorId, setDistributorId] = useState(navParams?.distributorId || '')
   const [beatId, setBeatId] = useState('')
-  const [repId, setRepId] = useState('') // member id — multiRep only
+  const [repId, setRepId] = useState('')
 
   const [orders, setOrders] = useState(null)
   const [tab, setTab] = useState('summary')
-  const [drillGroup, setDrillGroup] = useState(null) // a Summary row's own orders
+  const [drillGroup, setDrillGroup] = useState(null)
   const [viewOrder, setViewOrder] = useState(null)
 
   const effectiveMemberIds = repId ? [repId] : scopeMemberIds
@@ -53,21 +53,35 @@ export default function DistributorSecondaryReport({ navParams }) {
     const { data } = await db.fetchSecondaryOrdersForReport({ memberIds: effectiveMemberIds, from, to })
     setOrders(data || [])
   }
-  // Distributor/Beat filters narrow the already-fetched set client-side (see below) rather than
-  // re-querying — cheap, and lets their dropdown options reflect exactly what's in the loaded
-  // date range/rep scope. Date range/rep DO need a re-fetch.
   useEffect(() => { load() }, [from, to, repId]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const distributorOptions = uniqById((orders || []).map(o => o.distributor))
-  const beatOptions = uniqById((orders || []).map(o => o.beat))
+  // Only orders that actually have SOME return — 'partial' or 'not_delivered'. 'full' and 'pending'
+  // orders are dropped entirely before grouping, same "scope, not just a zeroed-out row" convention
+  // as the Discrepancy Report's own closing-stock-only table.
+  const returnable = (orders || []).filter(o => ['partial', 'not_delivered'].includes(o.delivery_status))
 
-  const filtered = (orders || []).filter(o =>
+  const distributorOptions = uniqById(returnable.map(o => o.distributor))
+  const beatOptions = uniqById(returnable.map(o => o.beat))
+
+  const filtered = returnable.filter(o =>
     (!distributorId || o.distributor_id === distributorId) && (!beatId || o.beat_id === beatId)
   )
 
-  // secondary_orders.member_id has no queryable FK to `members` (see fetchSecondaryOrdersForReport's
-  // own note) — resolved client-side against the already-loaded members list instead.
   const memberName = mid => (members || []).find(m => String(m.id) === String(mid))?.name || mid
+
+  // Per order: which items actually returned, and how much. 'not_delivered' → every item, full qty
+  // (nothing reached the outlet). 'partial' → only items with a delivery_item row, capped at ordered
+  // qty (defensive against a stray return row exceeding what was ever ordered).
+  const returnedItemsFor = o => {
+    if (o.delivery_status === 'not_delivered') {
+      return (o.items || []).map(it => ({ item: it, returnedQty: Number(it.qty) || 0 }))
+    }
+    const returnedByItem = {}
+    ;(o.delivery?.delivery_items || []).forEach(di => { returnedByItem[di.order_item_id] = Number(di.returned_qty) || 0 })
+    return (o.items || [])
+      .map(it => ({ item: it, returnedQty: Math.min(Number(it.qty) || 0, returnedByItem[it.id] || 0) }))
+      .filter(r => r.returnedQty > 0)
+  }
 
   const groups = {}
   filtered.forEach(o => {
@@ -75,71 +89,41 @@ export default function DistributorSecondaryReport({ navParams }) {
     if (!groups[key]) groups[key] = { batchId: o.batch_id, distributorName: o.distributor?.name || o.distributor_id, beatName: o.beat?.name || o.beat_id, memberName: memberName(o.member_id), date: o.order_date, orders: [] }
     groups[key].orders.push(o)
   })
-  // Stock Return / Stock Delivered / Delivery Pending — splits each order's full value by its
-  // delivery outcome, same math as stockReport.js's flattenSales / achievementEngine.js's Value
-  // gating (already verified to reconcile against the Stock & Sales Report). A 'partial' order
-  // contributes to BOTH Delivered (its net-of-return portion) and Return (its returned portion) —
-  // by design, since it genuinely has some of each; the three "orders" counts below therefore don't
-  // sum back to Total Orders, that's expected, not a bug. 'not_delivered' counts its whole value as
-  // Return (nothing reached the outlet, so all of it effectively came back); 'pending'/unset counts
-  // its whole value as Pending (delivery outcome not yet marked at all).
-  const deliveryBreakdown = orders => {
-    const b = { returnCount: 0, returnValue: 0, deliveredCount: 0, deliveredValue: 0, pendingCount: 0, pendingValue: 0 }
-    orders.forEach(o => {
-      const returnedByItem = {}
-      ;(o.delivery?.delivery_items || []).forEach(di => { returnedByItem[di.order_item_id] = Number(di.returned_qty) || 0 })
-      const orderValue = (o.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
-      const status = o.delivery_status || 'pending'
-      if (status === 'full') {
-        b.deliveredCount += 1; b.deliveredValue += orderValue
-      } else if (status === 'partial') {
-        const returnedValue = (o.items || []).reduce((s, it) => s + Math.min(Number(it.qty) || 0, returnedByItem[it.id] || 0) * (Number(it.rate) || 0), 0)
-        b.deliveredCount += 1; b.deliveredValue += orderValue - returnedValue
-        b.returnCount += 1; b.returnValue += returnedValue
-      } else if (status === 'not_delivered') {
-        b.returnCount += 1; b.returnValue += orderValue
-      } else {
-        b.pendingCount += 1; b.pendingValue += orderValue
-      }
+  const summaryRows = Object.values(groups).map(g => {
+    let returnItems = 0
+    let returnValue = 0
+    g.orders.forEach(o => {
+      returnedItemsFor(o).forEach(({ item, returnedQty }) => {
+        returnItems += 1
+        returnValue += returnedQty * (Number(item.rate) || 0)
+      })
     })
-    return b
-  }
+    return { ...g, returnOrders: g.orders.length, returnItems, returnValue }
+  }).sort((a, b) => new Date(b.date) - new Date(a.date))
 
-  const summaryRows = Object.values(groups).map(g => ({
-    ...g,
-    totalOrders: g.orders.length,
-    // Count of item LINES across every order in this batch — not a sum of quantities, which would
-    // add together different products' different units (Litres + Units + Pieces) into a meaningless
-    // decimal figure (caught live: "132.05" for a mixed-unit batch).
-    totalItems: g.orders.reduce((s, o) => s + (o.items || []).length, 0),
-    totalValue: g.orders.reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0), 0),
-    ...deliveryBreakdown(g.orders),
-  })).sort((a, b) => new Date(b.date) - new Date(a.date))
-
-  const detailRows = filtered.flatMap(o => (o.items || []).map(it => ({
+  const detailRows = filtered.flatMap(o => returnedItemsFor(o).map(({ item, returnedQty }) => ({
     date: o.order_date, batchId: o.batch_id, distributorName: o.distributor?.name || o.distributor_id,
     beatName: o.beat?.name || o.beat_id, memberName: memberName(o.member_id),
-    orderId: o.id, outlet: o.outlet?.name || o.outlet_id, product: it.product?.name || it.product_id,
-    qty: round2(it.qty), rate: it.rate, value: (Number(it.qty) || 0) * (Number(it.rate) || 0),
+    orderId: o.id, outlet: o.outlet?.name || o.outlet_id, product: item.product?.name || item.product_id,
+    orderedQty: round2(item.qty), returnedQty: round2(returnedQty), rate: item.rate, value: returnedQty * (Number(item.rate) || 0),
+    reason: o.delivery_status === 'not_delivered' ? 'Not Delivered' : 'Partial Return',
   })))
 
   const summaryColumns = [
     { header: 'Date', key: 'date' }, { header: 'Batch ID', key: 'batchId' },
     { header: 'Distributor', key: 'distributorName' }, { header: 'Beat', key: 'beatName' },
     ...(multiRep ? [{ header: 'Sales Rep', key: 'memberName' }] : []),
-    { header: 'Total Orders', key: 'totalOrders' }, { header: 'Total Items', key: 'totalItems' },
-    { header: 'Total Value', key: 'totalValue' },
-    { header: 'Stock Return — Orders', key: 'returnCount' }, { header: 'Stock Return — Value', key: 'returnValue' },
-    { header: 'Stock Delivered — Orders', key: 'deliveredCount' }, { header: 'Stock Delivered — Value', key: 'deliveredValue' },
-    { header: 'Delivery Pending — Orders', key: 'pendingCount' }, { header: 'Delivery Pending — Value', key: 'pendingValue' },
+    { header: 'Return Orders', key: 'returnOrders' }, { header: 'Return Items', key: 'returnItems' },
+    { header: 'Return Value', key: 'returnValue' },
   ]
   const detailColumns = [
     { header: 'Date', key: 'date' }, { header: 'Batch ID', key: 'batchId' },
     { header: 'Distributor', key: 'distributorName' }, { header: 'Beat', key: 'beatName' },
     ...(multiRep ? [{ header: 'Sales Rep', key: 'memberName' }] : []),
     { header: 'Order No', key: 'orderId' }, { header: 'Outlet', key: 'outlet' },
-    { header: 'Product', key: 'product' }, { header: 'Qty', key: 'qty' },
-    { header: 'Rate', key: 'rate' }, { header: 'Value', key: 'value' },
+    { header: 'Product', key: 'product' }, { header: 'Ordered Qty', key: 'orderedQty' },
+    { header: 'Returned Qty', key: 'returnedQty' }, { header: 'Rate', key: 'rate' },
+    { header: 'Return Value', key: 'value' }, { header: 'Reason', key: 'reason' },
   ]
 
   const activeColumns = tab === 'summary' ? summaryColumns : detailColumns
@@ -147,13 +131,13 @@ export default function DistributorSecondaryReport({ navParams }) {
   const rangeLabel = `${from}_to_${to}`
 
   const exportPdf = () => downloadReportPdf({
-    filename: `SecondaryReport-${tab === 'summary' ? 'Summary' : 'Detail'}-${rangeLabel}.pdf`,
-    title: `Distributor Secondary — ${tab === 'summary' ? 'Summary' : 'Detail'} Report`,
+    filename: `ReturnReport-${tab === 'summary' ? 'Summary' : 'Detail'}-${rangeLabel}.pdf`,
+    title: `Distributor Secondary — Return ${tab === 'summary' ? 'Summary' : 'Detail'} Report`,
     sub: `${from} to ${to}`,
     columns: activeColumns, rows: activeRows,
   })
   const exportExcel = () => downloadReportExcel({
-    filename: `SecondaryReport-${tab === 'summary' ? 'Summary' : 'Detail'}-${rangeLabel}.xlsx`,
+    filename: `ReturnReport-${tab === 'summary' ? 'Summary' : 'Detail'}-${rangeLabel}.xlsx`,
     sheetName: tab === 'summary' ? 'Summary' : 'Detail',
     columns: activeColumns, rows: activeRows,
   })
@@ -188,15 +172,12 @@ export default function DistributorSecondaryReport({ navParams }) {
           )}
           <div>
             <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>From</div>
-            {locked ? <div style={{ fontSize: 12, fontWeight: 600, padding: '6px 0' }}>{from}</div> :
-              <input type="date" value={from} onChange={e => setFrom(e.target.value)} style={selStyle} />}
+            <input type="date" value={from} onChange={e => setFrom(e.target.value)} style={selStyle} />
           </div>
           <div>
             <div style={{ fontSize: 10, color: '#6b7280', marginBottom: 3 }}>To</div>
-            {locked ? <div style={{ fontSize: 12, fontWeight: 600, padding: '6px 0' }}>{to}</div> :
-              <input type="date" value={to} onChange={e => setTo(e.target.value)} style={selStyle} />}
+            <input type="date" value={to} onChange={e => setTo(e.target.value)} style={selStyle} />
           </div>
-          {locked && <div style={{ fontSize: 11, color: '#9ca3af' }}>🔒 Locked to this month (opened from Goals Status)</div>}
         </div>
       </Card>
 
@@ -219,10 +200,10 @@ export default function DistributorSecondaryReport({ navParams }) {
 
       {orders !== null && tab === 'summary' && (
         <Card>
-          <CH title="Summary" sub={`${summaryRows.length} batch × distributor × beat group(s)`} />
-          {summaryRows.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No completed batches in this range</div>}
+          <CH title="Summary" sub={`${summaryRows.length} batch × distributor × beat group(s) with a return`} />
+          {summaryRows.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No returns in this range</div>}
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1300 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 800 }}>
               <thead>
                 <tr style={{ background: '#f9fafb' }}>
                   {summaryColumns.map(c => <th key={c.key} style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>{c.header}</th>)}
@@ -236,37 +217,22 @@ export default function DistributorSecondaryReport({ navParams }) {
                     <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{g.distributorName}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.beatName}</td>
                     {multiRep && <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.memberName}</td>}
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.totalOrders}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.totalItems}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(g.totalValue)}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c' }}>{g.returnCount}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c' }}>{F(g.returnValue)}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#15803d' }}>{g.deliveredCount}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#15803d' }}>{F(g.deliveredValue)}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#b45309' }}>{g.pendingCount}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#b45309' }}>{F(g.pendingValue)}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.returnOrders}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.returnItems}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b91c1c' }}>{F(g.returnValue)}</td>
                   </tr>
                 ))}
               </tbody>
-              {summaryRows.length > 0 && (() => {
-                const sum = key => summaryRows.reduce((s, r) => s + (Number(r[key]) || 0), 0)
-                return (
-                  <tfoot>
-                    <tr style={{ background: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
-                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }} colSpan={multiRep ? 5 : 4}>Total</td>
-                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{sum('totalOrders')}</td>
-                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{sum('totalItems')}</td>
-                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(sum('totalValue'))}</td>
-                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b91c1c' }}>{sum('returnCount')}</td>
-                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b91c1c' }}>{F(sum('returnValue'))}</td>
-                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#15803d' }}>{sum('deliveredCount')}</td>
-                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#15803d' }}>{F(sum('deliveredValue'))}</td>
-                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b45309' }}>{sum('pendingCount')}</td>
-                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b45309' }}>{F(sum('pendingValue'))}</td>
-                    </tr>
-                  </tfoot>
-                )
-              })()}
+              {summaryRows.length > 0 && (
+                <tfoot>
+                  <tr style={{ background: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }} colSpan={multiRep ? 5 : 4}>Total</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{summaryRows.reduce((s, r) => s + r.returnOrders, 0)}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{summaryRows.reduce((s, r) => s + r.returnItems, 0)}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b91c1c' }}>{F(summaryRows.reduce((s, r) => s + r.returnValue, 0))}</td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </Card>
@@ -274,10 +240,10 @@ export default function DistributorSecondaryReport({ navParams }) {
 
       {orders !== null && tab === 'detail' && (
         <Card>
-          <CH title="Detail" sub={`${detailRows.length} item row(s)`} />
-          {detailRows.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No items in this range</div>}
+          <CH title="Detail" sub={`${detailRows.length} returned item row(s)`} />
+          {detailRows.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No returned items in this range</div>}
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1000 }}>
               <thead>
                 <tr style={{ background: '#f9fafb' }}>
                   {detailColumns.map(c => <th key={c.key} style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>{c.header}</th>)}
@@ -294,17 +260,20 @@ export default function DistributorSecondaryReport({ navParams }) {
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.orderId}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.outlet}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{r.product}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.qty}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.orderedQty}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c' }}>{r.returnedQty}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{F(r.rate)}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(r.value)}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b91c1c' }}>{F(r.value)}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.reason}</td>
                   </tr>
                 ))}
               </tbody>
               {detailRows.length > 0 && (
                 <tfoot>
                   <tr style={{ background: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
-                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }} colSpan={multiRep ? 10 : 9}>Total</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(detailRows.reduce((s, r) => s + (Number(r.value) || 0), 0))}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }} colSpan={multiRep ? 9 : 8}>Total</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b91c1c' }}>{F(detailRows.reduce((s, r) => s + (Number(r.value) || 0), 0))}</td>
+                    <td></td>
                   </tr>
                 </tfoot>
               )}
@@ -314,16 +283,17 @@ export default function DistributorSecondaryReport({ navParams }) {
       )}
 
       {drillGroup && (
-        <Sheet title={`${drillGroup.distributorName} — ${drillGroup.beatName}`} sub={`Batch ${drillGroup.batchId}`} onClose={() => setDrillGroup(null)}>
+        <Sheet title={`${drillGroup.distributorName} — ${drillGroup.beatName}`} sub={`Batch ${drillGroup.batchId} · returns only`} onClose={() => setDrillGroup(null)}>
           {drillGroup.orders.map(o => {
-            const value = (o.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
+            const items = returnedItemsFor(o)
+            const value = items.reduce((s, { item, returnedQty }) => s + returnedQty * (Number(item.rate) || 0), 0)
             return (
               <div key={o.id} onClick={() => setViewOrder(o)} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 4px', borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
                 <div>
                   <div style={{ fontWeight: 600, fontSize: 13 }}>{o.id}</div>
-                  <div style={{ fontSize: 11, color: '#9ca3af' }}>{o.outlet?.name || o.outlet_id} · {(o.items || []).length} item(s)</div>
+                  <div style={{ fontSize: 11, color: '#9ca3af' }}>{o.outlet?.name || o.outlet_id} · {items.length} item(s) returned · {o.delivery_status === 'not_delivered' ? 'Not Delivered' : 'Partial Return'}</div>
                 </div>
-                <div style={{ fontSize: 13, fontWeight: 700 }}>{F(value)}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: '#b91c1c' }}>{F(value)}</div>
               </div>
             )
           })}
