@@ -330,7 +330,10 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
               myOutlets={myOutlets}
               mySecondaryOrders={mySecondaryOrders}
               myRetailVisits={myRetailVisits}
-              onOpenSecondaryReport={(params) => { setReportParams({ ...params, backTo: { id: 'dashboard', label: 'Home', params: {} } }); setTab('distributorSecondaryReport') }}
+              // dateBasis: 'confirm' — TeamSnapshot's own Distributor Secondary stats mirror
+              // achievementEngine.js's delivery-confirmed gating by hand (see CLAUDE.md), so the
+              // Order Report needs the same lens to reconcile against what's shown here.
+              onOpenSecondaryReport={(params) => { setReportParams({ ...params, dateBasis: 'confirm', backTo: { id: 'dashboard', label: 'Home', params: {} } }); setTab('distributorSecondaryReport') }}
             />
 {selectedStage && (
               <LeadListSheet

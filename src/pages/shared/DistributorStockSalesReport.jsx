@@ -116,8 +116,12 @@ export default function DistributorStockSalesReport({ onNavigate, navParams }) {
   // navigates there (Secondary Order Report), pre-filtered to this row's distributor + this report's
   // active date range, rather than staying inside the Detail tab.
   const drillToDetail = row => { setDistributorId(row.distributorId); setProductId(row.productId); setTab('detail') }
+  // dateBasis: 'confirm' — this Sales figure is itself computed from delivered secondary orders
+  // (fetchDeliveredSecondaryOrdersForStockReport / computeStockLedger, dated by delivered_date
+  // exclusively), so the Order Report needs to view the same from/to window through that same lens
+  // to actually reconcile — Order Date basis would show a different, unrelated set of orders.
   const drillToSales = row => onNavigate?.('distributorSecondaryReport', {
-    distributorId: row.distributorId, from, to,
+    distributorId: row.distributorId, from, to, dateBasis: 'confirm',
     backTo: { id: 'distributorStockSalesReport', label: 'Stock & Sales Report', params: { from, to, distributorId, productId, backTo: navParams?.backTo } },
   })
   // Receipts is sourced from invoices (see fetchReceiptsForStockReport) — the actual purchase orders
