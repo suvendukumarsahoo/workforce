@@ -248,6 +248,25 @@ export default function DistributorSecondaryReport({ navParams }) {
                   </tr>
                 ))}
               </tbody>
+              {summaryRows.length > 0 && (() => {
+                const sum = key => summaryRows.reduce((s, r) => s + (Number(r[key]) || 0), 0)
+                return (
+                  <tfoot>
+                    <tr style={{ background: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }} colSpan={multiRep ? 5 : 4}>Total</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{sum('totalOrders')}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{sum('totalItems')}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(sum('totalValue'))}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b91c1c' }}>{sum('returnCount')}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b91c1c' }}>{F(sum('returnValue'))}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#15803d' }}>{sum('deliveredCount')}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#15803d' }}>{F(sum('deliveredValue'))}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b45309' }}>{sum('pendingCount')}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b45309' }}>{F(sum('pendingValue'))}</td>
+                    </tr>
+                  </tfoot>
+                )
+              })()}
             </table>
           </div>
         </Card>
@@ -281,6 +300,14 @@ export default function DistributorSecondaryReport({ navParams }) {
                   </tr>
                 ))}
               </tbody>
+              {detailRows.length > 0 && (
+                <tfoot>
+                  <tr style={{ background: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }} colSpan={multiRep ? 10 : 9}>Total</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(detailRows.reduce((s, r) => s + (Number(r.value) || 0), 0))}</td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </Card>
