@@ -120,6 +120,14 @@ export default function DistributorStockSalesReport({ onNavigate, navParams }) {
     distributorId: row.distributorId, from, to,
     backTo: { id: 'distributorStockSalesReport', label: 'Stock & Sales Report', params: { from, to, distributorId, productId, backTo: navParams?.backTo } },
   })
+  // Receipts is sourced from invoices (see fetchReceiptsForStockReport) — the actual purchase orders
+  // behind that figure already have their own dedicated view (Order Status / "Distributor Order"
+  // history), so Receipts navigates there instead of staying on this report's own Detail tab, same
+  // pattern as Sales navigating to the Secondary Order Report above.
+  const drillToReceipts = row => onNavigate?.('orderStatus', {
+    distributorId: row.distributorId, from, to,
+    backTo: { id: 'distributorStockSalesReport', label: 'Stock & Sales Report', params: { from, to, distributorId, productId, backTo: navParams?.backTo } },
+  })
 
   const submitEntry = async () => {
     if (!enterFor) return
@@ -307,7 +315,7 @@ export default function DistributorStockSalesReport({ onNavigate, navParams }) {
                     <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{r.distributorName}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.productName}</td>
                     <td onClick={() => drillToDetail(r)} title="View Receipt/Sale detail behind this Opening balance" style={{ padding: '8px 10px', fontSize: 12, cursor: 'pointer' }}><QtyValue qty={r.opening} value={r.openingValue} unit={r.unit} /></td>
-                    <td onClick={() => drillToDetail(r)} title="View Receipt detail" style={{ padding: '8px 10px', fontSize: 12, color: '#15803d', cursor: 'pointer' }}><QtyValue qty={r.receipts} value={r.receiptsValue} unit={r.unit} /></td>
+                    <td onClick={() => drillToReceipts(r)} title="View the distributor orders behind this Receipts figure — Order Status" style={{ padding: '8px 10px', fontSize: 12, color: '#15803d', cursor: 'pointer' }}><QtyValue qty={r.receipts} value={r.receiptsValue} unit={r.unit} /></td>
                     <td onClick={() => drillToSales(r)} title="View the delivered orders behind this Sales figure — Secondary Order Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}><QtyValue qty={r.sales} value={r.salesValue} unit={r.unit} /></td>
                     <td onClick={() => drillToDetail(r)} title="View Receipt/Sale detail behind this Closing balance" style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><QtyValue qty={r.closing} value={r.closingValue} unit={r.unit} /></td>
                   </tr>

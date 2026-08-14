@@ -739,11 +739,17 @@ export async function fetchInvoiceForOrder(orderId) {
   return { data, error }
 }
 
+// erp_invoice_number/erp_date/erp_amount added for OrderStatus.jsx's history table — the ERP-side
+// figures, entered by whoever creates the invoice (AwaitingInvoiceTile.jsx), distinct from this
+// app's own invoice id/date and from the order's own computed Value (qty × rate at whatever qty the
+// order currently carries) that OrderStatus.jsx already showed. AllocationJourneyTile.jsx's own
+// caller only reads order_id/id/status, so the extra columns are unused weight there, not a
+// behavior change.
 export async function fetchInvoicesForOrders(orderIds) {
   if (!orderIds?.length) return { data: [], error: null }
   const { data, error } = await supabase
     .from('invoices')
-    .select('order_id, id, status')
+    .select('order_id, id, status, date, erp_invoice_number, erp_date, erp_amount')
     .in('order_id', orderIds)
   return { data, error }
 }

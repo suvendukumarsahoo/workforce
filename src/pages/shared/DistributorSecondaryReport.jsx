@@ -12,7 +12,6 @@ const uniqById = arr => Object.values(Object.fromEntries((arr || []).filter(Bool
 // Quantities can be fractional (unit-conversion feature stores a base-unit-equivalent, e.g. 10
 // Pieces ÷ 50/Base = 0.2) — long floating-point tails (127.04761904761905) look broken on screen
 // and in exports, so round to 2 decimals wherever a qty/qty-sum is shown.
-const round2 = n => Math.round((Number(n) || 0) * 100) / 100
 // Money is rounded to whole rupees, not qty's 2 decimals — same "round at data-construction time"
 // convention as round2 above (so both the on-screen table and the PDF/Excel export inherit it,
 // rather than only the render call).
@@ -46,7 +45,7 @@ export default function DistributorSecondaryReport({ navParams, onNavigate }) {
   const [repId, setRepId] = useState('') // member id — multiRep only
 
   const [orders, setOrders] = useState(null)
-  const [tab, setTab] = useState('summary')
+  const [tab, setTab] = useState(navParams?.tab || 'summary')
   const [drillGroup, setDrillGroup] = useState(null) // a Summary row's own orders
   const [viewOrder, setViewOrder] = useState(null)
 
@@ -73,12 +72,6 @@ export default function DistributorSecondaryReport({ navParams, onNavigate }) {
   // own note) — resolved client-side against the already-loaded members list instead.
   const memberName = mid => (members || []).find(m => String(m.id) === String(mid))?.name || mid
 
-  const groups = {}
-  filtered.forEach(o => {
-    const key = multiRep ? `${o.batch_id}|${o.distributor_id}|${o.beat_id}|${o.member_id}` : `${o.batch_id}|${o.distributor_id}|${o.beat_id}`
-    if (!groups[key]) groups[key] = { batchId: o.batch_id, distributorId: o.distributor_id, distributorName: o.distributor?.name || o.distributor_id, beatName: o.beat?.name || o.beat_id, memberName: memberName(o.member_id), date: o.order_date, orders: [] }
-    groups[key].orders.push(o)
-  })
   // Stock Return / Stock Delivered / Delivery Pending — splits each order's full value by its
   // delivery outcome, same math as stockReport.js's flattenSales / achievementEngine.js's Value
   // gating (already verified to reconcile against the Stock & Sales Report). A 'partial' order
@@ -109,26 +102,44 @@ export default function DistributorSecondaryReport({ navParams, onNavigate }) {
     return { returnCount: b.returnCount, returnValue: round0(b.returnValue), deliveredCount: b.deliveredCount, deliveredValue: round0(b.deliveredValue), pendingCount: b.pendingCount, pendingValue: round0(b.pendingValue) }
   }
 
-  const summaryRows = Object.values(groups).map(g => ({
+  // Count of item LINES across every order in a group — not a sum of quantities, which would add
+  // together different products' different units (Litres + Units + Pieces) into a meaningless
+  // decimal figure (caught live: "132.05" for a mixed-unit batch). Shared by both groupings below so
+  // Summary and Detail can never drift on how a total is computed, only on what they group by.
+  const rollupGroup = g => ({
     ...g,
     totalOrders: g.orders.length,
-    // Count of item LINES across every order in this batch — not a sum of quantities, which would
-    // add together different products' different units (Litres + Units + Pieces) into a meaningless
-    // decimal figure (caught live: "132.05" for a mixed-unit batch).
     totalItems: g.orders.reduce((s, o) => s + (o.items || []).length, 0),
     totalValue: round0(g.orders.reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0), 0)),
     ...deliveryBreakdown(g.orders),
-  })).sort((a, b) => new Date(b.date) - new Date(a.date))
+  })
 
-  const detailRows = filtered.flatMap(o => (o.items || []).map(it => ({
-    date: o.order_date, batchId: o.batch_id, distributorName: o.distributor?.name || o.distributor_id,
-    beatName: o.beat?.name || o.beat_id, memberName: memberName(o.member_id),
-    orderId: o.id, outlet: o.outlet?.name || o.outlet_id, product: it.product?.name || it.product_id,
-    qty: round2(it.qty), rate: it.rate, value: round0((Number(it.qty) || 0) * (Number(it.rate) || 0)),
-  })))
+  // Detail tab: one row per batch × distributor × beat (× rep) — a batch is one Retailing Complete
+  // run, the natural "how this got booked" unit. Row click drills to that batch's own order-no-wise
+  // list (drillGroup Sheet below) -> full order detail.
+  const batchGroups = {}
+  filtered.forEach(o => {
+    const key = multiRep ? `${o.batch_id}|${o.distributor_id}|${o.beat_id}|${o.member_id}` : `${o.batch_id}|${o.distributor_id}|${o.beat_id}`
+    if (!batchGroups[key]) batchGroups[key] = { batchId: o.batch_id, distributorId: o.distributor_id, distributorName: o.distributor?.name || o.distributor_id, beatName: o.beat?.name || o.beat_id, memberName: memberName(o.member_id), date: o.order_date, orders: [] }
+    batchGroups[key].orders.push(o)
+  })
+  const detailRows = Object.values(batchGroups).map(rollupGroup).sort((a, b) => new Date(b.date) - new Date(a.date))
+
+  // Summary tab: same rollup, one level coarser — date × distributor × beat (× rep), collapsing
+  // every batch on that date into one row. A distributor+beat visited twice in one day (two separate
+  // Retailing Complete runs) previously showed as two Summary rows purely because of a technical
+  // batch boundary the business doesn't care about at this level; that detail still lives one tab
+  // over, in Detail.
+  const dateGroups = {}
+  filtered.forEach(o => {
+    const key = multiRep ? `${o.order_date}|${o.distributor_id}|${o.beat_id}|${o.member_id}` : `${o.order_date}|${o.distributor_id}|${o.beat_id}`
+    if (!dateGroups[key]) dateGroups[key] = { distributorId: o.distributor_id, distributorName: o.distributor?.name || o.distributor_id, beatName: o.beat?.name || o.beat_id, memberName: memberName(o.member_id), date: o.order_date, orders: [] }
+    dateGroups[key].orders.push(o)
+  })
+  const summaryRows = Object.values(dateGroups).map(rollupGroup).sort((a, b) => new Date(b.date) - new Date(a.date))
 
   const summaryColumns = [
-    { header: 'Date', key: 'date' }, { header: 'Batch ID', key: 'batchId' },
+    { header: 'Date', key: 'date' },
     { header: 'Distributor', key: 'distributorName' }, { header: 'Beat', key: 'beatName' },
     ...(multiRep ? [{ header: 'Sales Rep', key: 'memberName' }] : []),
     { header: 'Total Orders', key: 'totalOrders' }, { header: 'Total Items', key: 'totalItems' },
@@ -141,18 +152,25 @@ export default function DistributorSecondaryReport({ navParams, onNavigate }) {
     { header: 'Date', key: 'date' }, { header: 'Batch ID', key: 'batchId' },
     { header: 'Distributor', key: 'distributorName' }, { header: 'Beat', key: 'beatName' },
     ...(multiRep ? [{ header: 'Sales Rep', key: 'memberName' }] : []),
-    { header: 'Order No', key: 'orderId' }, { header: 'Outlet', key: 'outlet' },
-    { header: 'Product', key: 'product' }, { header: 'Qty', key: 'qty' },
-    { header: 'Rate', key: 'rate' }, { header: 'Value', key: 'value' },
+    { header: 'Total Orders', key: 'totalOrders' }, { header: 'Total Items', key: 'totalItems' },
+    { header: 'Total Value', key: 'totalValue' },
+    { header: 'Stock Return — Orders', key: 'returnCount' }, { header: 'Stock Return — Value', key: 'returnValue' },
+    { header: 'Stock Delivered — Orders', key: 'deliveredCount' }, { header: 'Stock Delivered — Value', key: 'deliveredValue' },
+    { header: 'Delivery Pending — Orders', key: 'pendingCount' }, { header: 'Delivery Pending — Value', key: 'pendingValue' },
   ]
 
-  // Carries this report's own current filter state as the Return Report's backTo.params, so its Back
-  // button lands here restored exactly as it was, not reset to defaults — same chaining convention
-  // as BackTo's own doc comment (this report's own navParams?.backTo, if any, rides along nested
-  // inside so a multi-hop drill can walk all the way back).
+  // Carries this report's own current filter state (including which tab was active) as the Return
+  // Report's backTo.params, so its Back button lands here restored exactly as it was, not reset to
+  // defaults — same chaining convention as BackTo's own doc comment (this report's own
+  // navParams?.backTo, if any, rides along nested inside so a multi-hop drill can walk all the way
+  // back). from/to are this report's own active range (the "parent report's filter"), not narrowed
+  // to a single row's date — a row's date field isn't reliable as a filter value on its own (batches
+  // are assumed single-day, but hand-entered/edge-case data can violate that), and every other
+  // cross-report drill in this app already inherits the parent's real active range rather than
+  // synthesizing a narrower one from whatever row was clicked.
   const goToReturnReport = g => onNavigate?.('secondaryReturnReport', {
-    distributorId: g.distributorId, from: g.date, to: g.date,
-    backTo: { id: 'distributorSecondaryReport', label: 'Distributor Secondary Report', params: { from, to, distributorId, locked, backTo: navParams?.backTo } },
+    distributorId: g.distributorId, from, to,
+    backTo: { id: 'distributorSecondaryReport', label: 'Distributor Secondary Report', params: { from, to, distributorId, locked, tab, backTo: navParams?.backTo } },
   })
 
   const activeColumns = tab === 'summary' ? summaryColumns : detailColumns
@@ -233,10 +251,10 @@ export default function DistributorSecondaryReport({ navParams, onNavigate }) {
 
       {orders !== null && tab === 'summary' && (
         <Card>
-          <CH title="Summary" sub={`${summaryRows.length} batch × distributor × beat group(s)`} />
+          <CH title="Summary" sub={`${summaryRows.length} date × distributor × beat group(s)`} />
           {summaryRows.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No completed batches in this range</div>}
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1300 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1200 }}>
               <thead>
                 <tr style={{ background: '#f9fafb' }}>
                   {summaryColumns.map(c => <th key={c.key} style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>{c.header}</th>)}
@@ -244,17 +262,16 @@ export default function DistributorSecondaryReport({ navParams, onNavigate }) {
               </thead>
               <tbody>
                 {summaryRows.map((g, i) => (
-                  <tr key={i} onClick={() => setDrillGroup(g)} style={{ borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
+                  <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.date}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.batchId}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{g.distributorName}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.beatName}</td>
                     {multiRep && <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.memberName}</td>}
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.totalOrders}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.totalItems}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(g.totalValue)}</td>
-                    <td onClick={e => { e.stopPropagation(); goToReturnReport(g) }} title="View these returned orders — Secondary Return Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}>{g.returnCount}</td>
-                    <td onClick={e => { e.stopPropagation(); goToReturnReport(g) }} title="View these returned orders — Secondary Return Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}>{F(g.returnValue)}</td>
+                    <td onClick={() => goToReturnReport(g)} title="View these returned orders — Secondary Return Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}>{g.returnCount}</td>
+                    <td onClick={() => goToReturnReport(g)} title="View these returned orders — Secondary Return Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}>{F(g.returnValue)}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, color: '#15803d' }}>{g.deliveredCount}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, color: '#15803d' }}>{F(g.deliveredValue)}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12, color: '#b45309' }}>{g.pendingCount}</td>
@@ -267,7 +284,7 @@ export default function DistributorSecondaryReport({ navParams, onNavigate }) {
                 return (
                   <tfoot>
                     <tr style={{ background: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
-                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }} colSpan={multiRep ? 5 : 4}>Total</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }} colSpan={multiRep ? 4 : 3}>Total</td>
                       <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{sum('totalOrders')}</td>
                       <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{sum('totalItems')}</td>
                       <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(sum('totalValue'))}</td>
@@ -288,40 +305,54 @@ export default function DistributorSecondaryReport({ navParams, onNavigate }) {
 
       {orders !== null && tab === 'detail' && (
         <Card>
-          <CH title="Detail" sub={`${detailRows.length} item row(s)`} />
-          {detailRows.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No items in this range</div>}
+          <CH title="Detail" sub={`${detailRows.length} batch × distributor × beat group(s) — tap a row for its orders`} />
+          {detailRows.length === 0 && <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>No completed batches in this range</div>}
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 900 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1300 }}>
               <thead>
                 <tr style={{ background: '#f9fafb' }}>
                   {detailColumns.map(c => <th key={c.key} style={{ padding: '8px 10px', fontSize: 10, textAlign: 'left', textTransform: 'uppercase', color: '#6b7280' }}>{c.header}</th>)}
                 </tr>
               </thead>
               <tbody>
-                {detailRows.map((r, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.date}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.batchId}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.distributorName}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.beatName}</td>
-                    {multiRep && <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.memberName}</td>}
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.orderId}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.outlet}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{r.product}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.qty}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{F(r.rate)}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(r.value)}</td>
+                {detailRows.map((g, i) => (
+                  <tr key={i} onClick={() => setDrillGroup(g)} style={{ borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}>
+                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.date}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.batchId}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{g.distributorName}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.beatName}</td>
+                    {multiRep && <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.memberName}</td>}
+                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.totalOrders}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12 }}>{g.totalItems}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(g.totalValue)}</td>
+                    <td onClick={e => { e.stopPropagation(); goToReturnReport(g) }} title="View these returned orders — Secondary Return Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}>{g.returnCount}</td>
+                    <td onClick={e => { e.stopPropagation(); goToReturnReport(g) }} title="View these returned orders — Secondary Return Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}>{F(g.returnValue)}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#15803d' }}>{g.deliveredCount}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#15803d' }}>{F(g.deliveredValue)}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#b45309' }}>{g.pendingCount}</td>
+                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#b45309' }}>{F(g.pendingValue)}</td>
                   </tr>
                 ))}
               </tbody>
-              {detailRows.length > 0 && (
-                <tfoot>
-                  <tr style={{ background: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
-                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }} colSpan={multiRep ? 10 : 9}>Total</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(detailRows.reduce((s, r) => s + (Number(r.value) || 0), 0))}</td>
-                  </tr>
-                </tfoot>
-              )}
+              {detailRows.length > 0 && (() => {
+                const sum = key => detailRows.reduce((s, r) => s + (Number(r[key]) || 0), 0)
+                return (
+                  <tfoot>
+                    <tr style={{ background: '#f9fafb', borderTop: '2px solid #e5e7eb' }}>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }} colSpan={multiRep ? 5 : 4}>Total</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{sum('totalOrders')}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{sum('totalItems')}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}>{F(sum('totalValue'))}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b91c1c' }}>{sum('returnCount')}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b91c1c' }}>{F(sum('returnValue'))}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#15803d' }}>{sum('deliveredCount')}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#15803d' }}>{F(sum('deliveredValue'))}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b45309' }}>{sum('pendingCount')}</td>
+                      <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, color: '#b45309' }}>{F(sum('pendingValue'))}</td>
+                    </tr>
+                  </tfoot>
+                )
+              })()}
             </table>
           </div>
         </Card>

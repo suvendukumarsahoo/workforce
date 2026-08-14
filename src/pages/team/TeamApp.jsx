@@ -45,6 +45,12 @@ export default function TeamApp() {
   // shell has no generic onNavigate(id, params) the way WebApp.jsx does, so it's a plain local
   // state + callback instead.
   const [reportParams, setReportParams] = useState(null)
+  // Shared onNavigate for every report page below (was duplicated inline at each call site) — this
+  // shell has no standalone 'orderStatus' tab the way WebApp.jsx does (Sales Team's own order
+  // history is the 'distributorOrder' tab's embedded OrderStatus, "My Distributor Orders"), so a
+  // drill targeting 'orderStatus' (e.g. Stock & Sales Report's Receipts column) is translated to
+  // land there instead — every other id passes through unchanged.
+  const goToReport = (id, params) => { setReportParams(params); setTab(id === 'orderStatus' ? 'distributorOrder' : id) }
   const [showGoalEntry, setShowGoalEntry] = useState(false)
   const [showExpForm, setShowExpForm]     = useState(false)
   const [expForm, setExpForm]             = useState({ cat: 'Travel', desc: '', amt: '' })
@@ -619,17 +625,17 @@ const ordinal = n => ['', 'First', 'Second', 'Third', 'Fourth', 'Fifth'][n] || `
           </Card>
         )}
         {tab === 'newCustomerVisit' && <NewCustomerVisit />}
-        {tab === 'distributorOrder' && <DistributorOrder />}
+        {tab === 'distributorOrder' && <DistributorOrder navParams={reportParams} onNavigate={goToReport} />}
         {tab === 'distributorSecondary' && <DistributorSecondary />}
         {tab === 'distributorSecondaryReport' && (
-          <DistributorSecondaryReport navParams={reportParams} onNavigate={(id, params) => { setReportParams(params); setTab(id) }} />
+          <DistributorSecondaryReport navParams={reportParams} onNavigate={goToReport} />
         )}
         {tab === 'distributorStockSalesReport' && (
-          <DistributorStockSalesReport navParams={reportParams} onNavigate={(id, params) => { setReportParams(params); setTab(id) }} />
+          <DistributorStockSalesReport navParams={reportParams} onNavigate={goToReport} />
         )}
         {tab === 'secondaryOrderDelivery' && <SecondaryOrderDelivery />}
         {tab === 'secondaryReturnReport' && (
-          <SecondaryReturnReport navParams={reportParams} onNavigate={(id, params) => { setReportParams(params); setTab(id) }} />
+          <SecondaryReturnReport navParams={reportParams} onNavigate={goToReport} />
         )}
         {tab === 'stockTakeEntry' && (
           <StockTakePicker
