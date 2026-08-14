@@ -386,7 +386,11 @@ genuinely base-unit quantities untouched by which unit the rep picked.
 **Distributor Secondary Order Report** (`src/pages/shared/DistributorSecondaryReport.jsx`, menu id
 `distributorSecondaryReport`, reachable by all 3 audiences — Sales Team's own activity, Manager's own
 team, Admin org-wide with an added Sales Rep filter) — **Summary** tab: one row per (batch ×
-distributor × beat) combination, drilling into an order-no-wise list → full read-only order detail
+distributor × beat) combination, with a **Total Items** column that counts item *lines* across the
+group's orders, not a summed quantity — summing qty across different products would add mismatched
+units together (Litres + Units + Pieces), the same class of mistake the Stock & Sales Report's own
+totals row (`allSameUnit`) exists to avoid; caught live as a nonsensical "132.05 items" figure.
+Drilling into a row opens an order-no-wise list → full read-only order detail
 (`src/components/SecondaryOrderDetailSheet.jsx`, a shared component — also used by Order Delivery
 below — reuses `printSecondaryOrder.js`'s existing PDF). **Detail** tab: flat
 itemwise rows. Both filterable (Distributor/Beat/Sales Rep/date range) and exportable to PDF

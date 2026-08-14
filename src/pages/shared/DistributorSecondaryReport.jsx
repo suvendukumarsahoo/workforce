@@ -78,7 +78,10 @@ export default function DistributorSecondaryReport({ navParams }) {
   const summaryRows = Object.values(groups).map(g => ({
     ...g,
     totalOrders: g.orders.length,
-    totalItems: round2(g.orders.reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0), 0), 0)),
+    // Count of item LINES across every order in this batch — not a sum of quantities, which would
+    // add together different products' different units (Litres + Units + Pieces) into a meaningless
+    // decimal figure (caught live: "132.05" for a mixed-unit batch).
+    totalItems: g.orders.reduce((s, o) => s + (o.items || []).length, 0),
     totalValue: g.orders.reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0), 0),
   })).sort((a, b) => new Date(b.date) - new Date(a.date))
 
