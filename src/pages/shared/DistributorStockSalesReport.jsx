@@ -35,7 +35,7 @@ const QtyValue = ({ qty, value, unit }) => (
 // baseline entry, Manager→Admin approval) is managed inline here rather than a separate page — it
 // only ever matters in the context of this report, and "entered once ever" per distributor means
 // there's no ongoing workflow to justify its own menu.
-export default function DistributorStockSalesReport() {
+export default function DistributorStockSalesReport({ onNavigate }) {
   const { currentUser, role } = useAuth()
   const { members, users, distributors, products } = useData()
 
@@ -103,6 +103,16 @@ export default function DistributorStockSalesReport() {
   const distributorOptions = uniqById(scopeDistributors)
   const productOptions = uniqById(products || [])
   const openingStockFor = distId => (openingStocks || []).find(os => os.distributor_id === distId)
+
+  // Every Summary cell drills into whatever explains that number, so a figure is never a dead end.
+  // Opening/Receipts/Closing stay on THIS report — they narrow the Distributor+Product filters and
+  // flip to the Detail tab, which already lists every real Receipt/Sale transaction behind them (no
+  // separate "Receipts report" exists to send Receipts to). Sales is different: it's sourced from
+  // delivered secondary orders, which already have their own dedicated report — so Sales instead
+  // navigates there (Secondary Order Report), pre-filtered to this row's distributor + this report's
+  // active date range, rather than staying inside the Detail tab.
+  const drillToDetail = row => { setDistributorId(row.distributorId); setProductId(row.productId); setTab('detail') }
+  const drillToSales = row => onNavigate?.('distributorSecondaryReport', { distributorId: row.distributorId, from, to })
 
   const submitEntry = async () => {
     if (!enterFor) return
@@ -288,10 +298,10 @@ export default function DistributorStockSalesReport() {
                   <tr key={i} style={{ borderBottom: '1px solid #f3f4f6' }}>
                     <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{r.distributorName}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.productName}</td>
-                    <td style={{ padding: '8px 10px', fontSize: 12 }}><QtyValue qty={r.opening} value={r.openingValue} unit={r.unit} /></td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#15803d' }}><QtyValue qty={r.receipts} value={r.receiptsValue} unit={r.unit} /></td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c' }}><QtyValue qty={r.sales} value={r.salesValue} unit={r.unit} /></td>
-                    <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700 }}><QtyValue qty={r.closing} value={r.closingValue} unit={r.unit} /></td>
+                    <td onClick={() => drillToDetail(r)} title="View Receipt/Sale detail behind this Opening balance" style={{ padding: '8px 10px', fontSize: 12, cursor: 'pointer' }}><QtyValue qty={r.opening} value={r.openingValue} unit={r.unit} /></td>
+                    <td onClick={() => drillToDetail(r)} title="View Receipt detail" style={{ padding: '8px 10px', fontSize: 12, color: '#15803d', cursor: 'pointer' }}><QtyValue qty={r.receipts} value={r.receiptsValue} unit={r.unit} /></td>
+                    <td onClick={() => drillToSales(r)} title="View the delivered orders behind this Sales figure — Secondary Order Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}><QtyValue qty={r.sales} value={r.salesValue} unit={r.unit} /></td>
+                    <td onClick={() => drillToDetail(r)} title="View Receipt/Sale detail behind this Closing balance" style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><QtyValue qty={r.closing} value={r.closingValue} unit={r.unit} /></td>
                   </tr>
                 ))}
               </tbody>

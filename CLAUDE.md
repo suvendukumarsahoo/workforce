@@ -423,6 +423,22 @@ Reachable via "View Report" links from all three Distributor Secondary dashboard
 anything for the exact month it was computed over); `Dashboard.jsx`/`TeamSnapshot.jsx`'s links
 arrive unlocked, pre-filled to whichever Today/Month/Year tab was active. `TeamApp.jsx` (no generic
 `onNavigate`) mirrors the same concept locally via a `reportParams` state + callback prop.
+`navParams.distributorId` is also honored (pre-fills, doesn't lock, the Distributor filter) — used
+by the Stock & Sales Report's Sales-column drill-down below.
+
+**Secondary Return Report** (`src/pages/shared/SecondaryReturnReport.jsx`, menu id
+`secondaryReturnReport`, same 3-way audience/filters/export/Summary+Detail shape as the Order Report
+above, deliberately built as its sibling rather than a tab on it — reuses `db.fetchSecondaryOrdersForReport`
+as-is, just filtered client-side to `delivery_status in ('partial','not_delivered')`) — shows only
+what actually came back. A `'not_delivered'` order returns every item at its full ordered qty (no
+`delivery_item` rows exist for it — implicit full return, same convention documented on
+`SecondaryOrderDetailSheet.jsx`); a `'partial'` order returns only whichever lines have an actual
+`delivery_item` row with `returned_qty > 0`. **Summary** tab: one row per (batch × distributor ×
+beat) group, Return Orders/Items/Value. **Detail** tab: one row per actually-returned line, with
+Ordered Qty alongside Returned Qty and a Reason column (`Not Delivered` / `Partial Return`). Both
+tabs total their Value column. Verified live: this report's Return Value total reconciles exactly
+against the Order Report's own "Stock Return — Value" column total for the same scope (both derive
+from the identical return-split math).
 
 **`src/lib/printSecondaryOrder.js`** — single-order PDF + batch ZIP (`jszip`, real individual PDF
 files, not one combined document). **`src/lib/printDaySummary.js`** — per-batch/day-summary PDF.
@@ -608,6 +624,18 @@ quantity is only summed alongside it when every row currently in view shares one
 (`allSameUnit` in `DistributorStockSalesReport.jsx` — summing "3 Litres + 5 Units" would be
 meaningless), otherwise the quantity cell shows `—` while value still totals correctly (e.g. all
 distributors/all products shows `—` qty + a real ₹ total; filtering to one Product shows both).
+
+**Every Summary cell drills into whatever explains that number** — no figure is a dead end.
+Opening/Receipts/Closing (`drillToDetail`) narrow the report's own Distributor+Product filters and
+flip to its own Detail tab, which already lists every real Receipt/Sale transaction behind them (no
+separate "Receipts report" exists to send Receipts to). **Sales** (`drillToSales`) is different — it's
+sourced from delivered secondary orders, which already have their own dedicated report — so it
+navigates via `onNavigate('distributorSecondaryReport', { distributorId, from, to })` instead,
+landing pre-filtered to that row's distributor and this report's active date range (see the Order
+Report's own `navParams.distributorId` handling above). `DistributorStockSalesReport` now takes an
+`onNavigate` prop like every other page — `WebApp.jsx` already threads `goTo` into it for free
+(every `PageComponent` gets `onNavigate`/`navParams` generically); `TeamApp.jsx` wires its own
+`reportParams`/`setTab` pair the same way it does for every other cross-report link in that shell.
 
 **Receipts** now sources from `invoices` (`db.fetchReceiptsForStockReport`), not
 `distributor_order_items.final_qty` directly — the invoice is the authoritative billed-quantity
