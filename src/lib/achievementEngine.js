@@ -20,8 +20,10 @@
  *                               goal fields, that combination was removed — "New Customer Visits"
  *                               (the renamed general Visits field) is `visits`-only again.
  * @param {Array}  retailOutlets - retail_outlets rows (Distributor Secondary) — feeds New Outlets.
- * @param {Array}  secondaryOrders - secondary_orders rows w/ joined `items` (qty, rate) —
- *                               feeds Value.
+ * @param {Array}  secondaryOrders - secondary_orders rows w/ joined `items` (id, qty, rate) and
+ *                               `delivery` (delivered_date + delivery_items returns) — feeds
+ *                               Total No. of Orders / Productive Outlets / Value, all gated on
+ *                               delivery confirmation (see the Distributor Secondary block below).
  * @param {Object} [dateRange] - optional { from, to } ISO date strings (inclusive). When given,
  *                               invoices/visits/distributor-acquisitions outside the range are
  *                               excluded. Omitted = all-time (unchanged prior behavior).
@@ -128,21 +130,32 @@ export function computeAchievements(invoices = [], goals = {}, products = [], di
     ach.new_outlets += 1
   })
 
-  // Distributor Secondary — an order only counts once Retailing Complete has actually locked it
-  // into a batch (batch_id set); a still-ongoing/never-completed order (or one soft-cancelled) isn't
-  // real, final activity yet — same reasoning DistributorSecondaryReport.jsx's own report scope
-  // uses. Found via a live "Value shows ₹1.37L on the dashboard but the Report shows ₹2K" report —
-  // this loop, and the retailVisits one below, were counting every order regardless of completion.
-  const batchedOrderIds = new Set(secondaryOrders.filter(o => o.batch_id).map(o => o.id))
+  // Distributor Secondary — Total No. of Orders / Productive Outlets / Value all count an order only
+  // once its delivery outcome is actually confirmed (delivery_status 'full' or 'partial'), dated by
+  // when it was delivered — NOT merely once Retailing Complete locks it into a batch, dated by when
+  // it was ordered. Matches the Stock & Sales Report's own "Sales" definition (stockReport.js's
+  // flattenSales) exactly, on purpose: an order sitting in 'pending' (not yet marked either way) or
+  // 'not_delivered' hasn't actually moved any goods yet, so it isn't real sales activity — and an
+  // order taken in one period but delivered in the next belongs to the period it actually landed in,
+  // not the period it was booked in. Previously gated on `batch_id` alone (order-taking, dated by
+  // order_date) — changed because these figures need to reconcile against the Stock & Sales Report,
+  // which they structurally couldn't while dated/gated differently; a still-pending or never-arrived
+  // order isn't "sold" in either report's sense. `deliveredOrderIds` also implies `batch_id` is set
+  // (delivery_status only ever leaves 'pending' after a batch exists), so no separate batch check.
+  const deliveredOrderIds = new Set(secondaryOrders.filter(o => ['full', 'partial'].includes(o.delivery_status)).map(o => o.id))
+  const orderById = {}
+  secondaryOrders.forEach(o => { orderById[o.id] = o })
 
-  // Distributor Secondary — Productive Outlets (distinct outlets with >=1 order in range) and
-  // Total No. of Orders (count of order-outcome visits in range) — both derived from retailVisits,
-  // gated independently on their own field's approval status.
+  // Productive Outlets (distinct outlets with >=1 delivered order in range) and Total No. of Orders
+  // (count of delivered order-outcome visits in range) — both derived from retailVisits (the visit
+  // is what carries outlet_id), gated independently on their own field's approval status, but both
+  // now keyed off the same delivered-order event set.
   const productiveOutletSets = {}
   retailVisits.forEach(v => {
     if (v.outcome !== 'order') return
-    if (!v.order_id || !batchedOrderIds.has(v.order_id)) return
-    if (!inRange(v.visit_date)) return
+    if (!v.order_id || !deliveredOrderIds.has(v.order_id)) return
+    const order = orderById[v.order_id]
+    if (!inRange(order?.delivery?.delivered_date)) return
     const mid = String(v.member_id)
     const goal = goals[mid]
     const ach = result[mid]
@@ -157,17 +170,24 @@ export function computeAchievements(invoices = [], goals = {}, products = [], di
     if (result[mid]) result[mid].productive_outlets = set.size
   })
 
-  // Distributor Secondary — Value: sum of secondary_order_items (qty*rate) for completed-batch
-  // orders in range.
+  // Distributor Secondary — Value: sum of delivered qty (ordered minus any returned qty from a
+  // partial delivery) × rate, for delivered orders in range, dated by delivered_date — same
+  // "delivered net of returns" math as stockReport.js's flattenSales, so this figure and the Stock &
+  // Sales Report's Sales figure are computed the same way and actually reconcile.
   secondaryOrders.forEach(o => {
-    if (!o.batch_id) return
+    if (!deliveredOrderIds.has(o.id)) return
     const mid = String(o.member_id)
     const goal = goals[mid]
     const ach = result[mid]
     if (!ach || !goal || goal.secondary_value_status !== 'approved') return
-    if (!inRange(o.order_date)) return
-    const orderTotal = (o.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
-    ach.secondary_value += orderTotal
+    if (!inRange(o.delivery?.delivered_date)) return
+    const returnedByItem = {}
+    ;(o.delivery?.delivery_items || []).forEach(di => { returnedByItem[di.order_item_id] = Number(di.returned_qty) || 0 })
+    const deliveredTotal = (o.items || []).reduce((s, it) => {
+      const delivered = Math.max(0, (Number(it.qty) || 0) - (returnedByItem[it.id] || 0))
+      return s + delivered * (Number(it.rate) || 0)
+    }, 0)
+    ach.secondary_value += deliveredTotal
   })
 
   // Distributor Appointment count — only counts leads that completed the full appointment pipeline.

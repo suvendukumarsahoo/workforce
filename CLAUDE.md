@@ -250,9 +250,29 @@ per-field-approved triggers achievement tracking for that field, every calendar 
   gated **per-field** (`goal.<field>_status === 'approved'`), not by the goal's overall status.
   `getGoalOverallStatus` returns `'partial'` if ANY field is rejected, regardless of other fields'
   states (a rejected field must always be user-editable). Distributor Secondary's `secondary_value`/
-  `secondary_orders`/`productive_outlets` loops only count orders/visits belonging to a **completed
-  batch** (`secondary_orders.batch_id` set) — an editable, still-ongoing order doesn't count as real
-  activity yet. "Distributors Created" achievement (`acq`) is deliberately **ungated** (counts the
+  `secondary_orders`/`productive_outlets` loops count an order only once its **delivery outcome is
+  confirmed** (`secondary_orders.delivery_status` is `'full'` or `'partial'`), dated by that order's
+  `delivery.delivered_date` — NOT merely once Retailing Complete locks it into a batch (dated by
+  `order_date`), which was the original rule. Changed so these three figures actually reconcile
+  against the Stock & Sales Report's own Sales figure (`stockReport.js`'s `flattenSales`) — both now
+  share the same "delivered, net of any partial-delivery returns, dated by delivered_date" math;
+  `secondary_value` explicitly nets out returned qty the same way. A `pending` (not yet marked either
+  way) or `not_delivered` order counts toward neither report — it hasn't moved any goods yet. Found
+  live: a rep's Secondary Value on Team Snapshot didn't match the Stock & Sales Report's Sales total
+  for the same distributor even after accounting for pending/not-delivered orders — root cause was
+  these fields being order-taking-based while Stock Report was delivery-based, two irreconcilable
+  definitions; not a numeric bug once traced. `fetchSecondaryOrders` (db.js) now embeds
+  `delivery:secondary_order_deliveries!secondary_orders_delivery_id_fkey(delivered_date,
+  delivery_items(...))` (same ambiguous-FK alias as the Stock Report's own fetch, Bug Pattern #3) so
+  every consumer of the global `secondaryOrders` context has what it needs. `TeamSnapshot.jsx`'s own
+  "Distributor Secondary" raw-activity stat tiles and `Dashboard.jsx`'s Admin/Manager rollup section
+  mirror this same gating by hand (not by calling into `achievementEngine.js`) — same duplicated-
+  filter drift risk as Recurring Bug Pattern #6, keep all three in sync on any future change here.
+  The **Distributor Secondary Order Report** (`DistributorSecondaryReport.jsx`, below) deliberately
+  keeps its own, different scope — every completed-batch order regardless of delivery outcome, dated
+  by `order_date` — since its job is showing what a rep *booked*, not what was delivered; it no longer
+  shares a definition with the achievement engine, unlike before this change. "Distributors Created"
+  achievement (`acq`) is deliberately **ungated** (counts the
   real pipeline event unconditionally) so it always matches the pipeline's own "Distributor Created"
   tile — only the *goal target* number still requires approval.
 - **`src/lib/goalAggregation.js`** — `aggregateForMembers(memberIds, slices, products, categories,
@@ -373,8 +393,11 @@ itemwise rows. Both filterable (Distributor/Beat/Sales Rep/date range) and expor
 (`jspdf-autotable`, this app's first paginated-table PDF) and Excel (`xlsx`, first Excel export ever
 in this app — carries 2 known high-severity npm-registry CVEs SheetJS no longer patches; accepted
 since this feature only writes exports, never parses untrusted input). Report scope is **completed
-batches only** (`batch_id is not null`) — matches the achievement engine's own definition of "real"
-activity, not the live Day Summary's broader "everything today" view.
+batches only** (`batch_id is not null`), dated by `order_date`, regardless of delivery outcome — a
+deliberately different, order-taking scope than the achievement engine's own delivery-confirmed
+definition (see Goals & Performance above); this report's job is showing what a rep *booked*, the
+live Day Summary's is "everything today," neither is "what got delivered" (that's the Stock & Sales
+Report / Order Delivery module instead).
 
 Reachable via "View Report" links from all three Distributor Secondary dashboard panels above.
 `WebApp.jsx`'s `onNavigate`/`goTo` accepts an optional second `params` arg (threaded as a sibling

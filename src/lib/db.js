@@ -2028,8 +2028,17 @@ export async function fetchRetailOutlets(dateRange = null) {
   return { data, error }
 }
 
+// Embeds the delivery outcome (delivered_date + per-item returns) alongside every order — needed so
+// achievementEngine.js's Distributor Secondary fields (Total No. of Orders/Productive Outlets/Value)
+// can gate on "delivery confirmed" and date by delivered_date, same convention as the Stock & Sales
+// Report's own Sales figure (stockReport.js's flattenSales), rather than order-taking. Same
+// !secondary_orders_delivery_id_fkey alias as fetchDeliveredSecondaryOrdersForStockReport — the 2 FK
+// paths between these tables make PostgREST's embed ambiguous without it (CLAUDE.md Bug Pattern #3).
 export async function fetchSecondaryOrders(dateRange = null) {
-  let query = supabase.from('secondary_orders').select('*, items:secondary_order_items(qty, rate)')
+  // items.id is required here (not just qty/rate) — flattenSales-equivalent return-matching below
+  // joins delivery_items.order_item_id back to a specific item.id; without it every item silently
+  // keys to `undefined` and the returnedByItem lookup misapplies one item's return to all of them.
+  let query = supabase.from('secondary_orders').select('*, items:secondary_order_items(id, qty, rate), delivery:secondary_order_deliveries!secondary_orders_delivery_id_fkey(delivered_date, delivery_items:secondary_order_delivery_items(order_item_id, returned_qty))')
   if (dateRange) query = query.gte('order_date', dateRange.from).lte('order_date', dateRange.to)
   const { data, error } = await query
   return { data, error }

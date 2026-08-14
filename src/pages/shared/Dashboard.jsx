@@ -253,19 +253,32 @@ function DistributorSecondarySection({ memberIds, retailOutlets, secondaryOrders
   const inRange = iso => { if (!iso) return false; const d = new Date(iso); return d >= range.from && d <= range.to }
   const memberIdSet = new Set((memberIds || []).map(String))
 
-  // An order only counts once Retailing Complete has actually locked it into a batch (batch_id
-  // set) — a still-ongoing/never-completed order isn't real, final activity yet. Found via a live
-  // "Value shows ₹1.37L here but the Report shows ₹2K" report — this section previously counted
-  // every order regardless of completion, same root cause fixed in achievementEngine.js.
-  const batchedOrderIds = new Set((secondaryOrders || []).filter(o => o.batch_id).map(o => o.id))
+  // An order only counts once its delivery outcome is confirmed (delivery_status 'full'/'partial'),
+  // dated by delivered_date — NOT merely once Retailing Complete locks it into a batch, dated by
+  // order_date. Matches achievementEngine.js's own Distributor Secondary gating exactly (mirrored
+  // here by hand, same drift risk as any other duplicated filter — see CLAUDE.md Recurring Bug
+  // Pattern #6) — changed together so this rollup and the Stock & Sales Report's Sales figure
+  // actually reconcile. Found via a live "Value shows ₹1.37L here but the Report shows ₹2K" report —
+  // this section previously counted every order regardless of completion, same root cause fixed in
+  // achievementEngine.js.
+  const deliveredOrderIds = new Set((secondaryOrders || []).filter(o => ['full', 'partial'].includes(o.delivery_status)).map(o => o.id))
+  const orderById = {}
+  ;(secondaryOrders || []).forEach(o => { orderById[o.id] = o })
 
   const newOutletsCount = (retailOutlets || []).filter(o => memberIdSet.has(String(o.created_by)) && inRange(o.created_at)).length
-  const orderVisits = (retailVisits || []).filter(v => memberIdSet.has(String(v.member_id)) && v.outcome === 'order' && v.order_id && batchedOrderIds.has(v.order_id) && inRange(v.visit_date))
+  const orderVisits = (retailVisits || []).filter(v => {
+    if (!memberIdSet.has(String(v.member_id)) || v.outcome !== 'order' || !v.order_id || !deliveredOrderIds.has(v.order_id)) return false
+    return inRange(orderById[v.order_id]?.delivery?.delivered_date)
+  })
   const productiveOutletsCount = new Set(orderVisits.map(v => v.outlet_id)).size
   const totalOrdersCount = orderVisits.length
   const secondaryValueSum = (secondaryOrders || [])
-    .filter(o => o.batch_id && memberIdSet.has(String(o.member_id)) && inRange(o.order_date))
-    .reduce((s, o) => s + (o.items || []).reduce((s2, it) => s2 + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0), 0)
+    .filter(o => deliveredOrderIds.has(o.id) && memberIdSet.has(String(o.member_id)) && inRange(o.delivery?.delivered_date))
+    .reduce((s, o) => {
+      const returnedByItem = {}
+      ;(o.delivery?.delivery_items || []).forEach(di => { returnedByItem[di.order_item_id] = Number(di.returned_qty) || 0 })
+      return s + (o.items || []).reduce((s2, it) => s2 + Math.max(0, (Number(it.qty) || 0) - (returnedByItem[it.id] || 0)) * (Number(it.rate) || 0), 0)
+    }, 0)
 
   return (
     <div style={darkContainer}>
