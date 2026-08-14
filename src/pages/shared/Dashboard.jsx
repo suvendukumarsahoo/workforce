@@ -294,7 +294,10 @@ function DistributorSecondarySection({ memberIds, retailOutlets, secondaryOrders
         <DarkStat icon="💰" label={`Value — ${DS_TABS.find(([k]) => k === tab)[1]}`} value={F(secondaryValueSum)} color="#a78bfa" />
       </div>
       {onNavigate && (
-        <DarkFooterLinks links={[['View Report', () => onNavigate('distributorSecondaryReport', { from: isoDate(range.from), to: isoDate(range.to) })]]} />
+        // dateBasis: 'confirm' — this section's own figures mirror achievementEngine.js's delivery-
+        // confirmed gating by hand (see CLAUDE.md), so the Order Report needs the same lens to
+        // reconcile against what's shown here.
+        <DarkFooterLinks links={[['View Report', () => onNavigate('distributorSecondaryReport', { from: isoDate(range.from), to: isoDate(range.to), dateBasis: 'confirm', backTo: { id: 'dashboard', label: 'Dashboard', params: {} } })]]} />
       )}
     </div>
   )

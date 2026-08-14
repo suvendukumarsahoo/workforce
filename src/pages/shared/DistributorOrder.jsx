@@ -5,7 +5,7 @@ import { Card, CH, Btn, Inp, Sheet, F } from '../../components/ui.jsx'
 import OrderStatus from './OrderStatus.jsx'
 import * as db from '../../lib/db.js'
 
-export default function DistributorOrder() {
+export default function DistributorOrder({ navParams, onNavigate }) {
   const { currentUser } = useAuth()
   const { distributors: customers, products, categories, showToast, loadAll } = useData()
   const mid = currentUser?.member_id
@@ -170,6 +170,8 @@ const [step, setStep] = useState('list') // list -> select -> payment -> items -
           title="My Distributor Orders"
           headerRight={<Btn v="pri" sm onClick={() => setStep('select')}>+ New Order</Btn>}
           onEditOrder={editOrder}
+          navParams={navParams}
+          onNavigate={onNavigate}
         />
       )}
 

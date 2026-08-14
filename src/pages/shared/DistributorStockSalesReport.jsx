@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
-import { Card, CH, Btn, Sheet, F } from '../../components/ui.jsx'
+import { Card, CH, Btn, Sheet, F, BackTo } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
 import { downloadReportPdf, downloadReportExcel } from '../../lib/printSecondaryReport.js'
 import { computeStockLedger, round1 } from '../../lib/stockReport.js'
@@ -35,7 +35,7 @@ const QtyValue = ({ qty, value, unit }) => (
 // baseline entry, Manager→Admin approval) is managed inline here rather than a separate page — it
 // only ever matters in the context of this report, and "entered once ever" per distributor means
 // there's no ongoing workflow to justify its own menu.
-export default function DistributorStockSalesReport({ onNavigate }) {
+export default function DistributorStockSalesReport({ onNavigate, navParams }) {
   const { currentUser, role } = useAuth()
   const { members, users, distributors, products } = useData()
 
@@ -60,10 +60,14 @@ export default function DistributorStockSalesReport({ onNavigate }) {
   const scopeDistributorIds = scopeDistributors.map(d => d.id)
 
   const defaultRange = monthRangeForPeriod(getCurrentPeriod())
-  const [from, setFrom] = useState(defaultRange.from)
-  const [to, setTo] = useState(defaultRange.to)
-  const [distributorId, setDistributorId] = useState('')
-  const [productId, setProductId] = useState('')
+  // Restored from navParams when this report is reached via a Back click from something it was
+  // itself drilled out of (Sales → Secondary Order Report) — same shape as every other report's own
+  // navParams-restore, so returning here lands on the exact filters that were active before the
+  // drill out, not reset to defaults.
+  const [from, setFrom] = useState(navParams?.from || defaultRange.from)
+  const [to, setTo] = useState(navParams?.to || defaultRange.to)
+  const [distributorId, setDistributorId] = useState(navParams?.distributorId || '')
+  const [productId, setProductId] = useState(navParams?.productId || '')
   const [rawInvoices, setRawInvoices] = useState(null)
   const [rawSecondaryOrders, setRawSecondaryOrders] = useState(null)
   const [openingStocks, setOpeningStocks] = useState(null)
@@ -112,7 +116,22 @@ export default function DistributorStockSalesReport({ onNavigate }) {
   // navigates there (Secondary Order Report), pre-filtered to this row's distributor + this report's
   // active date range, rather than staying inside the Detail tab.
   const drillToDetail = row => { setDistributorId(row.distributorId); setProductId(row.productId); setTab('detail') }
-  const drillToSales = row => onNavigate?.('distributorSecondaryReport', { distributorId: row.distributorId, from, to })
+  // dateBasis: 'confirm' — this Sales figure is itself computed from delivered secondary orders
+  // (fetchDeliveredSecondaryOrdersForStockReport / computeStockLedger, dated by delivered_date
+  // exclusively), so the Order Report needs to view the same from/to window through that same lens
+  // to actually reconcile — Order Date basis would show a different, unrelated set of orders.
+  const drillToSales = row => onNavigate?.('distributorSecondaryReport', {
+    distributorId: row.distributorId, from, to, dateBasis: 'confirm',
+    backTo: { id: 'distributorStockSalesReport', label: 'Stock & Sales Report', params: { from, to, distributorId, productId, backTo: navParams?.backTo } },
+  })
+  // Receipts is sourced from invoices (see fetchReceiptsForStockReport) — the actual purchase orders
+  // behind that figure already have their own dedicated view (Order Status / "Distributor Order"
+  // history), so Receipts navigates there instead of staying on this report's own Detail tab, same
+  // pattern as Sales navigating to the Secondary Order Report above.
+  const drillToReceipts = row => onNavigate?.('orderStatus', {
+    distributorId: row.distributorId, from, to,
+    backTo: { id: 'distributorStockSalesReport', label: 'Stock & Sales Report', params: { from, to, distributorId, productId, backTo: navParams?.backTo } },
+  })
 
   const submitEntry = async () => {
     if (!enterFor) return
@@ -201,6 +220,7 @@ export default function DistributorStockSalesReport({ onNavigate }) {
 
   return (
     <div>
+      <BackTo backTo={navParams?.backTo} onNavigate={onNavigate} />
       {openingStockActionRows.length > 0 && (
         <Card>
           <CH title="Opening Stock" sub={`${openingStockActionRows.length} distributor(s) need attention`} />
@@ -299,7 +319,7 @@ export default function DistributorStockSalesReport({ onNavigate }) {
                     <td style={{ padding: '8px 10px', fontSize: 12, fontWeight: 600 }}>{r.distributorName}</td>
                     <td style={{ padding: '8px 10px', fontSize: 12 }}>{r.productName}</td>
                     <td onClick={() => drillToDetail(r)} title="View Receipt/Sale detail behind this Opening balance" style={{ padding: '8px 10px', fontSize: 12, cursor: 'pointer' }}><QtyValue qty={r.opening} value={r.openingValue} unit={r.unit} /></td>
-                    <td onClick={() => drillToDetail(r)} title="View Receipt detail" style={{ padding: '8px 10px', fontSize: 12, color: '#15803d', cursor: 'pointer' }}><QtyValue qty={r.receipts} value={r.receiptsValue} unit={r.unit} /></td>
+                    <td onClick={() => drillToReceipts(r)} title="View the distributor orders behind this Receipts figure — Order Status" style={{ padding: '8px 10px', fontSize: 12, color: '#15803d', cursor: 'pointer' }}><QtyValue qty={r.receipts} value={r.receiptsValue} unit={r.unit} /></td>
                     <td onClick={() => drillToSales(r)} title="View the delivered orders behind this Sales figure — Secondary Order Report" style={{ padding: '8px 10px', fontSize: 12, color: '#b91c1c', cursor: 'pointer' }}><QtyValue qty={r.sales} value={r.salesValue} unit={r.unit} /></td>
                     <td onClick={() => drillToDetail(r)} title="View Receipt/Sale detail behind this Closing balance" style={{ padding: '8px 10px', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}><QtyValue qty={r.closing} value={r.closingValue} unit={r.unit} /></td>
                   </tr>

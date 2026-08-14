@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
-import { Card, CH, F } from '../../components/ui.jsx'
+import { Card, CH, F, BackTo } from '../../components/ui.jsx'
 import OrderFullDetail from '../../components/OrderFullDetail.jsx'
 import { getOrderStageLabel, getOrderStageColor } from '../../components/orderStageLabel.js'
 import * as db from '../../lib/db.js'
@@ -16,18 +16,22 @@ const uniqById = arr => Object.values(Object.fromEntries((arr || []).filter(Bool
 // the card and inject its own "+ New Order" button; `onEditOrder`, when provided, routes a still-
 // editable order_submitted order into DistributorOrder.jsx's edit flow instead of opening the
 // (deliberately read-only) OrderFullDetail — every other order still opens detail as normal.
-export default function OrderStatus({ title = 'Order Status', headerRight, onEditOrder }) {
+export default function OrderStatus({ title = 'Order Status', headerRight, onEditOrder, navParams, onNavigate }) {
   const { currentUser, role } = useAuth()
   const { products, members, users } = useData()
   const [orders, setOrders] = useState([])
   const [payments, setPayments] = useState([])
+  const [invoicesByOrder, setInvoicesByOrder] = useState({})
   const [loaded, setLoaded] = useState(false)
   const [selected, setSelected] = useState(null)
-  const [distributorFilter, setDistributorFilter] = useState('')
+  // Distributor/From/To restore from navParams when reached via a drill (e.g. Stock & Sales
+  // Report's Receipts column) — same convention as every other report's navParams-restore, so this
+  // list lands pre-filtered to the figure that was clicked instead of showing everything.
+  const [distributorFilter, setDistributorFilter] = useState(navParams?.distributorId || '')
   const [repFilter, setRepFilter] = useState('')
   const [managerFilter, setManagerFilter] = useState('')
-  const [fromDate, setFromDate] = useState('')
-  const [toDate, setToDate] = useState('')
+  const [fromDate, setFromDate] = useState(navParams?.from || '')
+  const [toDate, setToDate] = useState(navParams?.to || '')
   const [minValue, setMinValue] = useState('')
   const [maxValue, setMaxValue] = useState('')
 
@@ -44,6 +48,8 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
     setOrders(data || [])
     const { data: payData } = await db.fetchOrderPayments()
     setPayments(payData || [])
+    const { data: invData } = await db.fetchInvoicesForOrders((data || []).map(o => o.id))
+    setInvoicesByOrder(Object.fromEntries((invData || []).map(inv => [inv.order_id, inv])))
     setLoaded(true)
   }
   if (!loaded) loadData()
@@ -93,6 +99,7 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
 
   return (
     <div>
+      <BackTo backTo={navParams?.backTo} onNavigate={onNavigate} />
       <Card>
         <CH title="Filters" />
         <div style={{ padding: 12, display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
@@ -151,7 +158,7 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
         {visibleOrders.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No orders match these filters</div>}
         {visibleOrders.length > 0 && (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: showRep ? (showManager ? 1080 : 980) : 860 }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: (showRep ? (showManager ? 1080 : 980) : 860) + 300 }}>
               <thead>
                 <tr style={{ background: '#f9fafb' }}>
                   <th style={th}>Order #</th>
@@ -161,6 +168,9 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
                   {showManager && <th style={th}>Manager</th>}
                   <th style={th}>Date</th>
                   <th style={th}>Value</th>
+                  <th style={th}>ERP Invoice No.</th>
+                  <th style={th}>ERP Date</th>
+                  <th style={th}>ERP Amount</th>
                   <th style={th}>Status</th>
                 </tr>
               </thead>
@@ -168,6 +178,7 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
                 {visibleOrders.map(o => {
                   const editable = onEditOrder && o.status === 'order_submitted'
                   const color = getOrderStageColor(o)
+                  const inv = invoicesByOrder[o.id]
                   return (
                     <tr key={o.id} onClick={() => editable ? onEditOrder(o) : setSelected(o)}
                       style={{ borderBottom: '1px solid #f3f4f6', cursor: 'pointer' }}
@@ -179,6 +190,9 @@ export default function OrderStatus({ title = 'Order Status', headerRight, onEdi
                       {showManager && <td style={{ ...td, color: '#6b7280' }}>{managerForOrder(o) || '—'}</td>}
                       <td style={{ ...td, color: '#6b7280', whiteSpace: 'nowrap' }}>{new Date(o.order_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
                       <td style={{ ...td, fontWeight: 600 }}>{F(orderValue(o))}</td>
+                      <td style={{ ...td, color: '#6b7280' }}>{inv?.erp_invoice_number || '—'}</td>
+                      <td style={{ ...td, color: '#6b7280', whiteSpace: 'nowrap' }}>{inv?.erp_date || '—'}</td>
+                      <td style={td}>{inv?.erp_amount != null ? F(inv.erp_amount) : '—'}</td>
                       <td style={td}>
                         <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 9px', borderRadius: 12, background: `${color}22`, color, whiteSpace: 'nowrap' }}>
                           {getOrderStageLabel(o)}

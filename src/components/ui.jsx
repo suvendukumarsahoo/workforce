@@ -337,6 +337,26 @@ export const EntitySheet = ({ title, fields, init = {}, onSave, onClose }) => {
   )
 }
 
+// A drilled-into report's return path to wherever the drill click came from — every report reached
+// via an onNavigate(id, params) drill-through carries params.backTo = { id, label, params }, set by
+// the source page's own click handler. Rendered once at the top of the destination report, above its
+// Filters card. `params.backTo` can itself nest another backTo (the source page's own click handler
+// forwards its own navParams?.backTo through unchanged), so clicking through several drills in a row
+// and then Back repeatedly walks the chain back to the very first source — no separate history stack.
+export function BackTo({ backTo, onNavigate }) {
+  if (!backTo) return null
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <button onClick={() => onNavigate?.(backTo.id, backTo.params)} style={{
+        display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 8,
+        border: '1px solid #e5e7eb', background: '#fff', color: '#374151', fontSize: 12, fontWeight: 600, cursor: 'pointer',
+      }}>
+        ← Back to {backTo.label}
+      </button>
+    </div>
+  )
+}
+
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 export const F   = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 export const clr = v => v >= 75 ? '#10b981' : v >= 50 ? '#f59e0b' : '#ef4444'

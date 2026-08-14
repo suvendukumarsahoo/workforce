@@ -167,8 +167,11 @@ export default function GoalsStatus({ onNavigate }) {
         <div style={{ ...panelBase }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={labelStyle}>Distributor Secondary — Goal vs Achieved (This Month)</div>
+            {/* dateBasis: 'confirm' — this panel's achievement figures are gated on delivery
+                confirmation (achievementEngine.js, dated by delivered_date), so the Order Report
+                needs the same lens to reconcile against them. */}
             {onNavigate && (
-              <button onClick={() => onNavigate('distributorSecondaryReport', { ...visitRange, locked: true })}
+              <button onClick={() => onNavigate('distributorSecondaryReport', { ...visitRange, locked: true, dateBasis: 'confirm', backTo: { id: 'targets', label: 'Goals Status', params: {} } })}
                 style={{ background: 'none', border: 'none', color: '#38bdf8', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
                 View Report →
               </button>
