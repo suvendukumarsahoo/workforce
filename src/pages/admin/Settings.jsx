@@ -14,6 +14,7 @@ const ALL_MENUS = [
   { id:'customers',     label:'Distributors'     },
   { id:'products',      label:'Products'         },
   { id:'categories',    label:'Categories'       },
+  { id:'pricingMaster', label:'Pricing Master'   },
   { id:'attendance',    label:'Attendance'       },
   { id:'attendanceApprovals', label:'Attendance Approval' },
   { id:'attendanceRules', label:'Daily Attendance Rules' },

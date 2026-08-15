@@ -3,11 +3,12 @@ import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, Btn, Inp, Sheet, F } from '../../components/ui.jsx'
 import OrderStatus from './OrderStatus.jsx'
+import { resolveProductPrice } from '../../lib/pricing.js'
 import * as db from '../../lib/db.js'
 
 export default function DistributorOrder({ navParams, onNavigate }) {
   const { currentUser } = useAuth()
-  const { distributors: customers, products, categories, showToast, loadAll } = useData()
+  const { distributors: customers, products, categories, priceOverrideMaps, showToast, loadAll } = useData()
   const mid = currentUser?.member_id
 
   const [distributorId, setDistributorId] = useState('')
@@ -72,7 +73,7 @@ const [step, setStep] = useState('list') // list -> select -> payment -> items -
     const volume = prod.volume || 0
     setItems(prev => [...prev, {
       product_id: prod.id, name: prod.name, category_id: prod.category_id,
-      rate: Number(prod.price) || 0, weight: Number(prod.weight) || 0, volume,
+      rate: resolveProductPrice(prod, distributor, priceOverrideMaps), weight: Number(prod.weight) || 0, volume,
       order_qty: 1,
     }])
     setPickProduct('')

@@ -7,13 +7,14 @@ import * as db from '../../lib/db.js'
 
 export default function Distributors() {
   const { can, currentUser } = useAuth()
-  const { distributors, setDistributors, members, showToast } = useData()
+  const { distributors, setDistributors, members, priceTiers, showToast } = useData()
   const [sheet, setSheet] = useState(null)
 
   const cols = [
     { key: 'name', label: 'Name', render: r => <span style={{ fontWeight: 600 }}>{r.name}</span> },
     { key: 'area', label: 'Area' },
     { key: 'type', label: 'Type', render: r => <SBadge s={r.type} /> },
+    { key: 'price_tier_id', label: 'Price Tier', render: r => (priceTiers || []).find(t => t.id === r.price_tier_id)?.name || <span style={{ color: '#9ca3af' }}>—</span> },
     { key: 'assignedTo', label: 'Assigned to', render: r => (
       <div style={{ display: 'flex', gap: 4 }}>
         {(r.assignedTo || []).map(id => { const m = (members || []).find(x => x.id === id); return m ? <Av key={id} av={m.avatar} color={m.color} sz={22} /> : null })}
@@ -46,6 +47,7 @@ const payload   = {
       name: d.name, area: d.area, type: d.type || 'New Customer',
       confirmed_latitude: Number(d.confirmed_latitude) || null,
       confirmed_longitude: Number(d.confirmed_longitude) || null,
+      price_tier_id: d.price_tier_id ? Number(d.price_tier_id) : null,
     }
     if (sheet?.id) {
       const { error } = await db.updateDistributor(sheet.id, payload, memberIds)
@@ -75,6 +77,7 @@ const payload   = {
             { key: 'assignedTo', label: 'Assign to member IDs (comma-separated)', ph: 'e.g. 1,2' },
             { key: 'confirmed_latitude', label: 'Latitude', type: 'number' },
             { key: 'confirmed_longitude', label: 'Longitude', type: 'number' },
+            { key: 'price_tier_id', label: 'Price Tier', opts: [{ value: '', label: 'None' }, ...(priceTiers || []).map(t => ({ value: String(t.id), label: t.name }))] },
           ]}
           init={sheet?.id ? { ...sheet, assignedTo: (sheet.assignedTo || []).join(',') } : {}}
           onSave={save}
