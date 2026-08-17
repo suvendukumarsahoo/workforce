@@ -12,7 +12,7 @@ import * as db from '../../lib/db.js'
 // Admin-direct-edit master data, no approval needed, same convention as every other master table.
 export default function PricingMaster({ navParams }) {
   const { currentUser, role, can } = useAuth()
-  const { products, distributors, users, priceTiers, setPriceTiers, priceChangeRequests, priceOverrideMaps, showToast, loadAll } = useData()
+  const { products, distributors, categories, users, priceTiers, setPriceTiers, priceChangeRequests, priceOverrideMaps, showToast, loadAll } = useData()
 
   const isAdmin = role?.id === 'r1'
   const canPropose = can('add')
@@ -61,7 +61,7 @@ export default function PricingMaster({ navParams }) {
       )}
 
       {tab === 'propose' && (
-        <ProposeChangeTab products={products} distributors={distributors} priceTiers={priceTiers}
+        <ProposeChangeTab products={products} distributors={distributors} categories={categories} priceTiers={priceTiers}
           priceChangeRequests={priceChangeRequests} priceOverrideMaps={priceOverrideMaps}
           currentUser={currentUser} showToast={showToast} loadAll={loadAll}
           scopeLabel={scopeLabel} STATUS_LABEL={STATUS_LABEL} />
@@ -166,7 +166,55 @@ function CurrentPricesTab({ products, distributors, priceTiers, priceChangeReque
 }
 
 // ─── PROPOSE CHANGE ───────────────────────────────────────────────────────────
-function ProposeChangeTab({ products, distributors, priceTiers, priceChangeRequests, priceOverrideMaps, currentUser, showToast, loadAll, scopeLabel, STATUS_LABEL }) {
+// Two entry modes sharing one "My Proposals" history below: Single Product (category narrows the
+// Product dropdown, same idea as every other cascading picker in this app) and Bulk by Category
+// (batch-edit every product in a category in one screen instead of repeating the single form per
+// product — see BulkByCategoryForm for how the per-product prefill/diff/skip-unchanged logic works).
+function ProposeChangeTab({ products, distributors, categories, priceTiers, priceChangeRequests, priceOverrideMaps, currentUser, showToast, loadAll, scopeLabel, STATUS_LABEL }) {
+  const [mode, setMode] = useState('single')
+  const myRequests = (priceChangeRequests || []).filter(r => String(r.proposed_by) === String(currentUser?.id))
+
+  return (
+    <>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+        {[['single', 'Single Product'], ['bulk', 'Bulk by Category']].map(([key, label]) => (
+          <button key={key} onClick={() => setMode(key)}
+            style={{ padding: '6px 12px', borderRadius: 8, border: 'none', background: mode === key ? '#1e3a8a' : '#eef2ff', color: mode === key ? '#fff' : '#374151', fontWeight: 600, fontSize: 12, cursor: 'pointer' }}>
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {mode === 'single'
+        ? <SingleProposeForm products={products} distributors={distributors} categories={categories} priceTiers={priceTiers}
+            priceChangeRequests={priceChangeRequests} priceOverrideMaps={priceOverrideMaps}
+            currentUser={currentUser} showToast={showToast} loadAll={loadAll} />
+        : <BulkByCategoryForm products={products} distributors={distributors} categories={categories} priceTiers={priceTiers}
+            priceChangeRequests={priceChangeRequests} priceOverrideMaps={priceOverrideMaps}
+            currentUser={currentUser} showToast={showToast} loadAll={loadAll} />}
+
+      <Card>
+        <CH title="My Proposals" sub={`${myRequests.length} total`} />
+        {myRequests.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>None yet</div>}
+        {myRequests.map(r => (
+          <div key={r.id} style={{ padding: '10px 14px', borderBottom: '1px solid #f3f4f6' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 12, fontWeight: 600 }}>{r.product?.name || r.product_id} — {scopeLabel(r)}</span>
+              <SBadge s={STATUS_LABEL[r.status] || r.status} />
+            </div>
+            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{F(r.previous_price)} → {F(r.proposed_price)}</div>
+            {r.status === 'rejected' && r.rejection_reason && (
+              <div style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>Reason: {r.rejection_reason}</div>
+            )}
+          </div>
+        ))}
+      </Card>
+    </>
+  )
+}
+
+function SingleProposeForm({ products, distributors, categories, priceTiers, priceChangeRequests, priceOverrideMaps, currentUser, showToast, loadAll }) {
+  const [categoryId, setCategoryId] = useState('')
   const [productId, setProductId] = useState('')
   const [scopeType, setScopeType] = useState('base')
   const [distributorId, setDistributorId] = useState('')
@@ -175,6 +223,7 @@ function ProposeChangeTab({ products, distributors, priceTiers, priceChangeReque
   const [note, setNote] = useState('')
   const [busy, setBusy] = useState(false)
 
+  const productsInCategory = (products || []).filter(p => !categoryId || p.category_id === categoryId)
   const product = (products || []).find(p => p.id === productId)
 
   const currentScopePrice = () => {
@@ -197,7 +246,7 @@ function ProposeChangeTab({ products, distributors, priceTiers, priceChangeReque
     r.status === 'pending_approval' && r.product_id === productId && r.scope_type === scopeType &&
     (scopeType === 'distributor' ? r.distributor_id === distributorId : scopeType === 'tier' ? String(r.tier_id) === String(tierId) : true))
 
-  const reset = () => { setProductId(''); setScopeType('base'); setDistributorId(''); setTierId(''); setNewPrice(''); setNote('') }
+  const reset = () => { setCategoryId(''); setProductId(''); setScopeType('base'); setDistributorId(''); setTierId(''); setNewPrice(''); setNote('') }
 
   const submit = async () => {
     if (!productId) { showToast('Select a product'); return }
@@ -222,52 +271,171 @@ function ProposeChangeTab({ products, distributors, priceTiers, priceChangeReque
     await loadAll()
   }
 
-  const myRequests = (priceChangeRequests || []).filter(r => String(r.proposed_by) === String(currentUser?.id))
+  return (
+    <Card>
+      <CH title="Propose Price Change" />
+      <div style={{ padding: 14 }}>
+        <Inp label="Category" value={categoryId} onChange={v => { setCategoryId(v); setProductId('') }}
+          options={[{ value: '', label: 'All categories' }, ...(categories || []).map(c => ({ value: c.id, label: c.name }))]} />
+        <Inp label="Product" value={productId} onChange={setProductId} req
+          options={[{ value: '', label: 'Select product...' }, ...productsInCategory.map(p => ({ value: p.id, label: `${p.name} (${p.unit})` }))]} />
+        <Inp label="Scope" value={scopeType} onChange={v => { setScopeType(v); setDistributorId(''); setTierId('') }}
+          options={[{ value: 'base', label: 'Base Price (everyone)' }, { value: 'distributor', label: 'Specific Distributor' }, { value: 'tier', label: 'Price Tier' }]} />
+        {scopeType === 'distributor' && (
+          <Inp label="Distributor" value={distributorId} onChange={setDistributorId} req
+            options={[{ value: '', label: 'Select distributor...' }, ...(distributors || []).map(d => ({ value: d.id, label: d.name }))]} />
+        )}
+        {scopeType === 'tier' && (
+          <Inp label="Tier" value={tierId} onChange={setTierId} req
+            options={[{ value: '', label: 'Select tier...' }, ...(priceTiers || []).map(t => ({ value: String(t.id), label: t.name }))]} />
+        )}
+        {product && previewPrice !== null && (
+          <div style={{ background: '#f9fafb', borderRadius: 8, padding: '8px 10px', fontSize: 12, color: '#374151', marginBottom: 12 }}>
+            Current effective price for this scope: <strong>{F(previewPrice)}</strong>
+          </div>
+        )}
+        <Inp label="New Price" type="number" value={newPrice} onChange={setNewPrice} req />
+        <Inp label="Note (optional)" value={note} onChange={setNote} />
+        <Btn v="pri" full disabled={busy} onClick={submit}>{busy ? 'Saving...' : 'Submit for Approval'}</Btn>
+      </div>
+    </Card>
+  )
+}
+
+// Batch-edit every product in a category in one screen. Each row prefills at that scope's current
+// effective price (base price, or the resolved distributor/tier rate). Submitting only sends rows
+// the user actually changed away from that prefill (an untouched row is by definition "no change",
+// so it's silently skipped rather than creating a no-op proposal) — same "don't create a request for
+// nothing" mindset as the single form's duplicate-pending guard, applied per row here.
+function BulkByCategoryForm({ products, distributors, categories, priceTiers, priceChangeRequests, priceOverrideMaps, currentUser, showToast, loadAll }) {
+  const [categoryId, setCategoryId] = useState('')
+  const [scopeType, setScopeType] = useState('base')
+  const [distributorId, setDistributorId] = useState('')
+  const [tierId, setTierId] = useState('')
+  const [note, setNote] = useState('')
+
+  const categoryProducts = (products || []).filter(p => p.category_id === categoryId)
+  const scopeReady = categoryId && (scopeType === 'base' || (scopeType === 'distributor' && distributorId) || (scopeType === 'tier' && tierId))
+
+  const currentPriceFor = p => {
+    if (scopeType === 'base') return Number(p.price) || 0
+    const dObj = scopeType === 'distributor' ? (distributors || []).find(d => d.id === distributorId) : { price_tier_id: tierId }
+    return resolveProductPrice(p, dObj, priceOverrideMaps)
+  }
+
+  const resetControls = () => { setCategoryId(''); setScopeType('base'); setDistributorId(''); setTierId(''); setNote('') }
+
+  return (
+    <Card>
+      <CH title="Bulk Propose by Category" sub="Edit whichever products need a change — untouched rows are skipped" />
+      <div style={{ padding: 14 }}>
+        <Inp label="Category" value={categoryId} onChange={v => setCategoryId(v)} req
+          options={[{ value: '', label: 'Select category...' }, ...(categories || []).map(c => ({ value: c.id, label: c.name }))]} />
+        <Inp label="Scope" value={scopeType} onChange={v => { setScopeType(v); setDistributorId(''); setTierId('') }}
+          options={[{ value: 'base', label: 'Base Price (everyone)' }, { value: 'distributor', label: 'Specific Distributor' }, { value: 'tier', label: 'Price Tier' }]} />
+        {scopeType === 'distributor' && (
+          <Inp label="Distributor" value={distributorId} onChange={setDistributorId} req
+            options={[{ value: '', label: 'Select distributor...' }, ...(distributors || []).map(d => ({ value: d.id, label: d.name }))]} />
+        )}
+        {scopeType === 'tier' && (
+          <Inp label="Tier" value={tierId} onChange={setTierId} req
+            options={[{ value: '', label: 'Select tier...' }, ...(priceTiers || []).map(t => ({ value: String(t.id), label: t.name }))]} />
+        )}
+        <Inp label="Note (optional, applied to every submitted row)" value={note} onChange={setNote} />
+      </div>
+
+      {/* Keyed on the scope combo — remounts (fresh useState init below) whenever Category/Scope/
+          Distributor/Tier changes, so each combo gets its own fresh price-edit baseline without ever
+          calling setState from inside an effect (React's own recommended "reset state when inputs
+          change" pattern, avoids react-hooks/set-state-in-effect). */}
+      {scopeReady && (
+        <CategoryPriceTable key={`${categoryId}|${scopeType}|${distributorId}|${tierId}`}
+          categoryProducts={categoryProducts} currentPriceFor={currentPriceFor}
+          scopeType={scopeType} distributorId={distributorId} tierId={tierId} note={note}
+          priceChangeRequests={priceChangeRequests} currentUser={currentUser}
+          showToast={showToast} loadAll={loadAll} onDone={resetControls} />
+      )}
+    </Card>
+  )
+}
+
+function CategoryPriceTable({ categoryProducts, currentPriceFor, scopeType, distributorId, tierId, note, priceChangeRequests, currentUser, showToast, loadAll, onDone }) {
+  const [priceEdits, setPriceEdits] = useState(() => {
+    const init = {}
+    categoryProducts.forEach(p => { init[p.id] = String(currentPriceFor(p)) })
+    return init
+  })
+  const [busy, setBusy] = useState(false)
+
+  const hasPendingDuplicate = productId => (priceChangeRequests || []).some(r =>
+    r.status === 'pending_approval' && r.product_id === productId && r.scope_type === scopeType &&
+    (scopeType === 'distributor' ? r.distributor_id === distributorId : scopeType === 'tier' ? String(r.tier_id) === String(tierId) : true))
+
+  const submit = async () => {
+    const rows = []
+    let skippedDuplicate = 0
+    categoryProducts.forEach(p => {
+      const edited = priceEdits[p.id]
+      if (edited === undefined || edited === '') return
+      const newNum = Number(edited)
+      if (!(newNum > 0)) return
+      const curNum = currentPriceFor(p)
+      if (newNum === curNum) return // untouched from the prefilled baseline — nothing to propose
+      if (hasPendingDuplicate(p.id)) { skippedDuplicate++; return }
+      rows.push({
+        productId: p.id, scopeType,
+        distributorId: scopeType === 'distributor' ? distributorId : null,
+        tierId: scopeType === 'tier' ? tierId : null,
+        previousPrice: curNum, proposedPrice: newNum,
+        note, proposedBy: currentUser?.id,
+      })
+    })
+
+    if (rows.length === 0) {
+      showToast(skippedDuplicate > 0 ? `Nothing to submit — ${skippedDuplicate} already pending approval` : 'No prices were changed from their current value')
+      return
+    }
+    setBusy(true)
+    const { error } = await db.createPriceChangeRequestsBulk(rows)
+    setBusy(false)
+    if (error) { showToast('Error submitting bulk changes'); return }
+    showToast(`${rows.length} price change(s) proposed${skippedDuplicate ? `, ${skippedDuplicate} skipped (already pending)` : ''}`)
+    await loadAll()
+    onDone()
+  }
 
   return (
     <>
-      <Card>
-        <CH title="Propose Price Change" />
-        <div style={{ padding: 14 }}>
-          <Inp label="Product" value={productId} onChange={setProductId} req
-            options={[{ value: '', label: 'Select product...' }, ...(products || []).map(p => ({ value: p.id, label: `${p.name} (${p.unit})` }))]} />
-          <Inp label="Scope" value={scopeType} onChange={v => { setScopeType(v); setDistributorId(''); setTierId('') }}
-            options={[{ value: 'base', label: 'Base Price (everyone)' }, { value: 'distributor', label: 'Specific Distributor' }, { value: 'tier', label: 'Price Tier' }]} />
-          {scopeType === 'distributor' && (
-            <Inp label="Distributor" value={distributorId} onChange={setDistributorId} req
-              options={[{ value: '', label: 'Select distributor...' }, ...(distributors || []).map(d => ({ value: d.id, label: d.name }))]} />
-          )}
-          {scopeType === 'tier' && (
-            <Inp label="Tier" value={tierId} onChange={setTierId} req
-              options={[{ value: '', label: 'Select tier...' }, ...(priceTiers || []).map(t => ({ value: String(t.id), label: t.name }))]} />
-          )}
-          {product && previewPrice !== null && (
-            <div style={{ background: '#f9fafb', borderRadius: 8, padding: '8px 10px', fontSize: 12, color: '#374151', marginBottom: 12 }}>
-              Current effective price for this scope: <strong>{F(previewPrice)}</strong>
-            </div>
-          )}
-          <Inp label="New Price" type="number" value={newPrice} onChange={setNewPrice} req />
-          <Inp label="Note (optional)" value={note} onChange={setNote} />
-          <Btn v="pri" full disabled={busy} onClick={submit}>{busy ? 'Saving...' : 'Submit for Approval'}</Btn>
-        </div>
-      </Card>
-
-      <Card>
-        <CH title="My Proposals" sub={`${myRequests.length} total`} />
-        {myRequests.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>None yet</div>}
-        {myRequests.map(r => (
-          <div key={r.id} style={{ padding: '10px 14px', borderBottom: '1px solid #f3f4f6' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span style={{ fontSize: 12, fontWeight: 600 }}>{r.product?.name || r.product_id} — {scopeLabel(r)}</span>
-              <SBadge s={STATUS_LABEL[r.status] || r.status} />
-            </div>
-            <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2 }}>{F(r.previous_price)} → {F(r.proposed_price)}</div>
-            {r.status === 'rejected' && r.rejection_reason && (
-              <div style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>Reason: {r.rejection_reason}</div>
+      <div style={{ overflowX: 'auto', borderTop: '1px solid #e5e7eb' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 280 }}>
+          <thead>
+            <tr style={{ background: '#f9fafb' }}>
+              <th style={{ padding: '9px 12px', fontSize: 10, color: '#6b7280', textAlign: 'left', fontWeight: 700, textTransform: 'uppercase', borderBottom: '1px solid #e5e7eb' }}>Product</th>
+              <th style={{ padding: '9px 12px', fontSize: 10, color: '#6b7280', textAlign: 'right', fontWeight: 700, textTransform: 'uppercase', borderBottom: '1px solid #e5e7eb' }}>Current Price</th>
+              <th style={{ padding: '9px 12px', fontSize: 10, color: '#6b7280', textAlign: 'right', fontWeight: 700, textTransform: 'uppercase', borderBottom: '1px solid #e5e7eb' }}>New Price</th>
+            </tr>
+          </thead>
+          <tbody>
+            {categoryProducts.length === 0 && (
+              <tr><td colSpan={3} style={{ padding: 20, textAlign: 'center', color: '#9ca3af', fontSize: 12 }}>No products in this category</td></tr>
             )}
-          </div>
-        ))}
-      </Card>
+            {categoryProducts.map(p => (
+              <tr key={p.id} style={{ borderBottom: '1px solid #f9fafb' }}>
+                <td style={{ padding: '8px 12px', fontSize: 12, fontWeight: 600 }}>{p.name} <span style={{ color: '#9ca3af', fontWeight: 400 }}>({p.unit})</span></td>
+                <td style={{ padding: '8px 12px', fontSize: 12, textAlign: 'right', color: '#6b7280' }}>{F(currentPriceFor(p))}</td>
+                <td style={{ padding: '6px 12px', textAlign: 'right' }}>
+                  <input type="number" value={priceEdits[p.id] ?? ''} onChange={e => setPriceEdits(prev => ({ ...prev, [p.id]: e.target.value }))}
+                    style={{ width: 100, padding: '6px 8px', borderRadius: 6, border: '1px solid #e5e7eb', fontSize: 12, textAlign: 'right', fontFamily: 'inherit' }} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div style={{ padding: 14 }}>
+        <Btn v="pri" full disabled={busy} onClick={submit}>{busy ? 'Saving...' : 'Submit All Changes'}</Btn>
+      </div>
     </>
   )
 }

@@ -2408,6 +2408,24 @@ export async function createPriceChangeRequest({ productId, scopeType, distribut
   return { data, error }
 }
 
+// Category-level bulk propose (PricingMaster.jsx's Propose Change "Bulk by Category" mode) — one row
+// per product the rep actually edited away from its prefilled current price, inserted in a single
+// round trip. Still just ordinary price_change_requests rows underneath (same scope_type/status
+// shape as a single proposal) — bulk-by-category is a UI convenience for creating many of them at
+// once, not a new resolution concept, so the approval queue/cascade need no changes to handle these.
+export async function createPriceChangeRequestsBulk(rows) {
+  const payload = rows.map(({ productId, scopeType, distributorId, tierId, previousPrice, proposedPrice, note, proposedBy }) => ({
+    product_id: productId, scope_type: scopeType,
+    distributor_id: scopeType === 'distributor' ? distributorId : null,
+    tier_id: scopeType === 'tier' ? tierId : null,
+    previous_price: previousPrice, proposed_price: proposedPrice,
+    status: 'pending_approval', note: note || null,
+    proposed_by: proposedBy, proposed_at: new Date().toISOString(),
+  }))
+  const { data, error } = await supabase.from('price_change_requests').insert(payload).select()
+  return { data, error }
+}
+
 export async function approvePriceChangeRequest(id, approvedBy) {
   const { data: row, error: fetchError } = await supabase
     .from('price_change_requests')

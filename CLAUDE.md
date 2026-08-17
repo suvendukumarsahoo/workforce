@@ -306,6 +306,34 @@ and Distributor Secondary's cart (`DistributorSecondary.jsx`, explicitly out of 
 flat base price by design, unaffected either way since base-scope approvals keep `products.price`
 itself current).
 
+**Propose Change has two entry modes** (`ProposeChangeTab`'s `mode` toggle, `'single'`/`'bulk'`,
+sharing one "My Proposals" history below both) — **Single Product** (`SingleProposeForm`) is the
+original one-product-at-a-time form, with a Category picker added purely to narrow the Product
+dropdown (`categoryId` state, resets `productId` on change — Category itself is never sent to the
+server, it's a client-side filter only). **Bulk by Category** (`BulkByCategoryForm` +
+`CategoryPriceTable`) batch-edits every product in one category in a single screen instead of
+repeating the whole form per product — pick Category + Scope (Base/Distributor/Tier, same 3 scopes as
+single mode) and every product in that category renders as a table row prefilled at that scope's
+current effective price (`currentPriceFor`, same `resolveProductPrice` cascade). Submitting only
+sends rows the user actually edited away from that prefill — an untouched row is by definition "no
+change" and is silently skipped rather than creating a no-op proposal (verified live: editing 1 of 2
+products in a category and submitting created exactly 1 `price_change_request`, not 2). Each row
+still becomes its own ordinary `price_change_request` via `db.createPriceChangeRequestsBulk` (one
+multi-row insert, one round trip) — bulk-by-category is purely a proposing-UI convenience, not a new
+resolution concept, so the Approvals queue/cascade/history needed zero changes to handle these rows.
+
+**`CategoryPriceTable` is remounted (React `key`), not synced via `useEffect`** — its `key` is the
+`${categoryId}|${scopeType}|${distributorId}|${tierId}` combo from its `BulkByCategoryForm` parent,
+so picking a different category/scope/distributor/tier fully unmounts the old table and mounts a
+fresh one, whose `useState(() => ...)` lazy initializer computes that combo's prefilled baseline once
+on mount. First built with a `useEffect` that called `setPriceEdits` directly on every scope-combo
+change — hit this project's `react-hooks/set-state-in-effect` lint rule (setState synchronously
+inside an effect body), which the ordinary `--fix`-style dependency-array route can't satisfy since
+the actual intent (a fresh baseline, not an incremental sync) is exactly React's own documented
+"resetting state when a prop changes" case — the key-remount pattern is the doc-recommended fix, not
+a workaround. Any future "reset this whole subtree's state when some upstream selection changes"
+requirement in this codebase should reach for this pattern first rather than an effect.
+
 ## Module: Goals & Performance
 
 **Monthly Goals architecture** — Manager sets parameter scope (`Parameters.jsx`, per member per
