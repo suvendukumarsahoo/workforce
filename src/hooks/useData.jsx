@@ -3,6 +3,7 @@ import { useAuth } from './useAuth'
 import * as db from '../lib/db'
 import { computeAchievements, getGoalOverallStatus } from '../lib/achievementEngine'
 import { getCurrentPeriod, monthRangeForPeriod } from '../lib/period'
+import { buildPriceOverrideMaps } from '../lib/pricing'
 
 const DataContext = createContext(null)
 
@@ -30,6 +31,8 @@ export function DataProvider({ children }) {
   const [registrations, setRegistrations] = useState([])
   const [payments, setPayments] = useState([])
   const [approvedAttendanceRules, setApprovedAttendanceRules] = useState([])
+  const [priceTiers, setPriceTiers] = useState([])
+  const [priceChangeRequests, setPriceChangeRequests] = useState([])
   const [currentPeriod] = useState(getCurrentPeriod())
   const loadingRef = useRef(false) // guards against overlapping loadAll() calls
 
@@ -68,6 +71,7 @@ export function DataProvider({ children }) {
   { data: dist }, { data: pa }, { data: g }, { data: inv }, { data: exp },
   { data: sal }, { data: att }, { data: vis }, { data: reg }, { data: pay },
   { data: rvis }, { data: routs }, { data: sord }, { data: attRules },
+  { data: ptiers }, { data: pcreqs },
 ] = await Promise.all([
   db.fetchRoles(), db.fetchUsers(), db.fetchMembers(), db.fetchCategories(),
   db.fetchProducts(), db.fetchDistributors(), db.fetchParameters(currentPeriod), db.fetchGoals(currentPeriod),
@@ -76,6 +80,7 @@ export function DataProvider({ children }) {
   db.fetchVisits(), db.fetchRegistrations(), db.fetchPayments(),
   db.fetchRetailVisits(), db.fetchRetailOutlets(), db.fetchSecondaryOrders(),
   db.fetchAttendanceRules(),
+  db.fetchPriceTiers(), db.fetchPriceChangeRequests(),
 ])
 
     if (r)    setRoles(r)
@@ -92,6 +97,8 @@ export function DataProvider({ children }) {
           if (routs) setRetailOutlets(routs)
           if (sord) setSecondaryOrders(sord)
           if (attRules) setApprovedAttendanceRules(attRules.filter(rr => rr.status === 'approved'))
+          if (ptiers) setPriceTiers(ptiers)
+          if (pcreqs) setPriceChangeRequests(pcreqs)
     if (g)   {
       const goalMap = {}
       g.forEach(goal => {
@@ -114,6 +121,10 @@ export function DataProvider({ children }) {
   [invoices, goals, products, distributors, visits, retailVisits, retailOutlets, secondaryOrders, currentPeriod]
 )
 
+  // Pricing Master's resolution cascade (src/lib/pricing.js) — recomputed only when the underlying
+  // approval history changes, same "derive from raw history" pattern as achievements above.
+  const priceOverrideMaps = useMemo(() => buildPriceOverrideMaps(priceChangeRequests), [priceChangeRequests])
+
   function showToast(msg, duration = 2800) {
     setToast(msg)
     setTimeout(() => setToast(null), duration)
@@ -134,6 +145,7 @@ export function DataProvider({ children }) {
       registrations, setRegistrations,
       loading, loadAll, toast, showToast,payments, setPayments,
       currentPeriod, approvedAttendanceRules,
+      priceTiers, setPriceTiers, priceChangeRequests, setPriceChangeRequests, priceOverrideMaps,
     }}>
       {children}
     </DataContext.Provider>

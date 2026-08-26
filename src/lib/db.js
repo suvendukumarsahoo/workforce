@@ -2344,3 +2344,120 @@ export async function fetchDiscrepancyReports({ distributorIds }) {
     .order('report_date', { ascending: false })
   return { data, error }
 }
+
+// ─── PRICING MASTER ─────────────────────────────────────────────────────────
+// Price Tiers are plain Admin-direct-edit master data (create/rename tiers, assign distributors to
+// one via distributors.price_tier_id) — no approval workflow, same convention as every other master
+// table (Products, Vehicles, Warehouses). Actual price *values* (base, or an override for a specific
+// distributor/tier) go through price_change_requests instead: Accounts (or Admin) proposes, Admin
+// approves — see approvePriceChangeRequest below for how a 'base' approval also writes products.price
+// directly so every reader that isn't wired into the resolution cascade (src/lib/pricing.js) still
+// sees a correct, current flat price with no code change of its own.
+
+export async function fetchPriceTiers() {
+  const { data, error } = await supabase.from('price_tiers').select('*').order('name')
+  return { data, error }
+}
+
+export async function createPriceTier(payload) {
+  const { data, error } = await supabase.from('price_tiers').insert(payload).select().single()
+  return { data, error }
+}
+
+export async function updatePriceTier(id, payload) {
+  const { data, error } = await supabase.from('price_tiers').update(payload).eq('id', id).select().single()
+  return { data, error }
+}
+
+export async function deletePriceTier(id) {
+  const { error } = await supabase.from('price_tiers').delete().eq('id', id)
+  return { error }
+}
+
+export async function updateDistributorPriceTier(distributorId, tierId) {
+  const { data, error } = await supabase
+    .from('distributors')
+    .update({ price_tier_id: tierId || null })
+    .eq('id', distributorId)
+    .select()
+    .single()
+  return { data, error }
+}
+
+// Full history (every proposal, approved/rejected/pending) — the approval queue and the "current
+// price" cascade (src/lib/pricing.js's buildPriceOverrideMaps) both derive from this one fetch, no
+// separate "current state" table to drift out of sync with the approval log.
+export async function fetchPriceChangeRequests() {
+  const { data, error } = await supabase
+    .from('price_change_requests')
+    .select('*, product:products(id,name,unit), distributor:distributors(id,name), tier:price_tiers(id,name)')
+    .order('proposed_at', { ascending: false })
+  return { data, error }
+}
+
+export async function createPriceChangeRequest({ productId, scopeType, distributorId, tierId, previousPrice, proposedPrice, note, proposedBy }) {
+  const payload = {
+    product_id: productId, scope_type: scopeType,
+    distributor_id: scopeType === 'distributor' ? distributorId : null,
+    tier_id: scopeType === 'tier' ? tierId : null,
+    previous_price: previousPrice, proposed_price: proposedPrice,
+    status: 'pending_approval', note: note || null,
+    proposed_by: proposedBy, proposed_at: new Date().toISOString(),
+  }
+  const { data, error } = await supabase.from('price_change_requests').insert(payload).select().single()
+  return { data, error }
+}
+
+// Category-level bulk propose (PricingMaster.jsx's Propose Change "Bulk by Category" mode) — one row
+// per product the rep actually edited away from its prefilled current price, inserted in a single
+// round trip. Still just ordinary price_change_requests rows underneath (same scope_type/status
+// shape as a single proposal) — bulk-by-category is a UI convenience for creating many of them at
+// once, not a new resolution concept, so the approval queue/cascade need no changes to handle these.
+export async function createPriceChangeRequestsBulk(rows) {
+  const payload = rows.map(({ productId, scopeType, distributorId, tierId, previousPrice, proposedPrice, note, proposedBy }) => ({
+    product_id: productId, scope_type: scopeType,
+    distributor_id: scopeType === 'distributor' ? distributorId : null,
+    tier_id: scopeType === 'tier' ? tierId : null,
+    previous_price: previousPrice, proposed_price: proposedPrice,
+    status: 'pending_approval', note: note || null,
+    proposed_by: proposedBy, proposed_at: new Date().toISOString(),
+  }))
+  const { data, error } = await supabase.from('price_change_requests').insert(payload).select()
+  return { data, error }
+}
+
+export async function approvePriceChangeRequest(id, approvedBy) {
+  const { data: row, error: fetchError } = await supabase
+    .from('price_change_requests')
+    .select('product_id, scope_type, proposed_price')
+    .eq('id', id)
+    .single()
+  if (fetchError) return { data: null, error: fetchError }
+
+  const { data, error } = await supabase
+    .from('price_change_requests')
+    .update({ status: 'approved', approved_by: approvedBy, approved_at: new Date().toISOString(), rejection_reason: null })
+    .eq('id', id)
+    .select()
+    .single()
+  if (error) return { data: null, error }
+
+  // Base-scope approvals also update the flat products.price column itself — it IS the base price,
+  // not a separate override row — so every reader that still goes straight to products.price (e.g.
+  // Distributor Secondary's cart) stays correct without needing its own wiring into the cascade.
+  if (row.scope_type === 'base') {
+    const { error: prodError } = await supabase.from('products').update({ price: row.proposed_price }).eq('id', row.product_id)
+    if (prodError) return { data, error: prodError }
+  }
+  return { data, error: null }
+}
+
+export async function rejectPriceChangeRequest(id, approvedBy, reason) {
+  const { data, error } = await supabase
+    .from('price_change_requests')
+    .update({ status: 'rejected', approved_by: approvedBy, approved_at: new Date().toISOString(), rejection_reason: reason || null })
+    .eq('id', id)
+    .select()
+    .single()
+  return { data, error }
+}

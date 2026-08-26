@@ -44,6 +44,7 @@ import StockTakeSchedule from './manager/StockTakeSchedule.jsx'
 import StockTakeRuleApprovals from './shared/StockTakeRuleApprovals.jsx'
 import SecondaryOrderDelivery from './shared/SecondaryOrderDelivery.jsx'
 import SecondaryReturnReport from './shared/SecondaryReturnReport.jsx'
+import PricingMaster from './shared/PricingMaster.jsx'
 
 const ALL_MENUS = [
   { id:'dashboard',     label:'Dashboard',        icon:'📊', sec:'Overview'  },
@@ -55,6 +56,7 @@ const ALL_MENUS = [
   { id:'customers',     label:'Distributors',     icon:'🤝', sec:'Master'    },  
   { id:'products',      label:'Products',         icon:'📦', sec:'Master'    },
   { id:'categories',    label:'Categories',       icon:'🗂️',  sec:'Master'    },
+  { id:'pricingMaster', label:'Pricing Master',   icon:'💲', sec:'Master'    },
   { id:'attendance',    label:'Attendance',       icon:'📅', sec:'HR Functions' },
   { id:'attendanceApprovals', label:'Attendance Approval', icon:'✅', sec:'HR Functions' },
   { id:'attendanceRules', label:'Daily Attendance Rules', icon:'⏱️', sec:'HR Functions' },
@@ -98,6 +100,7 @@ const PAGE_MAP = {
   customers:     Customers,
   products:      Products,
   categories:    Categories,
+  pricingMaster: PricingMaster,
   attendance:    Attendance,
   attendanceApprovals: AttendanceApprovals,
   attendanceRules: AttendanceRules,

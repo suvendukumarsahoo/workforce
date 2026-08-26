@@ -234,6 +234,106 @@ direct-entry rows). `AwaitingInvoiceTile.jsx` groups awaiting-invoice orders by 
 this codebase uses Supabase Storage yet). No reject/timeout/escalation path anywhere in the journey
 pipeline — matches this app's convention of approve-only flows.
 
+## Module: Pricing Master
+
+Layers distributor/tier-specific pricing on top of the flat `products.price` base — `products.price`
+is never retired, it stays the fallback every resolution ultimately lands on. Menu id
+`pricingMaster`, section `Master`, `src/pages/shared/PricingMaster.jsx` — 4 tabs, all sharing one
+`price_change_requests` table via `useData()`'s global `priceChangeRequests`/`priceTiers` (fetched in
+`loadAll()` alongside every other context array) and a memoized `priceOverrideMaps`
+(`buildPriceOverrideMaps`, same "derive from raw history" pattern as `achievements`).
+
+**Resolution cascade (`src/lib/pricing.js`, pure, no DB calls)** — most specific wins: an approved
+**distributor-specific** override > an approved override for the distributor's assigned **tier** >
+`products.price`. `resolveProductPrice(product, distributor, priceOverrideMaps)` is the one function
+every wired-in reader calls; `buildPriceOverrideMaps(requests)` picks, per scope key, whichever
+`'approved'` row has the latest `approved_at` (a price changed more than once keeps every row, only
+the newest counts). Only `'approved'` rows count — `'pending_approval'`/`'rejected'` never affect
+resolution.
+
+**Schema** — `price_tiers` (`id` bigint identity, `name`, `description`, `active`) is plain
+Admin-direct-edit master data, same convention as every other master table, no approval step;
+distributor→tier assignment is a `price_tier_id` field on `distributors` itself, edited from
+`Distributors.jsx`'s own EntitySheet (not a second UI inside Pricing Master — Tiers tab is
+create/rename/delete only, `distributorCount(tierId)` reads the same `distributors` array everyone
+else uses). `price_change_requests` is the single append-only log covering **all three** scope types
+(`scope_type`: `'base'`/`'distributor'`/`'tier'`, with `distributor_id`/`tier_id` set accordingly) —
+Accounts (or Admin) proposes via the Propose Change tab, Admin approves/rejects via the Approvals
+tab. Deliberately no separate "current state" table — current price is always derived from this log
+(`buildPriceOverrideMaps`/`activeOverridesForProduct`), so there's nothing to drift out of sync with
+the approval history, matching `stockReport.js`/`achievementEngine.js`'s own "compute from raw
+fetched history" convention elsewhere in this app.
+
+**Base-scope approval writes back to `products.price` directly** (`db.approvePriceChangeRequest`) —
+a base-price change isn't stored as an override row that the cascade resolves around, it updates the
+real flat column, since that column **is** the base price, not a separate thing layered on top of
+it. This is why every reader that was never wired into the cascade at all (Distributor Secondary's
+cart, `OrderPickingDetail.jsx`/`OrderApproval.jsx`'s own add-item flows, `Invoices.jsx`'s legacy
+manual entry — see below) still shows a correct, current base price with zero code changes of its
+own — they were already reading `products.price`, and that value is kept live regardless of which
+path changed it. Effective-dating is deliberately immediate-on-approval, not future-scheduled — no
+`effective_from` field to check, approval time IS effective time; history exists purely for audit
+(the Current Prices tab's per-product drill lists every request, approved or rejected, oldest scope
+changes included).
+
+**Role gating — hard-coded to `role.id`, not this app's usual generic `can()` actions**: Propose
+Change is gated on `can('add')` (the normal convention), but Approvals/Tiers are gated on
+`role.id === 'r1'` (Admin) **in addition to** `can('approve')`/`can('add'||'edit'||'del')` — found
+live during verification that Accounts already carries `edit`+`approve` at the role level for its
+Invoice/Expense duties, and those are the *same* generic flags every other approval screen in this
+app (`ExpApprovals.jsx`, `GoalApprovals.jsx`) keys off — so gating Pricing Master's Approvals tab the
+usual way would have let Accounts approve its own price proposals, silently defeating the
+propose/approve separation of duties this module was specifically scoped to have. `PricingMaster.jsx`
+is the one screen in this app that deviates from the generic-action convention for this reason; any
+future page with a similar "the proposer and approver must never be interchangeable via inherited
+role permissions" requirement should check for this instead of assuming `can()` alone is sufficient.
+
+**Wired into the cascade**: only `DistributorOrder.jsx`'s `addItem()` (`rate:
+resolveProductPrice(prod, distributor, priceOverrideMaps)`) — the rep's order-creation cart, the
+highest-value site since this is where a distributor's negotiated rate should actually apply. An
+order's rate is captured once at add-time and travels unchanged through picking/approval/loading/
+invoicing (`AwaitingInvoiceTile.jsx` never re-reads `products.price` itself — it only ever inherits
+whatever `rate` is already on the order's line items), so this one call site is sufficient to cover
+the whole order→invoice chain for orders created after this shipped.
+
+**Deliberately NOT wired in this pass** (same flat `Number(prod.price) || 0` pattern, scoped out
+during planning — see `git log` on this section for the reasoning): `OrderPickingDetail.jsx` and
+`OrderApproval.jsx`'s own "add item mid-review" flows (an item added during picking/approval still
+uses the flat base price, not the distributor's resolved rate — a real gap if a distributor override
+exists and someone adds a line after the original order), `Invoices.jsx`'s legacy manual/direct-entry
+invoice form (the one genuine standalone `products.price` lookup at invoicing time, no linked order),
+and Distributor Secondary's cart (`DistributorSecondary.jsx`, explicitly out of scope — stays on the
+flat base price by design, unaffected either way since base-scope approvals keep `products.price`
+itself current).
+
+**Propose Change has two entry modes** (`ProposeChangeTab`'s `mode` toggle, `'single'`/`'bulk'`,
+sharing one "My Proposals" history below both) — **Single Product** (`SingleProposeForm`) is the
+original one-product-at-a-time form, with a Category picker added purely to narrow the Product
+dropdown (`categoryId` state, resets `productId` on change — Category itself is never sent to the
+server, it's a client-side filter only). **Bulk by Category** (`BulkByCategoryForm` +
+`CategoryPriceTable`) batch-edits every product in one category in a single screen instead of
+repeating the whole form per product — pick Category + Scope (Base/Distributor/Tier, same 3 scopes as
+single mode) and every product in that category renders as a table row prefilled at that scope's
+current effective price (`currentPriceFor`, same `resolveProductPrice` cascade). Submitting only
+sends rows the user actually edited away from that prefill — an untouched row is by definition "no
+change" and is silently skipped rather than creating a no-op proposal (verified live: editing 1 of 2
+products in a category and submitting created exactly 1 `price_change_request`, not 2). Each row
+still becomes its own ordinary `price_change_request` via `db.createPriceChangeRequestsBulk` (one
+multi-row insert, one round trip) — bulk-by-category is purely a proposing-UI convenience, not a new
+resolution concept, so the Approvals queue/cascade/history needed zero changes to handle these rows.
+
+**`CategoryPriceTable` is remounted (React `key`), not synced via `useEffect`** — its `key` is the
+`${categoryId}|${scopeType}|${distributorId}|${tierId}` combo from its `BulkByCategoryForm` parent,
+so picking a different category/scope/distributor/tier fully unmounts the old table and mounts a
+fresh one, whose `useState(() => ...)` lazy initializer computes that combo's prefilled baseline once
+on mount. First built with a `useEffect` that called `setPriceEdits` directly on every scope-combo
+change — hit this project's `react-hooks/set-state-in-effect` lint rule (setState synchronously
+inside an effect body), which the ordinary `--fix`-style dependency-array route can't satisfy since
+the actual intent (a fresh baseline, not an incremental sync) is exactly React's own documented
+"resetting state when a prop changes" case — the key-remount pattern is the doc-recommended fix, not
+a workaround. Any future "reset this whole subtree's state when some upstream selection changes"
+requirement in this codebase should reach for this pattern first rather than an effect.
+
 ## Module: Goals & Performance
 
 **Monthly Goals architecture** — Manager sets parameter scope (`Parameters.jsx`, per member per
