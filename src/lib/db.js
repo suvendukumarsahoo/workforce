@@ -272,6 +272,36 @@ export async function deleteWarehouse(id) {
   const { error } = await supabase.from('warehouses').delete().eq('id', id)
   return { error }
 }
+
+// ─── PRODUCT ↔ WAREHOUSE MAPPING ───────────────────────────────────────────────
+// Which products are stocked at which warehouse — a plain many-to-many junction, no status/qty of
+// its own (that's StockUpdate.jsx's global stock_status, unchanged and out of scope here; this table
+// only answers "is this product carried at this warehouse at all"). Fetched as one flat list and
+// filtered client-side per warehouse (Warehouses.jsx) rather than a per-warehouse query — the table
+// is small (products × warehouses), and nothing else in the app reads it yet, so it isn't worth
+// adding to useData()'s global context alongside the always-loaded tables.
+export async function fetchProductWarehouseMap() {
+  const { data, error } = await supabase.from('product_warehouses').select('product_id, warehouse_id')
+  return { data, error }
+}
+
+export async function mapProductToWarehouse(productId, warehouseId) {
+  const { data, error } = await supabase
+    .from('product_warehouses')
+    .insert({ product_id: productId, warehouse_id: warehouseId })
+    .select()
+    .single()
+  return { data, error }
+}
+
+export async function unmapProductFromWarehouse(productId, warehouseId) {
+  const { error } = await supabase
+    .from('product_warehouses')
+    .delete()
+    .eq('product_id', productId)
+    .eq('warehouse_id', warehouseId)
+  return { error }
+}
 export async function allocateVehicle(orderIds, vehicleId, warehouseId, driverId) {
   const allocId = 'ALC' + Date.now().toString(36).toUpperCase()
   const { error: allocError } = await supabase.from('vehicle_allocations').insert({

@@ -878,6 +878,27 @@ column defaults to the *string* `'pending'`, not null, so the exclusion check is
 allow-list, not a falsy check). Load creation/vehicle allocation alone don't exclude an order, only
 actual physical loading does. Clicking the total opens a distributor-wise breakdown by order number.
 
+**Product ↔ Warehouse mapping** (`product_warehouses`, plain many-to-many junction — `product_id`,
+`warehouse_id`, `unique(product_id, warehouse_id)`, no status/qty column of its own) — which products
+are carried at which warehouse. Managed from `Warehouses.jsx` (Admin master screen): each warehouse
+row gets a "N mapped" button opening a Sheet with every product, grouped by category (same layout as
+`StockUpdate.jsx`'s own Issues checklist), checkbox per product, toggling calls
+`db.mapProductToWarehouse`/`unmapProductFromWarehouse` and saves instantly (`can('edit')`-gated,
+matching the row's own Edit/Delete gating). `db.fetchProductWarehouseMap()` fetches the whole table
+as flat `{product_id, warehouse_id}` pairs, filtered client-side per warehouse — not added to
+`useData()`'s global context, since nothing else reads it yet.
+
+**Deliberately just the mapping, not a warehouse-scoped rearchitecture** — before this, there was
+literally zero warehouse concept touching products anywhere: no `warehouse_id` on `users`, Warehouse
+Manager (`r6`) isn't tied to any specific warehouse (it's a single global role, not a per-warehouse
+assignment), and `StockUpdate.jsx`'s Available/Wait/Unavailable `stock_status` is one flat global
+column — the screen's own banner says so ("Status is global across all warehouses"). This feature
+only establishes *which products belong to which warehouse*; it does NOT make `stock_status`,
+`WMDashboard.jsx`'s tiles, or the picking flow warehouse-scoped — that would additionally need a way
+to tie a Warehouse Manager user to their own warehouse (a `users.warehouse_id` or similar), and touch
+achievement/picking-quantity logic well beyond this table. A natural next step once this mapping is
+actually populated, not done here.
+
 ## Module: Geographical / Maps
 
 **`DistributorPresenceMap.jsx`** (menu `geoBusinessView`, "Geographical Business View," standalone
@@ -962,8 +983,6 @@ showed a real 4) before shipping.
      ```
      Optional (Attendance): `hq_latitude`, `hq_longitude`, `duty_start_time`, `allowed_deviation_m`
      (defaults to 20). They can log in immediately with the step-1 email/password once this row exists.
-- **Products not tagged to a warehouse** — no per-warehouse stock linkage anywhere in the schema;
-  explicitly deferred to a later, separate session.
 - **Members/driver master has no create/edit UI** — `members` rows created directly in Supabase;
   `createMember`/`updateMember`/`deleteMember` in `db.js` are unused. Deferred.
 - **POD photo upload** — needs a new Supabase Storage bucket (first use of Storage in this app),
