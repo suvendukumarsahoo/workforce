@@ -33,6 +33,7 @@ export function DataProvider({ children }) {
   const [approvedAttendanceRules, setApprovedAttendanceRules] = useState([])
   const [priceTiers, setPriceTiers] = useState([])
   const [priceChangeRequests, setPriceChangeRequests] = useState([])
+  const [warehouses, setWarehouses] = useState([])
   const [currentPeriod] = useState(getCurrentPeriod())
   const loadingRef = useRef(false) // guards against overlapping loadAll() calls
 
@@ -71,7 +72,7 @@ export function DataProvider({ children }) {
   { data: dist }, { data: pa }, { data: g }, { data: inv }, { data: exp },
   { data: sal }, { data: att }, { data: vis }, { data: reg }, { data: pay },
   { data: rvis }, { data: routs }, { data: sord }, { data: attRules },
-  { data: ptiers }, { data: pcreqs },
+  { data: ptiers }, { data: pcreqs }, { data: whs },
 ] = await Promise.all([
   db.fetchRoles(), db.fetchUsers(), db.fetchMembers(), db.fetchCategories(),
   db.fetchProducts(), db.fetchDistributors(), db.fetchParameters(currentPeriod), db.fetchGoals(currentPeriod),
@@ -80,7 +81,7 @@ export function DataProvider({ children }) {
   db.fetchVisits(), db.fetchRegistrations(), db.fetchPayments(),
   db.fetchRetailVisits(), db.fetchRetailOutlets(), db.fetchSecondaryOrders(),
   db.fetchAttendanceRules(),
-  db.fetchPriceTiers(), db.fetchPriceChangeRequests(),
+  db.fetchPriceTiers(), db.fetchPriceChangeRequests(), db.fetchWarehouses(),
 ])
 
     if (r)    setRoles(r)
@@ -99,6 +100,7 @@ export function DataProvider({ children }) {
           if (attRules) setApprovedAttendanceRules(attRules.filter(rr => rr.status === 'approved'))
           if (ptiers) setPriceTiers(ptiers)
           if (pcreqs) setPriceChangeRequests(pcreqs)
+          if (whs) setWarehouses(whs)
     if (g)   {
       const goalMap = {}
       g.forEach(goal => {
@@ -146,6 +148,7 @@ export function DataProvider({ children }) {
       loading, loadAll, toast, showToast,payments, setPayments,
       currentPeriod, approvedAttendanceRules,
       priceTiers, setPriceTiers, priceChangeRequests, setPriceChangeRequests, priceOverrideMaps,
+      warehouses, setWarehouses,
     }}>
       {children}
     </DataContext.Provider>

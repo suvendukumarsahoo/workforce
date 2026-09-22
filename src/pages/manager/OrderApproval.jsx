@@ -16,7 +16,7 @@ const statusLabels = {
 
 export default function OrderApproval() {
   const { currentUser, role } = useAuth()
-  const { products, categories, showToast, loadAll } = useData()
+  const { products, categories, warehouses, showToast, loadAll } = useData()
   const [orders, setOrders] = useState([])
   const [selected, setSelected] = useState(null)
   const [localQty, setLocalQty] = useState({})
@@ -33,6 +33,7 @@ const [allPayments, setAllPayments] = useState([])
   const [reviewOrder, setReviewOrder] = useState(null)
   const [pickProduct, setPickProduct] = useState('')
   const [pickQty, setPickQty] = useState('')
+  const [sendWarehouseId, setSendWarehouseId] = useState('') // which warehouse fulfills this order — chosen right here, the one point in the pipeline this ever gets decided
 
   const loadOrders = async () => {
     const { data } = await db.fetchDistributorOrders()
@@ -45,6 +46,7 @@ const [allPayments, setAllPayments] = useState([])
   const openOrder = async (order) => {
     setSelected(order)
     setOtp('')
+    setSendWarehouseId(order.warehouse_id || '')
     const initQty = {}
     order.items.forEach(it => {
       initQty[it.id] = isAdmin ? (it.final_qty ?? it.approved_qty) : (it.approved_qty ?? it.order_qty)
@@ -147,12 +149,14 @@ const [allPayments, setAllPayments] = useState([])
     showToast('Order confirmed')
   }
 const advanceToPicking = async () => {
+    if (!sendWarehouseId) { showToast('Pick a warehouse first'); return }
     setSubmitting(true)
-    const { error } = await db.markSubmittedForPicking(selected.id)
+    const { error } = await db.markSubmittedForPicking(selected.id, sendWarehouseId)
     if (error) { showToast('Error updating'); setSubmitting(false); return }
-    db.logActivity(currentUser?.id, 'update', 'order', `Sent order #${selected.id} to picking — ${selected.distributor?.name || selected.distributor_id}`, selected.id)
+    const whName = (warehouses || []).find(w => w.id === sendWarehouseId)?.name || sendWarehouseId
+    db.logActivity(currentUser?.id, 'update', 'order', `Sent order #${selected.id} to picking at ${whName} — ${selected.distributor?.name || selected.distributor_id}`, selected.id)
     await loadOrders(); await loadAll()
-    setSelected(s => ({ ...s, status: 'submitted_for_picking', submitted_for_picking_at: new Date().toISOString() }))
+    setSelected(s => ({ ...s, status: 'submitted_for_picking', submitted_for_picking_at: new Date().toISOString(), warehouse_id: sendWarehouseId }))
     setSubmitting(false)
     showToast('Marked as Submitted for Picking')
   }
@@ -303,6 +307,16 @@ const completedPicklist = orders.filter(o => ['ready_for_load', 'picking_done'].
       {selected && (
 <Sheet title={`Order #${selected.id} — ${selected.distributor?.name}`} sub={statusLabels[selected.status]} onClose={() => setSelected(null)}>
           <OrderStatusFlow order={selected} payment={payment} isAdmin={isAdmin} advancing={submitting} onAdvance={advanceToPicking} />
+          {isAdmin && selected.status === 'confirmed' && (
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 6 }}>Fulfilling Warehouse (pick before advancing)</label>
+              <select value={sendWarehouseId} onChange={e => setSendWarehouseId(e.target.value)}
+                style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 13, boxSizing: 'border-box', background: '#fff' }}>
+                <option value="">Select warehouse...</option>
+                {(warehouses || []).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+              </select>
+            </div>
+          )}
           {payment && (
             <Card style={{ background: '#f0fdf4', border: '1px solid #bbf7d0' }}>
               <div style={{ padding: 12, display: 'flex', flexWrap: 'wrap', gap: '4px 16px', fontSize: 12 }}>

@@ -6,8 +6,12 @@ import * as db from '../../lib/db.js'
 
 export default function Warehouses() {
   const { can } = useAuth()
-  const { products, categories } = useData()
-  const [warehouses, setWarehouses] = useState([])
+  // warehouses now lives in useData()'s global context (added so OrderApproval.jsx/StockUpdate.jsx/
+  // WMDashboard.jsx can all read it too, for warehouse-scoping) — this screen reads/writes it
+  // directly via setWarehouses rather than keeping its own separate local copy, so a warehouse
+  // created/edited/deleted here is visible everywhere else immediately, not just after the next
+  // 60s poll.
+  const { products, categories, warehouses, setWarehouses } = useData()
   const [sheet, setSheet] = useState(null)
   // Flat product_id+warehouse_id pairs (see db.js's fetchProductWarehouseMap comment for why this
   // isn't per-warehouse-fetched or lifted into useData()'s global context) — mapForWarehouse below
@@ -24,7 +28,7 @@ export default function Warehouses() {
     const { data } = await db.fetchProductWarehouseMap()
     setMapRows(data || [])
   }
-  useEffect(() => { loadWarehouses(); loadMap() }, [])
+  useEffect(() => { loadMap() }, [])
 
   const categoryName = cid => (categories || []).find(c => c.id === cid)?.name || 'Uncategorized'
   const mappedProductIds = warehouseId => new Set(mapRows.filter(r => r.warehouse_id === warehouseId).map(r => r.product_id))

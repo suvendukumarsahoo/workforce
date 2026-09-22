@@ -6,7 +6,7 @@ import * as db from '../../lib/db.js'
 
 export default function Employees() {
   const { can } = useAuth()
-  const { users, setUsers, roles, showToast } = useData()
+  const { users, setUsers, roles, warehouses, showToast } = useData()
   const [sheet, setSheet] = useState(null)
 
   const cols = [
@@ -35,6 +35,7 @@ export default function Employees() {
       duty_start_time: d.duty_start_time || null,
       allowed_deviation_m: d.allowed_deviation_m !== '' && d.allowed_deviation_m != null ? Number(d.allowed_deviation_m) : 20,
       manager_id: d.manager_id ? Number(d.manager_id) : null,
+      warehouse_id: d.role_id === 'r6' ? (d.warehouse_id || null) : null,
     }
     if (sheet?.id) {
       const { error } = await db.updateUser(sheet.id, payload)
@@ -53,7 +54,7 @@ export default function Employees() {
     <div>
       {sheet !== null && (
         <Sheet title={sheet?.id ? 'Edit user' : 'Add user'} onClose={() => setSheet(null)}>
-          <UserForm init={sheet?.id ? sheet : {}} roles={roles} users={users} onSave={save} onClose={() => setSheet(null)} isEdit={!!sheet?.id} />
+          <UserForm init={sheet?.id ? sheet : {}} roles={roles} users={users} warehouses={warehouses} onSave={save} onClose={() => setSheet(null)} isEdit={!!sheet?.id} />
         </Sheet>
       )}
       <CrudTable
@@ -70,7 +71,7 @@ export default function Employees() {
   )
 }
 
-function UserForm({ init, roles, users, onSave, onClose, isEdit }) {
+function UserForm({ init, roles, users, warehouses, onSave, onClose, isEdit }) {
   const [d, setD] = useState({ ...init })
   const [locBusy, setLocBusy] = useState(false)
   const set = (k, v) => setD(x => ({ ...x, [k]: v }))
@@ -92,6 +93,11 @@ function UserForm({ init, roles, users, onSave, onClose, isEdit }) {
       {!isEdit && <Inp label="Password" type="password" value={d.password} onChange={v => set('password', v)} req />}
       <Inp label="Role" value={d.role_id} onChange={v => set('role_id', v)} options={[{ value: '', label: 'Select role...' }, ...(roles || []).map(r => ({ value: r.id, label: r.name }))]} />
       <Inp label="Member ID (for Sales Team only)" value={d.member_id || ''} onChange={v => set('member_id', v)} type="number" ph="Leave blank for non-sales staff" />
+      {d.role_id === 'r6' && (
+        <Inp label="Warehouse" value={d.warehouse_id || ''} onChange={v => set('warehouse_id', v)}
+          options={[{ value: '', label: 'Not assigned yet' }, ...(warehouses || []).map(w => ({ value: w.id, label: w.name }))]}
+          helper="Scopes Stock Update / the Warehouse Dashboard to this one warehouse — unassigned sees nothing until set" />
+      )}
       <Inp label="Colour (hex)" value={d.color || ''} onChange={v => set('color', v)} placeholder="#3b82f6" />
 
       <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>Headquarter Location (for attendance check-in)</label>

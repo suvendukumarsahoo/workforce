@@ -888,16 +888,55 @@ matching the row's own Edit/Delete gating). `db.fetchProductWarehouseMap()` fetc
 as flat `{product_id, warehouse_id}` pairs, filtered client-side per warehouse — not added to
 `useData()`'s global context, since nothing else reads it yet.
 
-**Deliberately just the mapping, not a warehouse-scoped rearchitecture** — before this, there was
-literally zero warehouse concept touching products anywhere: no `warehouse_id` on `users`, Warehouse
-Manager (`r6`) isn't tied to any specific warehouse (it's a single global role, not a per-warehouse
-assignment), and `StockUpdate.jsx`'s Available/Wait/Unavailable `stock_status` is one flat global
-column — the screen's own banner says so ("Status is global across all warehouses"). This feature
-only establishes *which products belong to which warehouse*; it does NOT make `stock_status`,
-`WMDashboard.jsx`'s tiles, or the picking flow warehouse-scoped — that would additionally need a way
-to tie a Warehouse Manager user to their own warehouse (a `users.warehouse_id` or similar), and touch
-achievement/picking-quantity logic well beyond this table. A natural next step once this mapping is
-actually populated, not done here.
+**Warehouse-scoping** (the natural follow-on, since built) — `StockUpdate.jsx`, `WMDashboard.jsx`, and
+where an order enters picking are now all genuinely per-warehouse, not just the product↔warehouse
+mapping above.
+
+- **`users.warehouse_id`** ties a Warehouse Manager (`r6`) to exactly one warehouse — set on
+  `Employees.jsx` (a Warehouse dropdown, shown only when `role_id === 'r6'`, forced back to `null` if
+  the role is ever changed away from `r6` so a stale assignment can't linger). A WM with none set sees
+  a clear "not assigned to a warehouse yet" empty state on both screens below, rather than either
+  silently seeing everything or silently seeing nothing.
+- **`product_warehouses.stock_status`/`stock_status_updated_at`/`stock_status_updated_by`** — the same
+  junction row that says "this product is carried here" now also carries its Available/Wait/
+  Unavailable status *at this specific warehouse* (`db.updateProductWarehouseStatus`, an upsert — so
+  setting a status for an unmapped product also maps it, no need to use the Warehouses checklist
+  first). `StockUpdate.jsx` reads/writes this instead of `products.stock_status` directly: a WM sees
+  only their own warehouse's mapped products; Admin gets a warehouse picker (no default warehouse —
+  must choose). **Rolls up into `products.stock_status`** on every change
+  (`rollupStatus` in `StockUpdate.jsx` — most-permissive-wins: Available if any warehouse has it
+  Available, else Wait if any does, else Unavailable) so `DistributorOrder.jsx`'s cart — which has no
+  warehouse concept at all and isn't changed by this — keeps reading a live, correct flat column
+  instead of one that silently froze at whatever it last was. The 3M Issues checklist (Material/
+  Machinery/Manpower, `product_issue_resolutions`) stays global, unchanged, on purpose — a production
+  problem affects every warehouse alike, it isn't a per-warehouse concept.
+- **`distributor_orders.warehouse_id`** — existed in the schema, completely unused, until now. A rep
+  never picks a warehouse when creating an order, so **the one point in the whole pipeline this ever
+  gets decided is Admin's advance-to-picking click** (`OrderApproval.jsx`, `status === 'confirmed'`) —
+  a required warehouse `<select>` now sits right above the "tap to advance" pill;
+  `db.markSubmittedForPicking(orderId, warehouseId)` sets both `status` and `warehouse_id` in the same
+  write. Nothing upstream of this (order creation, Manager/Admin approval) touches warehouse at all.
+- **Both `StockUpdate.jsx`'s Total Picked Qty and every `WMDashboard.jsx` tile** (Ready to Pick,
+  Pending Picking, Picking Complete, Load List) filter to `order.warehouse_id === viewerWarehouseId`
+  — **but an order with `warehouse_id === null` stays visible to every Warehouse Manager**, not
+  hidden. That's the transition safety net: every order already sitting in the picking pipeline
+  before this shipped has no `warehouse_id` (nothing ever set it before), and without this fallback
+  they'd have silently vanished from whoever was still working them the moment this went live. Admin
+  defaults to seeing everything (`viewerWarehouseId = ''`, a no-op filter) with a picker to narrow —
+  same "not full parity, a filter instead" convention as every other Admin rollup in this app.
+- **`warehouses` was promoted into `useData()`'s global context** (previously `Warehouses.jsx` kept its
+  own local copy) — now needed by `OrderApproval.jsx`'s picker, `StockUpdate.jsx`/`WMDashboard.jsx`'s
+  Admin pickers, and `Employees.jsx`'s WM-assignment dropdown, so a local-only fetch stopped making
+  sense. `Warehouses.jsx` itself now reads/writes the global `warehouses`/`setWarehouses` directly
+  rather than a separate `useState`, so a warehouse it creates/edits/deletes is visible everywhere
+  else immediately rather than waiting on the next 60s poll.
+- Verified live end-to-end: assigned the real WM test user a warehouse, mapped a product to it, set
+  that product's status at the warehouse level and confirmed it both persisted to
+  `product_warehouses` and rolled up to `products.stock_status`; advanced a real pending order through
+  Admin's warehouse picker and confirmed `distributor_orders.warehouse_id` was set in the same write
+  as the status transition; logged in as the WM and confirmed the Dashboard's "Orders Ready to Pick"
+  tile picked up exactly that order, and the Load List tile correctly showed all 11 pre-existing
+  (`warehouse_id IS NULL`) loads via the fallback rather than hiding them.
 
 ## Module: Geographical / Maps
 

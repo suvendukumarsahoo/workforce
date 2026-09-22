@@ -274,14 +274,15 @@ export async function deleteWarehouse(id) {
 }
 
 // ─── PRODUCT ↔ WAREHOUSE MAPPING ───────────────────────────────────────────────
-// Which products are stocked at which warehouse — a plain many-to-many junction, no status/qty of
-// its own (that's StockUpdate.jsx's global stock_status, unchanged and out of scope here; this table
-// only answers "is this product carried at this warehouse at all"). Fetched as one flat list and
-// filtered client-side per warehouse (Warehouses.jsx) rather than a per-warehouse query — the table
-// is small (products × warehouses), and nothing else in the app reads it yet, so it isn't worth
-// adding to useData()'s global context alongside the always-loaded tables.
+// Which products are stocked at which warehouse, AND (now that StockUpdate.jsx is warehouse-scoped)
+// that product's own Available/Wait/Unavailable status *at this specific warehouse* — the same row
+// that says "this product is carried here" is what carries its status here, rather than a 3rd table.
+// Fetched as one flat list and filtered client-side per warehouse (Warehouses.jsx/StockUpdate.jsx)
+// rather than a per-warehouse query — the table is small (products × warehouses).
 export async function fetchProductWarehouseMap() {
-  const { data, error } = await supabase.from('product_warehouses').select('product_id, warehouse_id')
+  const { data, error } = await supabase
+    .from('product_warehouses')
+    .select('product_id, warehouse_id, stock_status, stock_status_updated_at, stock_status_updated_by')
   return { data, error }
 }
 
@@ -301,6 +302,22 @@ export async function unmapProductFromWarehouse(productId, warehouseId) {
     .eq('product_id', productId)
     .eq('warehouse_id', warehouseId)
   return { error }
+}
+
+// Sets a product's stock status for one specific warehouse — upserts the mapping row itself (rather
+// than requiring it to already exist via Warehouses.jsx's own checklist first), since setting a
+// status for a product at a warehouse is itself a clear enough signal that the product belongs
+// there. `onConflict` matches the table's own `unique(product_id, warehouse_id)`.
+export async function updateProductWarehouseStatus(productId, warehouseId, status, updatedBy) {
+  const { data, error } = await supabase
+    .from('product_warehouses')
+    .upsert(
+      { product_id: productId, warehouse_id: warehouseId, stock_status: status, stock_status_updated_at: new Date().toISOString(), stock_status_updated_by: updatedBy },
+      { onConflict: 'product_id,warehouse_id' }
+    )
+    .select()
+    .single()
+  return { data, error }
 }
 export async function allocateVehicle(orderIds, vehicleId, warehouseId, driverId) {
   const allocId = 'ALC' + Date.now().toString(36).toUpperCase()
@@ -1477,10 +1494,16 @@ export async function updateOrderStatus(id, updates) {
   const { data, error } = await supabase.from('distributor_orders').update(updates).eq('id', id).select().single()
   return { data, error }
 }
-export async function markSubmittedForPicking(orderId) {
+// warehouseId assigns which warehouse fulfills this order — the one point in the whole pipeline
+// where that gets decided (Admin picks it right here, in OrderApproval.jsx, since a Sales Team rep
+// never chooses one when creating the order and distributor_orders.warehouse_id sat unused/null
+// until this). Existing in-flight orders (already 'submitted_for_picking' from before this shipped)
+// keep warehouse_id null — see WMDashboard.jsx/StockUpdate.jsx's own scoping comment for how a null
+// warehouse_id order stays visible to every Warehouse Manager rather than getting silently orphaned.
+export async function markSubmittedForPicking(orderId, warehouseId) {
   const { data, error } = await supabase
     .from('distributor_orders')
-    .update({ status: 'submitted_for_picking', submitted_for_picking_at: new Date().toISOString() })
+    .update({ status: 'submitted_for_picking', submitted_for_picking_at: new Date().toISOString(), warehouse_id: warehouseId || null })
     .eq('id', orderId)
     .select()
     .single()

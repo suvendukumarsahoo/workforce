@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useAuth } from '../../hooks/useAuth.jsx'
 import { useData } from '../../hooks/useData.jsx'
 import { Card, CH, F, Sheet, Tile } from '../../components/ui.jsx'
 import * as db from '../../lib/db.js'
@@ -6,9 +7,18 @@ import PickingEditSheet from '../../components/PickingEditSheet.jsx'
 import VehicleParkedTile from '../../components/VehicleParkedTile.jsx'
 import LoadingInProgressTile from '../../components/LoadingInProgressTile.jsx'
 
+const selStyle = { padding: '6px 9px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 12, background: '#fff' }
 
 export default function WMDashboard({ onNavigate }) {
-const { products, categories, showToast } = useData()
+const { currentUser, role } = useAuth()
+const { products, categories, warehouses, showToast } = useData()
+  const isAdmin = role?.id === 'r1'
+  const [adminWarehouseId, setAdminWarehouseId] = useState('') // '' = All, Admin's own oversight default
+  // A Warehouse Manager is hard-scoped to their own warehouse (users.warehouse_id, set on
+  // Employees.jsx) — Admin sees everything by default and can narrow with the picker above, since
+  // Admin oversees every warehouse rather than belonging to one (same "not full parity, a filter
+  // instead" convention as every other Admin rollup in this app).
+  const viewerWarehouseId = isAdmin ? adminWarehouseId : (currentUser?.warehouse_id || '')
   const [tab, setTab] = useState('today')
   const [orders, setOrders] = useState([])
   const [loaded, setLoaded] = useState(false)
@@ -59,14 +69,22 @@ const { products, categories, showToast } = useData()
     return d.getMonth() === t.getMonth() && d.getFullYear() === t.getFullYear()
   }
 
-  const relevantOrders = orders.filter(o => tab === 'today' ? isToday(o.order_date) : isThisMonth(o.order_date))
+  // A WM only sees orders/loads assigned to their own warehouse — orders reaching picking from
+  // before this shipped never got a warehouse_id (OrderApproval.jsx's advance-to-picking step is the
+  // one place it's ever set) and stay visible everywhere rather than silently vanishing from
+  // whoever's still working them. Admin's `viewerWarehouseId` is '' by default (the picker above),
+  // so this is a no-op filter for Admin until they narrow it.
+  const scopedOrders = orders.filter(o => !viewerWarehouseId || !o.warehouse_id || o.warehouse_id === viewerWarehouseId)
+  const scopedLoads = loads.filter(o => !viewerWarehouseId || !o.warehouse_id || o.warehouse_id === viewerWarehouseId)
+
+  const relevantOrders = scopedOrders.filter(o => tab === 'today' ? isToday(o.order_date) : isThisMonth(o.order_date))
 
   const categoryName = cid => (categories || []).find(c => c.id === cid)?.name || 'Uncategorized'
   const productName = pid => (products || []).find(p => p.id === pid)?.name || pid
-  const readyToPickOrders = orders.filter(o => (o.picking_status || 'pending_picking') === 'pending_picking')
+  const readyToPickOrders = scopedOrders.filter(o => (o.picking_status || 'pending_picking') === 'pending_picking')
   const readyToPickValue = readyToPickOrders.reduce((s, o) => s + (o.items || []).filter(it => !it.cancelled).reduce((ss, it) => ss + it.rate * it.final_qty, 0), 0)
-  const pendingPickingOrders = orders.filter(o => o.picking_status === 'picking_done')
-  const pickingCompleteOrders = orders.filter(o => o.picking_status === 'ready_for_load' && !o.load_id)
+  const pendingPickingOrders = scopedOrders.filter(o => o.picking_status === 'picking_done')
+  const pickingCompleteOrders = scopedOrders.filter(o => o.picking_status === 'ready_for_load' && !o.load_id)
   const loadQtyVolume = (load) => (load.items || []).filter(it => !it.cancelled).reduce((acc, it) => ({
     qty: acc.qty + it.final_qty,
     volume: acc.volume + (it.volume || 0) * it.final_qty,
@@ -137,16 +155,32 @@ const { products, categories, showToast } = useData()
     return groups
   }
 
+  if (!isAdmin && !viewerWarehouseId) {
+    return (
+      <Card>
+        <div style={{ textAlign: 'center', padding: 30, color: '#9ca3af', fontSize: 13 }}>
+          You're not assigned to a warehouse yet — ask an Admin to set it on your profile (Employees screen).
+        </div>
+      </Card>
+    )
+  }
+
   return (
     <div>
-      <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 14, alignItems: 'center', flexWrap: 'wrap' }}>
         <button onClick={() => setTab('today')} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: tab === 'today' ? '#2563eb' : '#f3f4f6', color: tab === 'today' ? '#fff' : '#374151', fontWeight: 600, cursor: 'pointer' }}>Today</button>
         <button onClick={() => setTab('monthly')} style={{ padding: '8px 16px', borderRadius: 8, border: 'none', background: tab === 'monthly' ? '#2563eb' : '#f3f4f6', color: tab === 'monthly' ? '#fff' : '#374151', fontWeight: 600, cursor: 'pointer' }}>Monthly</button>
+        {isAdmin && (
+          <select value={adminWarehouseId} onChange={e => setAdminWarehouseId(e.target.value)} style={{ ...selStyle, marginLeft: 'auto' }}>
+            <option value="">All warehouses</option>
+            {(warehouses || []).map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
+          </select>
+        )}
       </div>
 <Tile icon="📦" label="Orders Ready to Pick" value={readyToPickOrders.length} sub={F(readyToPickValue)} color="#2563eb" onClick={() => setShowReadyToPick(true)} />
   <Tile icon="🔧" label="Pending Picking" value={pendingPickingOrders.length} sub="Waiting for Admin" color="#f59e0b" onClick={() => setShowPendingPicking(true)} />
         <Tile icon="✅" label="Picking Complete" value={pickingCompleteOrders.length} sub="Waiting for Admin" color="#10b981" onClick={() => setShowPickingComplete(true)} />
-<Tile icon="🚛" label="Load List" value={loads.length} sub="Tap to view" color="#0891b2" onClick={() => setSelectedLoad('list')} />
+<Tile icon="🚛" label="Load List" value={scopedLoads.length} sub="Tap to view" color="#0891b2" onClick={() => setSelectedLoad('list')} />
 <VehicleParkedTile /><LoadingInProgressTile />
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 10, marginBottom: 16 }}>
         <Tile icon="📥" label="Orders Received" value={orderReceived.count} sub={F(orderReceived.value)} color="#2563eb" />
@@ -208,9 +242,9 @@ const { products, categories, showToast } = useData()
         </Sheet>
       )}
       {selectedLoad === 'list' && (
-        <Sheet title="Load List" sub={`${loads.length} load(s)`} onClose={() => setSelectedLoad(null)}>
-          {loads.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No loads created yet</div>}
-          {loads.map(l => {
+        <Sheet title="Load List" sub={`${scopedLoads.length} load(s)`} onClose={() => setSelectedLoad(null)}>
+          {scopedLoads.length === 0 && <div style={{ textAlign: 'center', padding: 20, color: '#9ca3af', fontSize: 13 }}>No loads created yet</div>}
+          {scopedLoads.map(l => {
             const qv = loadQtyVolume(l)
             const status = loadStatus(l)
             return (
