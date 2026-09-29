@@ -1048,6 +1048,19 @@ next to the existing Invoice download) — used by both `OrderApproval.jsx`'s Co
 existing Invoice PDF button (only appears once an invoice exists), this is available at any stage of
 the order. Quantity shown is `final_qty` once picking has actually started, `order_qty` before that
 — same "best known quantity so far" convention `OrderFullDetail.jsx`'s own Items table already uses.
+Header block also shows `getOrderStageLabel(order)` (`src/components/orderStageLabel.js`, the
+already-shared cross-role stage function — see Journey Phase 1 above — reused as-is rather than a
+new PDF-only status mapping) and `order_date` with full date+time (`toLocaleString`, not just the
+date). The items table's totals row sums Qty alongside Value (mismatched-unit summing isn't a
+concern here the way it was for the Stock/Order Reports elsewhere in this app, since a Distributor
+Order's own on-screen equivalent, `OrderApproval.jsx`'s `grandTotal`, already sums qty the same way
+across an order regardless of product mix — this mirrors that existing convention rather than
+introducing a new one). Below it, a **Category Summary** — one row per category, qty + value —
+exactly mirroring `OrderApproval.jsx`'s own `categorySummary`/`categoryName` shape for the identical
+order data, just added to the PDF too; `categoryName` is passed in from `OrderFullDetail.jsx`
+(`useData()`'s `categories`, resolved the same "Uncategorized" fallback way `OrderApproval.jsx`
+resolves it). No pagination handling (same as every other `print*.js` file in this app) — a very
+large order's category summary could in principle run off the page, not handled.
 
 ## Module: Geographical / Maps
 
