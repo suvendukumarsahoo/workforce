@@ -21,6 +21,7 @@ const ALL_MENUS = [
   { id:'employees',     label:'Employees'        },
   { id:'payroll',       label:'Payroll'          },
   { id:'settings',      label:'Settings'         },
+  { id:'organizationSetup', label:'Organization Setup' },
   { id:'myGoals',       label:'My Goals'         },
   { id:'myExpenses',    label:'My Expenses'      },
   { id:'myAttendance',  label:'My Attendance'    },

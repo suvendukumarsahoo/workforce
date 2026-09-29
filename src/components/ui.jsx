@@ -139,7 +139,7 @@ export const Btn = ({ children, onClick, v = 'def', sm, full, disabled, style })
 )
 
 // ─── INPUT / SELECT ───────────────────────────────────────────────────────────
-export const Inp = ({ label, value, onChange, type = 'text', placeholder, options, helper, req, style }) => (
+export const Inp = ({ label, value, onChange, type = 'text', placeholder, options, helper, req, style, disabled }) => (
   <div style={{ marginBottom: 12 }}>
     {label && (
       <label style={{ fontSize: 11, fontWeight: 600, color: '#374151', display: 'block', marginBottom: 4 }}>
@@ -151,7 +151,8 @@ export const Inp = ({ label, value, onChange, type = 'text', placeholder, option
         <select
           value={value || ''}
           onChange={e => onChange(e.target.value)}
-          style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 13, fontFamily: 'inherit', background: '#fff', ...style }}
+          disabled={disabled}
+          style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 13, fontFamily: 'inherit', background: disabled ? '#f3f4f6' : '#fff', ...style }}
         >
           {options.map(o => <option key={o.value ?? o} value={o.value ?? o}>{o.label ?? o}</option>)}
         </select>
@@ -161,7 +162,8 @@ export const Inp = ({ label, value, onChange, type = 'text', placeholder, option
           value={value || ''}
           onChange={e => onChange(e.target.value)}
           placeholder={placeholder}
-          style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', ...style }}
+          disabled={disabled}
+          style={{ width: '100%', padding: '9px 10px', borderRadius: 8, border: '1px solid #e5e7eb', fontSize: 13, fontFamily: 'inherit', boxSizing: 'border-box', background: disabled ? '#f3f4f6' : '#fff', ...style }}
         />
       )
     }

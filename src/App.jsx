@@ -7,6 +7,7 @@ import TeamApp from './pages/team/TeamApp.jsx'
 import WebApp from './pages/WebApp.jsx'
 import PunchInGate from './components/PunchInGate.jsx'
 import CelebrationOverlay from './components/CelebrationOverlay.jsx'
+import ForcePasswordChange from './components/ForcePasswordChange.jsx'
 
 export default function App() {
   const { currentUser, loading: authLoading } = useAuth()
@@ -30,6 +31,18 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
+        {toast && <Toast msg={toast} />}
+      </>
+    )
+  }
+
+  // A brand-new account (created via Employees.jsx) or one Admin just reset must set their own
+  // password before reaching anything else — checked here, above PunchInGate, since the account
+  // isn't trusted with a temp password floating around until this is done.
+  if (currentUser.must_change_password) {
+    return (
+      <>
+        <ForcePasswordChange />
         {toast && <Toast msg={toast} />}
       </>
     )

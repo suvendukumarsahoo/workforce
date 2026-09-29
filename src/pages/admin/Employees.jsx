@@ -8,6 +8,11 @@ export default function Employees() {
   const { can } = useAuth()
   const { users, setUsers, roles, warehouses, showToast } = useData()
   const [sheet, setSheet] = useState(null)
+  const [busy, setBusy] = useState(false)
+  // Set right after a create/reset succeeds — the ONE time the temp password is ever shown, never
+  // stored in plaintext anywhere (not in this component's state after the Sheet closes, not in the
+  // DB — the Edge Function generates it and hands it back once, that's it).
+  const [tempPasswordFor, setTempPasswordFor] = useState(null) // { name, tempPassword }
 
   const cols = [
     { key: 'name', label: 'Name', render: r => (
@@ -24,6 +29,9 @@ export default function Employees() {
       return role ? <span style={{ background: role.color + '22', color: role.color, borderRadius: 20, padding: '2px 8px', fontSize: 11, fontWeight: 600 }}>{role.name}</span> : null
     }},
     { key: 'member_id', label: 'Member ID', render: r => r.member_id || '—' },
+    { key: 'resetPw', label: '', render: r => (
+      <Btn sm disabled={busy} onClick={() => resetPassword(r)}>🔑 Reset Password</Btn>
+    ) },
   ]
 
   const save = async (d) => {
@@ -41,20 +49,48 @@ export default function Employees() {
       const { error } = await db.updateUser(sheet.id, payload)
       if (error) { showToast('Error saving user'); return }
       setUsers(prev => prev.map(x => x.id === sheet.id ? { ...x, ...payload } : x))
+      setSheet(null)
+      showToast('User updated')
     } else {
-      const { error } = await db.createUser({ ...payload, password: d.password })
+      setBusy(true)
+      const { data, error } = await db.createUser(payload)
+      setBusy(false)
       if (error) { showToast('Error creating user: ' + error.message); return }
-      setUsers(prev => [...prev, { ...payload, id: Date.now() }])
+      setUsers(prev => [...prev, data])
+      setSheet(null)
+      setTempPasswordFor({ name: data.name, tempPassword: data.tempPassword })
     }
-    setSheet(null)
-    showToast(sheet?.id ? 'User updated' : 'User added')
+  }
+
+  const resetPassword = async (user) => {
+    setBusy(true)
+    const { data, error } = await db.resetUserPassword(user.auth_id)
+    if (!error) await db.updateUser(user.id, { must_change_password: true })
+    setBusy(false)
+    if (error) { showToast('Error resetting password: ' + error.message); return }
+    setUsers(prev => prev.map(x => x.id === user.id ? { ...x, must_change_password: true } : x))
+    setTempPasswordFor({ name: user.name, tempPassword: data.tempPassword })
   }
 
   return (
     <div>
       {sheet !== null && (
         <Sheet title={sheet?.id ? 'Edit user' : 'Add user'} onClose={() => setSheet(null)}>
-          <UserForm init={sheet?.id ? sheet : {}} roles={roles} users={users} warehouses={warehouses} onSave={save} onClose={() => setSheet(null)} isEdit={!!sheet?.id} />
+          <UserForm init={sheet?.id ? sheet : {}} roles={roles} users={users} warehouses={warehouses} onSave={save} onClose={() => setSheet(null)} isEdit={!!sheet?.id} busy={busy} />
+        </Sheet>
+      )}
+      {tempPasswordFor && (
+        <Sheet title="Temporary Password" sub={`For ${tempPasswordFor.name} — share this with them now, it won't be shown again`} onClose={() => setTempPasswordFor(null)}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+            <div style={{ flex: 1, padding: '12px 14px', borderRadius: 8, border: '1px solid #e5e7eb', background: '#f9fafb', fontSize: 18, fontWeight: 700, fontFamily: 'monospace', letterSpacing: 1, textAlign: 'center' }}>
+              {tempPasswordFor.tempPassword}
+            </div>
+            <Btn sm onClick={() => navigator.clipboard?.writeText(tempPasswordFor.tempPassword).then(() => showToast('Copied'))}>📋 Copy</Btn>
+          </div>
+          <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 16 }}>
+            They'll be forced to set their own password the moment they log in with this one.
+          </div>
+          <Btn v="pri" full onClick={() => setTempPasswordFor(null)}>Done</Btn>
         </Sheet>
       )}
       <CrudTable
@@ -71,7 +107,7 @@ export default function Employees() {
   )
 }
 
-function UserForm({ init, roles, users, warehouses, onSave, onClose, isEdit }) {
+function UserForm({ init, roles, users, warehouses, onSave, onClose, isEdit, busy }) {
   const [d, setD] = useState({ ...init })
   const [locBusy, setLocBusy] = useState(false)
   const set = (k, v) => setD(x => ({ ...x, [k]: v }))
@@ -90,7 +126,11 @@ function UserForm({ init, roles, users, warehouses, onSave, onClose, isEdit }) {
     <>
       <Inp label="Full name" value={d.name} onChange={v => set('name', v)} req />
       <Inp label="Email address" value={d.email} onChange={v => set('email', v)} req />
-      {!isEdit && <Inp label="Password" type="password" value={d.password} onChange={v => set('password', v)} req />}
+      {!isEdit && (
+        <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 12, marginTop: -6 }}>
+          A temporary password is generated automatically once you save — you'll see it on screen to share with them.
+        </div>
+      )}
       <Inp label="Role" value={d.role_id} onChange={v => set('role_id', v)} options={[{ value: '', label: 'Select role...' }, ...(roles || []).map(r => ({ value: r.id, label: r.name }))]} />
       <Inp label="Member ID (for Sales Team only)" value={d.member_id || ''} onChange={v => set('member_id', v)} type="number" ph="Leave blank for non-sales staff" />
       {d.role_id === 'r6' && (
@@ -116,7 +156,7 @@ function UserForm({ init, roles, users, warehouses, onSave, onClose, isEdit }) {
       <Inp label="Reporting Manager" value={d.manager_id || ''} onChange={v => set('manager_id', v)} options={[{ value: '', label: 'None' }, ...managers.map(m => ({ value: m.id, label: m.name }))]} helper="Used to route Late Present / Half Day waiver approvals to the right Manager" />
 
       <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-        <Btn v="pri" full onClick={() => onSave(d)}>Save</Btn>
+        <Btn v="pri" full disabled={busy} onClick={() => onSave(d)}>{busy ? 'Saving...' : 'Save'}</Btn>
         <Btn full onClick={onClose}>Cancel</Btn>
       </div>
     </>

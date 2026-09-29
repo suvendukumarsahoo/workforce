@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import * as XLSX from 'xlsx'
+import { fetchOrgForPdf, drawOrgHeaderJsPdf } from './printOrgHeader.js'
 
 // PDF/Excel export for the Distributor Secondary Order Report (Summary + Detail tabs) — this
 // app's first genuine multi-row/multi-column TABLE export. Every existing PDF here
@@ -8,21 +9,23 @@ import * as XLSX from 'xlsx'
 // small, bounded number of rows via jsPDF's own text()/line() calls; a filtered report can run to
 // many rows, so this uses jsPDF's official `jspdf-autotable` plugin for automatic pagination
 // instead — first use of that plugin in this app, same "first X" flag as recharts/jspdf/jszip.
-// `columns`: [{ header, key }]. `rows`: plain objects keyed by `key`.
+// `columns`: [{ header, key }]. `rows`: plain objects keyed by `key`. `org` (printOrgHeader.js) is a
+// param, not fetched in here — downloadReportPdf below fetches it once and passes it through, same
+// reasoning as printSecondaryOrder.js's batch builder.
 
-export function buildReportPdf({ title, sub, columns, rows }) {
+export function buildReportPdf({ title, sub, columns, rows, org }) {
   const doc = new jsPDF({ orientation: columns.length > 6 ? 'landscape' : 'portrait' })
 
-  doc.setFontSize(16)
-  doc.text('WorkForce', 14, 18)
+  const headerY = drawOrgHeaderJsPdf(doc, org, 14, 18)
+  const offset = headerY - 18
   doc.setFontSize(10)
   doc.setTextColor(107, 114, 128)
-  doc.text(title, 14, 24)
-  if (sub) doc.text(sub, 14, 29)
+  doc.text(title, 14, 24 + offset)
+  if (sub) doc.text(sub, 14, 29 + offset)
   doc.setTextColor(17, 24, 39)
 
   autoTable(doc, {
-    startY: sub ? 36 : 32,
+    startY: (sub ? 36 : 32) + offset,
     head: [columns.map(c => c.header)],
     body: rows.map(r => columns.map(c => r[c.key] ?? '')),
     styles: { fontSize: 8 },
@@ -32,8 +35,9 @@ export function buildReportPdf({ title, sub, columns, rows }) {
   return doc
 }
 
-export function downloadReportPdf({ filename, ...args }) {
-  buildReportPdf(args).save(filename)
+export async function downloadReportPdf({ filename, ...args }) {
+  const org = await fetchOrgForPdf()
+  buildReportPdf({ ...args, org }).save(filename)
 }
 
 export function downloadReportExcel({ filename, sheetName, columns, rows }) {

@@ -859,6 +859,58 @@ screens — explicit follow-up, not started.
 Limit, Duty Reporting Time, and Reporting Manager (`manager_id`) fields. No cycle-guard on
 `manager_id` (a Manager could be assigned as their own report) — low risk, not defended against.
 
+**User creation / password management** — `createUser()` used to call `auth.admin.createUser()`
+directly from the browser and simply failed "User not allowed" for every single new employee, since
+that call needs the `service_role` key, which must never reach client code. The documented
+workaround (manually creating every employee via the Supabase Dashboard) is gone — this now actually
+works from the app.
+
+**`supabase/functions/admin-user-ops`** (Deno Edge Function, deployed separately via the Supabase
+CLI, not part of the Vite build) is the one place the `service_role` key exists at all — auto-
+injected by the Edge Functions runtime as `SUPABASE_SERVICE_ROLE_KEY`, nothing manually configured.
+Two actions, both admin-only (verifies the caller's own JWT resolves to a `users` row with
+`role_id === 'r1'` via a service_role client, *before* doing anything privileged — a non-Admin's
+request 403s regardless of what the request body claims):
+- `create` — `auth.admin.createUser({ email, password: <generated>, email_confirm: true })`, no
+  email-confirmation flow, no email infrastructure needed at all. Generates its own temp password
+  (excludes visually-ambiguous characters — `0`/`O`, `1`/`I`/`l` — since it's meant to be read off a
+  screen and relayed, not copy-pasted) and returns it once.
+- `reset_password` — `auth.admin.updateUserById(authId, { password: <generated> })`. This is the
+  action that's flatly impossible from the browser with only the anon key, full stop — Supabase Auth
+  deliberately never lets one account overwrite another's password without either `service_role` or
+  the target completing an email link themselves. This function is what makes "Admin resets
+  someone's password" possible at all, not a workaround around a browser limitation.
+
+`db.js`'s `createUser()`/`resetUserPassword()` call this via `supabase.functions.invoke()` (which
+forwards the caller's session JWT automatically — no manual header wiring needed client-side), then
+do the ordinary `users` table insert/update themselves (the Edge Function only ever touches Auth, never
+the `users` table). Neither the temp password nor any password is ever stored in plaintext anywhere
+— the function generates and returns it once, `Employees.jsx` shows it on screen in a dismissible
+Sheet (with a copy button) and never persists it, not even in component state after the Sheet closes.
+
+**`users.must_change_password`** (boolean, defaults `false`) — set `true` by both `createUser()` (a
+brand-new account) and `resetUserPassword()` (an existing one, right after the reset). Checked in
+`App.jsx`, above `PunchInGate` — an account isn't trusted to reach anything else, including the
+attendance punch-in gate, while a temp password is still live. **`ForcePasswordChange.jsx`** is the
+full-screen blocking form shown in that case (same wrap/card style convention as
+`PunchInGate.jsx`'s own blocking screens) — `db.changeOwnPassword()` wraps
+`supabase.auth.updateUser({ password })`, the one password operation that's genuinely self-service
+(the currently-signed-in user changing their own password needs no elevated privilege at all, unlike
+creating a user or resetting someone *else's* password). On success it clears the flag and calls
+`useAuth.jsx`'s new `refreshCurrentUser()` (re-fetches the `users` row for the already-signed-in
+session without touching `loading`, same silent-refresh shape as the existing `TOKEN_REFRESHED`
+path) so the gate in `App.jsx` sees the cleared flag immediately rather than waiting on the next
+natural auth event.
+
+**Deploying/updating the Edge Function** (needed once now, and again any time
+`supabase/functions/admin-user-ops/index.ts` changes — not part of `npm run build`/Vercel's deploy,
+a separate step):
+```bash
+npx supabase login
+npx supabase link --project-ref yvtgpwibrycdnvpmrccm
+npx supabase functions deploy admin-user-ops
+```
+
 ## Module: Warehouse — Daily Stock Update / Production Issues (3M)
 
 **`StockUpdate.jsx`** (WM-only, menu `stockUpdate`) — every product, grouped by category, WM sets
@@ -938,6 +990,61 @@ mapping above.
   tile picked up exactly that order, and the Load List tile correctly showed all 11 pre-existing
   (`warehouse_id IS NULL`) loads via the fallback rather than hiding them.
 
+## Module: Organization Setup
+
+**`OrganizationSetup.jsx`** (menu id `organizationSetup`, section `Admin`, right next to `Settings`)
+— the company's own profile: legal/trade name, registered address, statutory details (GSTIN, PAN,
+CIN/LLPIN, TAN), contact info. `organization` table is a genuine **singleton** — always `id=1`,
+seeded once by the schema migration (`insert into organization (id) values (1)`), no create/delete
+anywhere, `db.fetchOrganization()`/`updateOrganization()` always target that one row. First singleton-
+shaped config table in this app; any future one should follow the same "always update the one seeded
+row" convention rather than a list-of-rows CRUD pattern.
+
+`Inp` (`ui.jsx`) gained a `disabled` prop as part of building this page's read-only fallback (for a
+role with menu access but no `can('edit')`) — previously accepted but silently ignored, so passing it
+anywhere did nothing; now genuinely disables the underlying `<input>`/`<select>` (and dims its
+background) when true. Every existing call site is unaffected (nothing passed it before).
+
+**Wired into every PDF export** (`src/lib/printOrgHeader.js`) — every `print*.js` file's hardcoded
+`"WorkForce"` header now shows the real `legal_name`/address/GSTIN/PAN from this table, falling back
+to plain `"WorkForce"` (no address/statutory line, zero layout shift) when the profile is still
+empty — a missing company profile must never block or visually break a PDF/print action.
+`fetchOrgForPdf()` does one small fetch (the `organization` table has exactly one row) and
+`orgHeaderLines(org)` is the single place that decides which fields to show and in what order, so
+the jsPDF renderers (`drawOrgHeaderJsPdf`) and the HTML/`window.print()` renderers
+(`orgHeaderHtml`) can't drift out of sync with each other despite using completely different
+drawing mechanics.
+
+- **Fetched once per export, not per call site** — every `build*Pdf` function takes `org` as a plain
+  param (stays synchronous); only the exported `download*`/`print*` entry points became `async` and
+  fetch it. `printSecondaryOrder.js`'s batch ZIP (many orders, one export click) fetches once and
+  passes the same `org` into every individual order's builder, not once per order in the loop.
+- **`printInvoice.js`/`printJourney.js` (window.open-based) call `window.open('', '_blank')`
+  synchronously, before any `await`** — some browsers only allow `window.open` as a direct
+  consequence of the click that triggered it; awaiting the org fetch first would risk the popup
+  getting blocked. The org fetch, and everything else, happens after the window already exists.
+- **jsPDF renderers preserve every existing hand-positioned layout exactly** when org is empty —
+  `drawOrgHeaderJsPdf` returns the Y position its own block ended on, and every subsequent
+  hardcoded-Y line in that file (`printDaySummary.js`/`printSecondaryOrder.js`/
+  `printSecondaryReport.js`/the new `printDistributorOrder.js` below) adds `headerY - 18` to its own
+  Y instead of being rewritten — 0 when org is empty (pixel-identical to before this existed), a
+  small positive shift once address/GSTIN lines are actually present.
+- Verified live: filled in real org details, downloaded a jsPDF report export and the new
+  Distributor Order PDF below, extracted their text with `pdftotext` and confirmed the real legal
+  name/address/GSTIN appear with no overlapping/broken layout; screenshotted the Invoice's
+  `window.print()` popup and confirmed the same; cleared org details back to empty and re-verified
+  the Distributor Order PDF falls back to plain `"WorkForce"` with identical spacing.
+
+**`printDistributorOrder.js`** (new) — the primary Distributor Order pipeline (`distributor_orders`)
+never had its own PDF at all; only the separate Distributor Secondary cart-based orders did
+(`printSecondaryOrder.js`). Same purchase-order-style layout (header/meta block + line-items table +
+total), reachable from `OrderFullDetail.jsx`'s "⬇ Order PDF" button (its "Distributor Details" card,
+next to the existing Invoice download) — used by both `OrderApproval.jsx`'s Completed Picklist and
+`OrderStatus.jsx` across all 4 roles, since both already share this same component. Unlike the
+existing Invoice PDF button (only appears once an invoice exists), this is available at any stage of
+the order. Quantity shown is `final_qty` once picking has actually started, `order_qty` before that
+— same "best known quantity so far" convention `OrderFullDetail.jsx`'s own Items table already uses.
+
 ## Module: Geographical / Maps
 
 **`DistributorPresenceMap.jsx`** (menu `geoBusinessView`, "Geographical Business View," standalone
@@ -1005,23 +1112,6 @@ showed a real 4) before shipping.
   `distributor_celebrations` table instead, see above) — not fixed as part of that work, since it's
   unrelated in scope. Needs either a migration to add the columns the code expects, or a rewrite of
   the code to match the live schema.
-- **`createUser()` needs a `service_role` key** — client-side `auth.admin.createUser()` fails "User
-  not allowed" for every new employee. Real fix = Edge Function, parked. Manual workaround, every
-  new employee:
-  1. Supabase Dashboard → Authentication → Users → **Add user** → email + password → check "Auto
-     Confirm User" → copy the generated **User UID**.
-  2. If Sales Team (`r5`) or Driver (`r7`), first create their `members` row (Table Editor →
-     `members` → `name`/`avatar`/`color`; `manager_id` can be set later) — every other role skips
-     this, `member_id` stays `NULL`.
-  3. Insert the `users` row:
-     ```sql
-     insert into users (name, email, role_id, member_id, avatar, color, auth_id)
-     values ('Full Name', 'email@example.com', 'r5', 123, 'AN', '#3b82f6', 'paste-the-auth-uid-here');
-     -- role_id: r1 Admin, r2 Manager, r3 Accounts, r4 HR, r5 Sales Team, r6 Warehouse Manager, r7 Driver
-     -- member_id: members.id from step 2, or NULL if not sales/driver
-     ```
-     Optional (Attendance): `hq_latitude`, `hq_longitude`, `duty_start_time`, `allowed_deviation_m`
-     (defaults to 20). They can log in immediately with the step-1 email/password once this row exists.
 - **Members/driver master has no create/edit UI** — `members` rows created directly in Supabase;
   `createMember`/`updateMember`/`deleteMember` in `db.js` are unused. Deferred.
 - **POD photo upload** — needs a new Supabase Storage bucket (first use of Storage in this app),

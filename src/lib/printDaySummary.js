@@ -1,4 +1,5 @@
 import { jsPDF } from 'jspdf'
+import { fetchOrgForPdf, drawOrgHeaderJsPdf } from './printOrgHeader.js'
 
 // Same jsPDF text/line-call pattern as printSecondaryOrder.js — a real downloadable PDF, not a
 // window.print() dialog, since this needs to work as a standalone "receipt" for a completed day's
@@ -6,7 +7,7 @@ import { jsPDF } from 'jspdf'
 // built-in fonts don't reliably render the ₹ glyph.
 const F = n => 'Rs ' + Number(n || 0).toLocaleString('en-IN')
 
-export function buildDaySummaryPdf({ summary, visits, orders, productName }) {
+export function buildDaySummaryPdf({ summary, visits, orders, productName, org }) {
   const noOrderVisits = (visits || []).filter(v => v.outcome === 'no_order')
   const orderValue = o => (o.items || []).reduce((s, it) => s + (Number(it.qty) || 0) * (Number(it.rate) || 0), 0)
 
@@ -24,19 +25,19 @@ export function buildDaySummaryPdf({ summary, visits, orders, productName }) {
 
   const doc = new jsPDF()
 
-  doc.setFontSize(16)
-  doc.text('WorkForce', 14, 18)
+  const headerY = drawOrgHeaderJsPdf(doc, org, 14, 18)
+  const offset = headerY - 18
   doc.setFontSize(10)
   doc.setTextColor(107, 114, 128)
-  doc.text('Day Summary — Retailing Complete', 14, 24)
+  doc.text('Day Summary — Retailing Complete', 14, 24 + offset)
   doc.setTextColor(17, 24, 39)
 
   doc.setFontSize(10)
-  doc.text(`Summary ID: ${summary.id}`, 14, 36)
-  doc.text(`Date: ${summary.summary_date}`, 14, 42)
-  doc.text(`Generated: ${new Date(summary.created_at).toLocaleString('en-IN')}`, 120, 36)
+  doc.text(`Summary ID: ${summary.id}`, 14, 36 + offset)
+  doc.text(`Date: ${summary.summary_date}`, 14, 42 + offset)
+  doc.text(`Generated: ${new Date(summary.created_at).toLocaleString('en-IN')}`, 120, 36 + offset)
 
-  let y = 56
+  let y = 56 + offset
   doc.setFontSize(9)
   doc.setFont('helvetica', 'bold')
   doc.text('Outlet-wise', 14, y)
@@ -92,6 +93,7 @@ export function buildDaySummaryPdf({ summary, visits, orders, productName }) {
   return doc
 }
 
-export function downloadDaySummaryPdf(args) {
-  buildDaySummaryPdf(args).save(`DaySummary-${args.summary.id}.pdf`)
+export async function downloadDaySummaryPdf(args) {
+  const org = await fetchOrgForPdf()
+  buildDaySummaryPdf({ ...args, org }).save(`DaySummary-${args.summary.id}.pdf`)
 }

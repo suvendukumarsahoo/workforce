@@ -3,6 +3,7 @@ import { Card, CH, Btn, Sheet, F } from './ui.jsx'
 import OrderTimeline from './OrderTimeline.jsx'
 import * as db from '../lib/db.js'
 import { printInvoice } from '../lib/printInvoice.js'
+import { downloadDistributorOrderPdf } from '../lib/printDistributorOrder.js'
 
 export default function OrderFullDetail({ order, payment, products, canCreateLoad = false, onClose, onChanged }) {  const [busy, setBusy] = useState(false)
   const productName = pid => (products || []).find(p => p.id === pid)?.name || pid
@@ -73,7 +74,9 @@ const [loadedQtyMap, setLoadedQtyMap] = useState({})
       </Card>
 
       <Card>
-        <CH title="Distributor Details" />
+        <CH title="Distributor Details" right={
+          <Btn sm onClick={() => downloadDistributorOrderPdf({ order, productName })}>⬇ Order PDF</Btn>
+        } />
         <div style={{ padding: 14, fontSize: 12 }}>
           <div><strong>{order.distributor?.name}</strong></div>
           <div>{order.distributor?.area}{order.distributor?.town ? `, ${order.distributor.town}` : ''}</div>

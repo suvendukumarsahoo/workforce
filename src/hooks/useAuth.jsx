@@ -51,6 +51,14 @@ export function AuthProvider({ children }) {
     return { data, error }
   }
 
+  // Re-fetches the `users` row for the already-signed-in session, without touching `loading` (same
+  // silent-refresh shape as the TOKEN_REFRESHED path above) — used after ForcePasswordChange.jsx
+  // clears must_change_password, so the gate in App.jsx sees the updated flag immediately instead of
+  // waiting on the next natural auth event.
+  async function refreshCurrentUser() {
+    if (session?.user) await loadUser(session.user.id)
+  }
+
   async function logout() {
     await signOut()
     setCurrentUser(null)
@@ -66,7 +74,7 @@ export function AuthProvider({ children }) {
   const memberId  = currentUser?.member_id || null
 
   return (
-    <AuthContext.Provider value={{ session, currentUser, loading, login, logout, role, menus, can, hasMenu, isTeam, memberId }}>
+    <AuthContext.Provider value={{ session, currentUser, loading, login, logout, role, menus, can, hasMenu, isTeam, memberId, refreshCurrentUser }}>
       {children}
     </AuthContext.Provider>
   )

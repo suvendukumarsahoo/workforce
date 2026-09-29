@@ -20,6 +20,7 @@ import AttendanceRules from './shared/AttendanceRules.jsx'
 import Employees     from './admin/Employees.jsx'
 import Payroll       from './shared/Payroll.jsx'
 import Settings      from './admin/Settings.jsx'
+import OrganizationSetup from './admin/OrganizationSetup.jsx'
 import NewCustomerVisit from './shared/NewCustomerVisit.jsx'
 import DistributorApproval from './manager/DistributorApproval.jsx'
 import DistributorOrder from './shared/DistributorOrder.jsx'
@@ -63,6 +64,7 @@ const ALL_MENUS = [
   { id:'employees',     label:'Employees',        icon:'👥', sec:'HR Functions' },
   { id:'payroll',       label:'Payroll',          icon:'💰', sec:'HR Functions' },
   { id:'settings',      label:'Settings',         icon:'🔧', sec:'Admin'     },
+  { id:'organizationSetup', label:'Organization Setup', icon:'🏢', sec:'Admin' },
   { id:'newCustomerVisit', label:'New Customer Visit', icon:'🚶', sec:'Distributor Functions' },
   { id:'distributorApproval', label:'New Distributor Approval', icon:'📋', sec:'Distributor Functions' },
   { id:'distributorOrder', label:'Distributor Order', icon:'🛒', sec:'Distributor Functions' },
@@ -107,6 +109,7 @@ const PAGE_MAP = {
   employees:     Employees,
   payroll:       Payroll,
   settings:      Settings,
+  organizationSetup: OrganizationSetup,
   newCustomerVisit: NewCustomerVisit,
   distributorApproval: DistributorApproval,
   distributorOrder: DistributorOrder,

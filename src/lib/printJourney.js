@@ -1,6 +1,12 @@
 import { fmtTs, fmtDur, buildJourneyEvents, journeySummary } from './journeyTimeline.js'
+import { fetchOrgForPdf, orgHeaderHtml } from './printOrgHeader.js'
 
-export function printJourneyReport({ allocation, orders, totalQtyLoaded, approvedBy, remarks }) {
+// Opens the popup window synchronously, before any `await` — same reasoning as printInvoice.js.
+export async function printJourneyReport({ allocation, orders, totalQtyLoaded, approvedBy, remarks }) {
+  const w = window.open('', '_blank')
+  if (!w) return
+  const org = await fetchOrgForPdf()
+
   const events = buildJourneyEvents(allocation, orders || [])
   const summary = journeySummary(allocation, orders || [])
 
@@ -34,6 +40,7 @@ export function printJourneyReport({ allocation, orders, totalQtyLoaded, approve
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111827; padding: 32px; }
         h1 { font-size: 20px; margin: 0 0 4px; }
         .sub { color: #6b7280; font-size: 12px; margin-bottom: 20px; }
+        .org-address, .org-statutory { color: #6b7280; font-size: 11px; margin: 0 0 2px; }
         .meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; font-size: 12px; margin-bottom: 20px; }
         .meta div span { color: #6b7280; }
         table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 20px; }
@@ -46,7 +53,7 @@ export function printJourneyReport({ allocation, orders, totalQtyLoaded, approve
       </style>
     </head>
     <body>
-      <h1>WorkForce</h1>
+      ${orgHeaderHtml(org)}
       <div class="sub">Driver Journey Report — Allocation ${allocation.id}</div>
       <div class="meta">
         <div><span>Driver:</span> ${allocation.driver?.name || '—'}</div>
@@ -75,8 +82,6 @@ export function printJourneyReport({ allocation, orders, totalQtyLoaded, approve
     </html>
   `
 
-  const w = window.open('', '_blank')
-  if (!w) return
   w.document.write(html)
   w.document.close()
   setTimeout(() => w.print(), 300)

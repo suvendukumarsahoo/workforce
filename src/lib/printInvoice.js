@@ -1,6 +1,15 @@
+import { fetchOrgForPdf, orgHeaderHtml } from './printOrgHeader.js'
+
 const F = n => '₹' + Number(n || 0).toLocaleString('en-IN')
 
-export function printInvoice({ invoice, distributorName, memberName, productName }) {
+// Opens the popup window synchronously, before any `await` — some browsers only allow
+// `window.open` as a direct, synchronous consequence of the click that triggered this, so the org
+// fetch below has to happen after the window already exists, not before.
+export async function printInvoice({ invoice, distributorName, memberName, productName }) {
+  const w = window.open('', '_blank')
+  if (!w) return
+  const org = await fetchOrgForPdf()
+
   const lines = invoice.lines || invoice.invoice_lines || []
   const total = lines.reduce((s, l) => s + l.qty * l.rate, 0)
 
@@ -23,6 +32,7 @@ export function printInvoice({ invoice, distributorName, memberName, productName
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #111827; padding: 32px; }
         h1 { font-size: 20px; margin: 0 0 4px; }
         .sub { color: #6b7280; font-size: 12px; margin-bottom: 24px; }
+        .org-address, .org-statutory { color: #6b7280; font-size: 11px; margin: 0 0 2px; }
         .meta { display: flex; justify-content: space-between; margin-bottom: 24px; font-size: 13px; }
         table { width: 100%; border-collapse: collapse; font-size: 13px; }
         th { text-align: left; border-bottom: 2px solid #111827; padding: 8px 6px; font-size: 11px; text-transform: uppercase; }
@@ -33,7 +43,7 @@ export function printInvoice({ invoice, distributorName, memberName, productName
       </style>
     </head>
     <body>
-      <h1>WorkForce</h1>
+      ${orgHeaderHtml(org)}
       <div class="sub">Invoice</div>
       <div class="meta">
         <div>
@@ -55,8 +65,6 @@ export function printInvoice({ invoice, distributorName, memberName, productName
     </html>
   `
 
-  const w = window.open('', '_blank')
-  if (!w) return
   w.document.write(html)
   w.document.close()
   setTimeout(() => w.print(), 300)

@@ -62,21 +62,50 @@ export async function fetchUsers() {
   return { data, error }
 }
 
+// `supabase.auth.admin.createUser()` needs the service_role key, which must never reach the
+// browser — this used to be called directly here and simply failed "User not allowed" every time
+// (see CLAUDE.md's Known Issues; the documented workaround was creating every new employee by hand
+// in the Supabase Dashboard). The `admin-user-ops` Edge Function (supabase/functions/admin-user-ops)
+// holds the service_role key server-side instead and does the privileged create on our behalf,
+// verifying the caller is themselves an Admin before doing anything. It generates the temp
+// password itself and returns it once — Employees.jsx shows it on screen for Admin to relay,
+// nothing stores it in plaintext. `payload` here never carries a password at all any more.
 export async function createUser(payload) {
-  // First create auth user
-  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-    email: payload.email,
-    password: payload.password,
-    email_confirm: true,
+  const { data: fnData, error: fnError } = await supabase.functions.invoke('admin-user-ops', {
+    body: { action: 'create', email: payload.email },
   })
-  if (authError) return { data: null, error: authError }
+  if (fnError) return { data: null, error: fnError }
+  if (fnData?.error) return { data: null, error: new Error(fnData.error) }
 
   const { data, error } = await supabase
     .from('users')
-    .insert({ ...payload, auth_id: authData.user.id })
+    .insert({ ...payload, auth_id: fnData.authId, must_change_password: true })
     .select()
     .single()
-  return { data, error }
+  if (error) return { data: null, error }
+  return { data: { ...data, tempPassword: fnData.tempPassword }, error: null }
+}
+
+// Admin-triggered reset of an EXISTING user's password — impossible from the browser with only the
+// anon key (Supabase Auth never lets one account overwrite another's password without either
+// service_role or the target completing an email link themselves), same Edge Function as above.
+// `authId` is the target's `users.auth_id`, not their `users.id`. Also flips must_change_password
+// (via a normal updateUser call, from the caller in Employees.jsx) so the next login is gated the
+// same way a brand-new account's first login is.
+export async function resetUserPassword(authId) {
+  const { data: fnData, error: fnError } = await supabase.functions.invoke('admin-user-ops', {
+    body: { action: 'reset_password', authId },
+  })
+  if (fnError) return { data: null, error: fnError }
+  if (fnData?.error) return { data: null, error: new Error(fnData.error) }
+  return { data: fnData, error: null } // { tempPassword }
+}
+
+// The currently-signed-in user changing their OWN password — the one password operation that
+// genuinely needs no elevated privilege at all, just their own session (ForcePasswordChange.jsx).
+export async function changeOwnPassword(newPassword) {
+  const { error } = await supabase.auth.updateUser({ password: newPassword })
+  return { error }
 }
 
 export async function updateUser(id, payload) {
@@ -271,6 +300,25 @@ export async function updateWarehouse(id, payload) {
 export async function deleteWarehouse(id) {
   const { error } = await supabase.from('warehouses').delete().eq('id', id)
   return { error }
+}
+
+// ─── ORGANIZATION (singleton — company profile + statutory details) ───────────
+// Always id=1, seeded once by the schema migration — no create/delete, just fetch/update, same
+// "one row, always update it in place" convention as every other singleton-shaped config in this
+// app would use if one existed yet (this is the first).
+export async function fetchOrganization() {
+  const { data, error } = await supabase.from('organization').select('*').eq('id', 1).single()
+  return { data, error }
+}
+
+export async function updateOrganization(payload, updatedBy) {
+  const { data, error } = await supabase
+    .from('organization')
+    .update({ ...payload, updated_at: new Date().toISOString(), updated_by: updatedBy })
+    .eq('id', 1)
+    .select()
+    .single()
+  return { data, error }
 }
 
 // ─── PRODUCT ↔ WAREHOUSE MAPPING ───────────────────────────────────────────────
