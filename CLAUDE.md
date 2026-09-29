@@ -859,11 +859,15 @@ screens — explicit follow-up, not started.
 Limit, Duty Reporting Time, and Reporting Manager (`manager_id`) fields. No cycle-guard on
 `manager_id` (a Manager could be assigned as their own report) — low risk, not defended against.
 
-**User creation / password management** — `createUser()` used to call `auth.admin.createUser()`
+**User creation / password management** — ⚠️ **`admin-user-ops` is not deployed yet** (confirmed via a
+live probe: `POST .../functions/v1/admin-user-ops` → `404 NOT_FOUND`) — until it is, `createUser()`
+and `resetUserPassword()` both fail, so Employees.jsx's Add User and Reset Password cannot work at
+all yet. Deploy command is below. `createUser()` used to call `auth.admin.createUser()`
 directly from the browser and simply failed "User not allowed" for every single new employee, since
 that call needs the `service_role` key, which must never reach client code. The documented
-workaround (manually creating every employee via the Supabase Dashboard) is gone — this now actually
-works from the app.
+workaround (manually creating every employee via the Supabase Dashboard) is gone, but until the
+function is deployed there's temporarily no working path for new employees at all — plan around
+that if one needs adding before the deploy happens.
 
 **`supabase/functions/admin-user-ops`** (Deno Edge Function, deployed separately via the Supabase
 CLI, not part of the Vite build) is the one place the `service_role` key exists at all — auto-
@@ -1102,6 +1106,18 @@ showed a real 4) before shipping.
 
 ## Deferred / Known Issues (not blocking, revisit later)
 
+- **`admin-user-ops` Edge Function is not deployed yet** — the code is committed
+  (`supabase/functions/admin-user-ops`) but nobody has run the deploy step, confirmed live via a
+  direct probe (`404 NOT_FOUND`). Until deployed, `createUser()`/`resetUserPassword()` both fail —
+  Employees.jsx's Add User and Reset Password don't work at all, so **there is currently no working
+  way to add a new employee** (the old manual-Supabase-Dashboard workaround this replaced is gone
+  too — see Module: Attendance & HR's own "User creation / password management" section above for
+  the full design). Deploy with:
+  ```bash
+  npx supabase login
+  npx supabase link --project-ref yvtgpwibrycdnvpmrccm
+  npx supabase functions deploy admin-user-ops
+  ```
 - **`notifications` table is schema-drifted and every call site has likely been silently failing**
   — `db.js`'s `createNotification`/`fetchNotifications`/`markNotificationRead` read/write
   `target_roles`/`title`/`body`/`ref_id`/`read`, but the live table's actual columns (confirmed via
